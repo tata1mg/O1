@@ -1,0 +1,8 @@
+{
+  "name": "harness-pi-ext",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Containment transport for the harness pi engine adapter. No dependencies, no build step: pi loads harness-guard.js directly via --extension. This manifest exists only to declare ESM so plain `node` can import the guard (which is how tests exercise its decision function).",
+  "dependencies": {}
+}

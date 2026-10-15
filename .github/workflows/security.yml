@@ -1,0 +1,84 @@
+# Security gate. Runs on pull requests to main, on a schedule, and on demand. Pushes to other branches run only the
+# local pre-push hook (scripts/security/scan.py). Action tags are not yet pinned to commit SHAs; pin them before
+# the repo goes public.
+name: security
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    # Every 2 days. Cron's */2 counts days of the month, so it runs on odd days and skips a day at month end.
+    - cron: "0 6 */2 * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: which checks to run
+        type: choice
+        options: [all, full, deps]
+        default: deps
+
+permissions:
+  contents: read
+
+jobs:
+  # Required before merge to main: the commits this PR adds (secrets, blocked files, semgrep on changed files,
+  # internal names). Same checks as the pre-push hook, on the PR's commits instead of a push.
+  pr-gate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/security-setup
+      - name: scan the PR's commits
+        run: python3 scripts/security/scan.py push "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}"
+
+  # Required before merge when a manifest changed. Always runs, so the check reports success on PRs with no
+  # manifest change instead of staying pending.
+  pr-deps:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: did a manifest change?
+        id: changes
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git diff --name-only "$BASE" "$HEAD" | grep -Eq '(^|/)(uv\.lock|pyproject\.toml|package\.json|package-lock\.json)$'; then
+            echo "manifests=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "manifests=false" >> "$GITHUB_OUTPUT"
+            echo "No dependency manifest changed; nothing to audit."
+          fi
+      - uses: ./.github/actions/security-setup
+        if: steps.changes.outputs.manifests == 'true'
+      - name: dependency audit
+        if: steps.changes.outputs.manifests == 'true'
+        run: python3 scripts/security/scan.py deps
+
+  # Every 2 days on main, and on demand from the Actions tab. Dependency audit by default.
+  scheduled-or-manual:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/security-setup
+      - name: run
+        env:
+          MODE: ${{ github.event.inputs.mode || 'deps' }}
+        run: python3 scripts/security/scan.py "$MODE"

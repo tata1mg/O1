@@ -1,0 +1,13 @@
+config.json
+runs/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+dist/
+.DS_Store
+
+# Claude OAuth token (lives outside the repo; referenced by config.json path)
+claude_oauth_token
+

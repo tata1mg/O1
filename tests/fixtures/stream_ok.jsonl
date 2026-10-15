@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"abc"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"let me look"},{"type":"tool_use","name":"Grep","input":{"pattern":"assured"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"a.py"}}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"final answer text","total_cost_usd":0.42,"num_turns":7,"usage":{"input_tokens":1000,"output_tokens":200}}

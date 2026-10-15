@@ -1,0 +1,14 @@
+{
+  "name": "rfc-agent-marketplace",
+  "owner": {
+    "name": "Tata 1mg - O1"
+  },
+  "plugins": [
+    {
+      "name": "rfc-agent",
+      "source": "./",
+      "description": "PRD to grounded tech RFC: Scope, Investigate, Draft, Review, Revise, Summarize. Every claim about existing code is cited to a file and line and checked by deterministic gates. Writes out/rfc.md and a short out/rfc.readable.md."
+    }
+  ],
+  "description": "Marketplace for the rfc-agent plugin: generate grounded tech RFCs from PRDs."
+}

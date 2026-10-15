@@ -1,0 +1,38 @@
+<style>
+  body { font: 12px -apple-system, system-ui, sans-serif; margin: 12px; color: #222; }
+  #bar { height: 6px; background: #eee; border-radius: 3px; overflow: hidden; margin: 8px 0; }
+  #fill { height: 100%; width: 0; background: #0d99ff; transition: width .2s; }
+  pre { white-space: pre-wrap; background: #f6f6f6; padding: 6px; border-radius: 4px; }
+  .err { color: #c00; }
+</style>
+<b>rfc-agent Figma snapshot</b>
+<div id="bar"><div id="fill"></div></div>
+<div id="status">Connecting to receiver…</div>
+<pre id="log"></pre>
+<script>
+  const status = document.getElementById('status');
+  const fill = document.getElementById('fill');
+  const log = document.getElementById('log');
+  onmessage = (e) => {
+    const m = e.data.pluginMessage;
+    if (!m) return;
+    if (m.type === 'progress') {
+      status.textContent = `Exporting ${m.done + 1}/${m.total}: ${m.name}`;
+      fill.style.width = Math.round(100 * m.done / m.total) + '%';
+    } else if (m.type === 'warn') {
+      log.textContent += m.text + '\n';
+    } else if (m.type === 'error') {
+      status.textContent = 'Error';
+      status.className = 'err';
+      log.textContent += m.text + '\n';
+    } else if (m.type === 'status') {
+      status.textContent = m.text;
+    } else if (m.type === 'waiting') {
+      status.textContent = `Found ${m.total} screens. Pick the sections in the terminal — keep this open.`;
+    } else if (m.type === 'done') {
+      fill.style.width = '100%';
+      status.textContent = m.skipped ? 'Skipped from the terminal. You can close this.'
+        : `Done — ${m.total - m.failures}/${m.total} screens sent. You can close this.`;
+    }
+  };
+</script>

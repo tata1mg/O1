@@ -1,0 +1,16 @@
+{
+  "suite": "stream_translate",
+  "git_sha": "1958ea8",
+  "timestamp": "2026-09-08T07:51:25.719768+00:00",
+  "machine": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "python": "3.12.11",
+    "processor": "arm",
+    "cpu_count": 10
+  },
+  "results": [],
+  "notes": [
+    "harness.engines.claude_translate not available \u2014 AFTER-only hook, skipped."
+  ]
+}

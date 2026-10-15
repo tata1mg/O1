@@ -1,0 +1,43 @@
+[project]
+name = "rfc-agent"
+version = "0.1.0"
+description = "Staged RFC-generation agent: PRD -> grounded RFC via headless Claude stages"
+requires-python = "==3.12.*"
+dependencies = [
+    "defusedxml>=0.7.1",
+    "langfuse>=4,<5",  # v4 API (start_as_current_observation)
+]
+
+[project.optional-dependencies]
+# The `testing` workflow's xlsx render only. Everything else in that workflow — generation, gates,
+# evaluation, the JSON case store, spec derivation, BE execution — is stdlib, so a run without this
+# extra records a decision and skips the workbook instead of failing (D8/D10).
+testing = ["openpyxl>=3.1,<4"]
+
+[project.scripts]
+rfc = "rfc_agent.run:main"
+harness = "harness.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rfc_agent", "src/harness", "src/workflows"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["tests/fixtures", "deprecated"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

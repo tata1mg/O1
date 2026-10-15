@@ -1,0 +1,24 @@
+{
+  "_comment": "The harness's own working values — models, timeouts, tracing behaviour — each with a note. Ships with the plugin and is read-only: don't edit it (a plugin update replaces it). To change one, set the same key in ~/.config/rfc-agent/config.json, which wins. Precedence: env var > config.json > this file.",
+  "AGENT": {
+    "_DEFAULT_MODEL_note": "The [1m] suffix requests the 1M-token context window. Needed headroom, not luxury: stage agents start with a large fixed manifest (builtin tools + MCP schemas + any claude.ai connectors the account has).",
+    "DEFAULT_MODEL": "claude-sonnet-5[1m]",
+    "_STAGE_MODELS_note": "Per-stage model override, {stage name: model}; a stage not listed uses DEFAULT_MODEL. Read by the shared engine (the `harness run testing` stages). The RFC pipeline (Scope -> Summarize) picks its own models (e.g. rfc_agent/investigate/config.py).",
+    "STAGE_MODELS": {},
+    "RUN_TIMEOUT": 2400,
+    "_RESUME_CONTEXT_CAP_note": "Quality ceiling (tokens) for retry-by-resume, default 200000. The window-aware policy is min(verified_window - 70K safety buffer, THIS) — legacy 100K whenever the child's context window can't be verified by observation. 200K is a HYPOTHESIS, not a law: tune it against your own workload using the resume_policy fields in logs/decisions.jsonl (bucket resume sizes 100/150/200/250/300K+ vs fresh on revision success, wall-clock, cache tokens).",
+    "RESUME_CONTEXT_CAP": 200000,
+    "_THINKING_TAP_note": "OPT-IN (default false). Headless `claude -p` blanks the agents' thinking text on 5-family models (the API omits it unless the request sets thinking.display='summarized', and the CLI blanks it client-side even when the API returns it — both probed on CLI 2.1.224). Setting this true starts a per-child loopback sidecar that sets the field and reads the reasoning off the wire into the live feed + logs/<label>.thinking.txt. READ THIS BEFORE ENABLING: the sidecar sits in the path of AUTHENTICATED API traffic — the child's OAuth headers transit that local process (it forwards them, never logs them, and binds 127.0.0.1 only). Same mechanism an LLM gateway uses. Billing is unchanged; thinking tokens are billed whether or not the text is returned. If it fails to start, or ANTHROPIC_BASE_URL already points at a real gateway, the run proceeds without it.",
+    "THINKING_TAP": false,
+    "_MEMORY_note": "Per-stage notes in ~/.config/rfc-agent/memory/<stage>.md are appended to a harness stage's prompt (`harness run testing`). Nothing writes them automatically any more — the post-run promotion ran only in the old pipeline — so edit or delete them by hand."
+  },
+  "LANGFUSE": {
+    "_comment": "Tracing behaviour. HOST, keys and ENVIRONMENT are yours: they go in ~/.config/rfc-agent/config.json.",
+    "_ENABLED_note": "true (default): every run is traced, and a run with no PUBLIC_KEY/SECRET_KEY stops before it starts. false: no tracing, keys not needed. Env RFC_AGENT_LANGFUSE wins; the CLI flag `--langfuse true|false` wins over both.",
+    "ENABLED": true,
+    "_VERBOSE_note": "false (default): one node per agent (model, tokens, cost, time) plus gates and your pause answers. true: also one span per tool call (input and output clipped to 2K). Env RFC_AGENT_LANGFUSE_VERBOSE; flag `--langfuse-verbose true|false`.",
+    "VERBOSE": false,
+    "_MASK_SECRETS_note": "Client-side secret redaction (privacy.py): every exported span attribute passes a gitleaks-derived ruleset before leaving the machine (AWS/GitHub/Slack/Atlassian/OpenAI/Anthropic keys, JWTs, PEM blocks, connection-string credentials, bearer tokens, keyword=value secrets). Fail-closed. Disable ONLY for local debugging.",
+    "MASK_SECRETS": true
+  }
+}

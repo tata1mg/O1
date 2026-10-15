@@ -1,0 +1,9 @@
+{
+  "name": "rfc-agent",
+  "description": "Turns a PRD into a grounded tech RFC in six stages (Scope, Investigate, Draft, Review, Revise, Summarize); every statement about existing code cites a file and line, and deterministic gates check each stage's output. Also ships the agent-agnostic harness and its `testing` workflow (QA test cases from an RFC). Commands: /rfc-agent:setup (first-time setup), /rfc-agent:rfc (the whole pipeline), /rfc-agent:scope, /rfc-agent:investigate, /rfc-agent:draft, /rfc-agent:review, /rfc-agent:revise, /rfc-agent:summarize (one stage each), /rfc-agent:feedback (rate a run), /rfc-agent:doctor (diagnose the install).",
+  "version": "0.1.0",
+  "author": {
+    "name": "Tata 1mg - O1"
+  },
+  "types": "./types/index.d.ts"
+}

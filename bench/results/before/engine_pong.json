@@ -1,0 +1,28 @@
+{
+  "suite": "engine_pong",
+  "git_sha": "8a0dd53",
+  "timestamp": "2026-09-08T07:50:16.802643+00:00",
+  "machine": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "python": "3.12.11",
+    "processor": "arm",
+    "cpu_count": 10
+  },
+  "results": [
+    {
+      "name": "engine_pong.claude_cli_wall",
+      "unit": "s",
+      "n": 3,
+      "median": 5.536121458993875,
+      "p95": 5.56458783299604,
+      "min": 5.524163499998394,
+      "max": 5.56458783299604
+    }
+  ],
+  "notes": [
+    "model=claude-haiku-4-5-20251001, n=3, total_cost_usd=0.0606",
+    "raw_rows=[{'wall_s': 5.536121458993875, 'returncode': 0, 'cost_usd': 0.0263387, 'usage': {'input_tokens': 10, 'cache_creation_input_tokens': 12421, 'cache_read_input_tokens': 12667, 'output_tokens': 44, 'output_tokens_details': {'thinking_tokens': 36}, 'server_tool_use': {'web_search_requests': 0, 'web_fetch_requests': 0}, 'service_tier': 'standard', 'cache_creation': {'ephemeral_1h_input_tokens': 12421, 'ephemeral_5m_input_tokens': 0}, 'inference_geo': 'not_available', 'iterations': [{'input_tokens': 10, 'output_tokens': 44, 'cache_read_input_tokens': 12667, 'cache_creation_input_tokens': 12421, 'cache_creation': {'ephemeral_5m_input_tokens': 0, 'ephemeral_1h_input_tokens': 12421}, 'type': 'message'}], 'speed': 'standard'}, 'is_error': False}, {'wall_s': 5.56458783299604, 'returncode': 0, 'cost_usd': 0.017688500000000003, 'usage': {'input_tokens': 10, 'cache_creation_input_tokens': 7867, 'cache_read_input_tokens': 17195, 'output_tokens': 45, 'output_tokens_details': {'thinking_tokens': 37}, 'server_tool_use': {'web_search_requests': 0, 'web_fetch_requests': 0}, 'service_tier': 'standard', 'cache_creation': {'ephemeral_1h_input_tokens': 7867, 'ephemeral_5m_input_tokens': 0}, 'inference_geo': 'not_available', 'iterations': [{'input_tokens': 10, 'output_tokens': 45, 'cache_read_input_tokens': 17195, 'cache_creation_input_tokens': 7867, 'cache_creation': {'ephemeral_5m_input_tokens': 0, 'ephemeral_1h_input_tokens': 7867}, 'type': 'message'}], 'speed': 'standard'}, 'is_error': False}, {'wall_s': 5.524163499998394, 'returncode': 0, 'cost_usd': 0.0166005, 'usage': {'input_tokens': 10, 'cache_creation_input_tokens': 7328, 'cache_read_input_tokens': 17195, 'output_tokens': 43, 'output_tokens_details': {'thinking_tokens': 35}, 'server_tool_use': {'web_search_requests': 0, 'web_fetch_requests': 0}, 'service_tier': 'standard', 'cache_creation': {'ephemeral_1h_input_tokens': 7328, 'ephemeral_5m_input_tokens': 0}, 'inference_geo': 'not_available', 'iterations': [{'input_tokens': 10, 'output_tokens': 43, 'cache_read_input_tokens': 17195, 'cache_creation_input_tokens': 7328, 'cache_creation': {'ephemeral_5m_input_tokens': 0, 'ephemeral_1h_input_tokens': 7328}, 'type': 'message'}], 'speed': 'standard'}, 'is_error': False}]",
+    "harness.engines.claude_code not available \u2014 AFTER-only hook, skipped."
+  ]
+}

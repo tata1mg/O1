@@ -1,0 +1,71 @@
+{
+  "suite": "gate_latency",
+  "git_sha": "e611050",
+  "timestamp": "2026-09-08T11:33:59.067430+00:00",
+  "machine": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "python": "3.12.11",
+    "processor": "arm",
+    "cpu_count": 10
+  },
+  "results": [
+    {
+      "name": "gate_latency.check_citations",
+      "unit": "s",
+      "n": 10,
+      "median": 0.00022166650160215795,
+      "p95": 0.0006609999982174486,
+      "min": 0.00020387499534990638,
+      "max": 0.0006609999982174486
+    },
+    {
+      "name": "gate_latency.check_no_secrets",
+      "unit": "s",
+      "n": 10,
+      "median": 0.0003608960032579489,
+      "p95": 0.0003822089929599315,
+      "min": 0.00034816699917428195,
+      "max": 0.0003822089929599315
+    },
+    {
+      "name": "gate_latency.require_sections",
+      "unit": "s",
+      "n": 10,
+      "median": 2.7542002499103546e-05,
+      "p95": 4.512499435804784e-05,
+      "min": 2.6582987629808486e-05,
+      "max": 4.512499435804784e-05
+    },
+    {
+      "name": "gate_latency.ingest_gate",
+      "unit": "s",
+      "n": 10,
+      "median": 0.00010312500671716407,
+      "p95": 0.00011850000009872019,
+      "min": 9.825000597629696e-05,
+      "max": 0.00011850000009872019
+    },
+    {
+      "name": "gate_latency.generate_gate_size_check",
+      "unit": "s",
+      "n": 10,
+      "median": 3.385399759281427e-05,
+      "p95": 6.34580064797774e-05,
+      "min": 3.2916999771259725e-05,
+      "max": 6.34580064797774e-05
+    },
+    {
+      "name": "gate_latency.review_gate",
+      "unit": "s",
+      "n": 10,
+      "median": 6.791649502702057e-05,
+      "p95": 0.00015729099686723202,
+      "min": 5.945800512563437e-05,
+      "max": 0.00015729099686723202
+    }
+  ],
+  "notes": [
+    "GROUND's full _gate is excluded (needs a live git-backed repos_root) \u2014 see module docstring."
+  ]
+}

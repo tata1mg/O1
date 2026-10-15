@@ -1,0 +1,55 @@
+{
+  "_comment": "Read by scripts/security/scan.py. Edit here, not in the script. trufflehog_allow holds reviewed fixture ids (first 16 hex of sha256 of the value, printed by the scanner); add an id only after checking it is fake.",
+  "semgrep_configs": ["p/secrets", "p/security-audit"],
+  "blocked_files": [
+    ".env",
+    ".env.*",
+    "*_oauth_token",
+    "*.token",
+    "/config.json",
+    "runs/",
+    "out/",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "id_rsa*"
+  ],
+  "internal_refs": {
+    "_comment": "mode 'warn' reports only. Set to 'fail' after the names are cleaned up, so the gate blocks new ones.",
+    "mode": "warn",
+    "fail": [
+      "1mgtech\\.atlassian\\.net",
+      "tata1mg",
+      "@1mg\\.com",
+      "1mg-devops",
+      "neptuneinternalapi\\.1mg\\.com",
+      "rfc-agent\\.1mg\\.com",
+      "/Users/[A-Za-z0-9._-]+/",
+      "\\bHEA-\\d+\\b",
+      "\\bLABS-\\d+\\b"
+    ],
+    "warn": [
+      "\\b1mg\\b",
+      "\\bdexter\\b",
+      "\\bpwa_(m|d)web\\b",
+      "\\bonemg_web\\b",
+      "\\b1mg_web(_vite)?\\b",
+      "\\b1mg_evals\\b",
+      "\\bathena_service\\b",
+      "\\btcms_api\\b",
+      "\\bkiwi_web\\b"
+    ],
+    "exclude": [
+      "scripts/security/",
+      "uv.lock",
+      ".github/workflows/security.yml"
+    ]
+  },
+  "trufflehog_allow": [
+    "5191569582f0fdab",
+    "4a9cffa55b1dab78",
+    "f0a8c804f8f22d87",
+    "f5c388734d28087b",
+    "791cc6fe840486b5"
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "suite": "cli_startup",
+  "git_sha": "e611050",
+  "timestamp": "2026-09-08T11:34:02.520033+00:00",
+  "machine": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "python": "3.12.11",
+    "processor": "arm",
+    "cpu_count": 10
+  },
+  "results": [
+    {
+      "name": "cli_startup.rfc_agent_help",
+      "unit": "s",
+      "n": 10,
+      "median": 0.11398856250161771,
+      "p95": 0.13890016700315755,
+      "min": 0.10705029200471472,
+      "max": 0.13890016700315755
+    },
+    {
+      "name": "cli_startup.rfc_agent_import",
+      "unit": "s",
+      "n": 10,
+      "median": 0.07753589600179112,
+      "p95": 0.09391883300850168,
+      "min": 0.07261308400484268,
+      "max": 0.09391883300850168
+    },
+    {
+      "name": "cli_startup.harness_help",
+      "unit": "s",
+      "n": 10,
+      "median": 0.12605929149867734,
+      "p95": 0.13960799999767914,
+      "min": 0.1114204160112422,
+      "max": 0.13960799999767914
+    },
+    {
+      "name": "cli_startup.harness_import",
+      "unit": "s",
+      "n": 10,
+      "median": 0.013983688004373107,
+      "p95": 0.015201332993456163,
+      "min": 0.013243458000943065,
+      "max": 0.015201332993456163
+    }
+  ],
+  "notes": []
+}

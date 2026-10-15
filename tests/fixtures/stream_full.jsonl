@@ -1,0 +1,28 @@
+{"type":"system","subtype":"init","session_id":"sess-abc123","model":"claude-sonnet-5","cwd":"/runs/demo","tools":["Read","Grep","Bash","mcp__figma__get_screenshot"],"mcp_servers":[{"name":"figma","status":"connected"}],"timestamp":"2026-09-08T10:00:00.000Z"}
+{"type":"user","message":{"content":[{"type":"text","text":"kickoff: ground the RFC"}]},"timestamp":"2026-09-08T10:00:01.000Z"}
+{"type":"assistant","message":{"id":"msg_1","content":[{"type":"thinking","thinking":"I should read the requirements first."}],"usage":{"input_tokens":1200,"cache_read_input_tokens":300}},"timestamp":"2026-09-08T10:00:02.000Z"}
+{"type":"assistant","message":{"id":"msg_2","content":[{"type":"text","text":"Reading the inputs."},{"type":"tool_use","id":"tu_1","name":"Read","input":{"file_path":"raw/prd.md"}},{"type":"tool_use","id":"tu_2","name":"Grep","input":{"pattern":"checkout","path":"raw"}}],"usage":{"input_tokens":2000}},"timestamp":"2026-09-08T10:00:03.000Z"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu_1","content":"# PRD\nline two"}]},"timestamp":"2026-09-08T10:00:04.000Z"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu_2","content":"raw/prd.md:4:checkout"}]},"timestamp":"2026-09-08T10:00:05.000Z"}
+{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"partial"}},"timestamp":"2026-09-08T10:00:06.000Z"}
+{"type":"assistant","message":{"id":"msg_3","content":[{"type":"tool_use","id":"tu_3","name":"Bash","input":{"command":"rm -rf /etc"}}]},"timestamp":"2026-09-08T10:00:07.000Z"}
+{"type":"system","subtype":"permission_denied","tool_use_id":"tu_3","tool_name":"Bash","reason":"DENIED by rfc_agent write-guard: Bash command mutates outside the run dir"}
+{"type":"assistant","message":{"id":"msg_4","content":[{"type":"tool_use","id":"tu_4","name":"Write","input":{"file_path":"/etc/hosts","content":"x"}}]},"timestamp":"2026-09-08T10:00:08.000Z"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu_4","is_error":true,"content":"DENIED by rfc_agent write-guard (guard_writes): Write targets /etc/hosts, outside the run dir"}]},"timestamp":"2026-09-08T10:00:09.000Z"}
+{"type":"assistant","message":{"id":"msg_5","content":[{"type":"tool_use","id":"tu_5","name":"MultiEdit","input":{"file_path":"findings/findings.md","edits":[{"file_path":"findings/findings.md","old_string":"a","new_string":"b"}]}}]},"timestamp":"2026-09-08T10:00:10.000Z"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu_5","content":"edited"}]},"timestamp":"2026-09-08T10:00:11.000Z"}
+{"type":"assistant","message":{"id":"msg_6","content":[{"type":"tool_use","id":"tu_6","name":"mcp__figma__get_screenshot","input":{"nodeId":"1:23"}}]},"timestamp":"2026-09-08T10:00:12.000Z"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu_6","content":"[image]"}]},"timestamp":"2026-09-08T10:00:13.000Z"}
+{"type":"assistant","message":{"id":"msg_7","content":[{"type":"tool_use","id":"tu_7","name":"Task","input":{"description":"shard b2"}}]},"timestamp":"2026-09-08T10:00:14.000Z"}
+{"type":"assistant","message":{"id":"msg_8","content":[{"type":"tool_use","id":"tu_8","name":"AskUserQuestion","input":{"question":"accept partial figma?"}}]},"timestamp":"2026-09-08T10:00:15.000Z"}
+{"type":"assistant","message":{"id":"msg_9","content":[{"type":"tool_use","id":"tu_9","name":"Glob","input":{"pattern":"**/*.md"}}]},"timestamp":"2026-09-08T10:00:16.000Z"}
+{"type":"assistant","message":{"id":"msg_10","content":[{"type":"tool_use","id":"tu_10","name":"LS","input":{"path":"findings"}}]},"timestamp":"2026-09-08T10:00:17.000Z"}
+{"type":"assistant","message":{"id":"msg_11","content":[{"type":"tool_use","id":"tu_11","name":"WebFetch","input":{"url":"https://example.com"}}]},"timestamp":"2026-09-08T10:00:18.000Z"}
+{"type":"system","subtype":"compact_boundary","trigger":"auto","timestamp":"2026-09-08T10:00:19.000Z"}
+{"type":"user","message":{"content":[{"type":"text","text":"steering: keep it short"}]},"timestamp":"2026-09-08T10:00:20.000Z"}
+{"type":"assistant","message":{"id":"msg_12","content":[{"type":"tool_use","id":"tu_12","name":"NotebookEdit","input":{"notebook_path":"nb.ipynb"}}]},"timestamp":"2026-09-08T10:00:21.000Z"}
+{"type":"system","subtype":"some_future_subtype","timestamp":"2026-09-08T10:00:22.000Z"}
+{"type":"totally_unknown_event","timestamp":"2026-09-08T10:00:23.000Z"}
+this line is not json at all
+{"type":"result","subtype":"success","is_error":false,"result":"findings written","total_cost_usd":1.25,"num_turns":12,"duration_ms":23000,"session_id":"sess-abc123","usage":{"input_tokens":5000,"output_tokens":900}}
+{"type":"result","subtype":"success","is_error":false,"result":"bonus turn","total_cost_usd":1.30,"num_turns":13}

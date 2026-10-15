@@ -1,0 +1,11 @@
+findings/
+findings/beta.md
+identity.json
+inputs.json
+logs/
+logs/activity.log
+manifest.json
+out/
+out/gamma.md
+raw/
+raw/alpha.md

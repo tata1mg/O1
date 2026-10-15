@@ -1,0 +1,35 @@
+{
+  "suite": "cli_startup",
+  "git_sha": "1958ea8",
+  "timestamp": "2026-09-08T07:51:20.579906+00:00",
+  "machine": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "python": "3.12.11",
+    "processor": "arm",
+    "cpu_count": 10
+  },
+  "results": [
+    {
+      "name": "cli_startup.rfc_agent_help",
+      "unit": "s",
+      "n": 10,
+      "median": 0.09690260449860943,
+      "p95": 0.1044499999989057,
+      "min": 0.09407695800473448,
+      "max": 0.1044499999989057
+    },
+    {
+      "name": "cli_startup.rfc_agent_import",
+      "unit": "s",
+      "n": 10,
+      "median": 0.07073489599861205,
+      "p95": 0.07536641698970925,
+      "min": 0.06851666599686723,
+      "max": 0.07536641698970925
+    }
+  ],
+  "notes": [
+    "harness.cli not available \u2014 AFTER-only hook, skipped (see docs/harness/DECISIONS.md D5/D11)"
+  ]
+}

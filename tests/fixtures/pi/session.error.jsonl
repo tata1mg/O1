@@ -1,0 +1,11 @@
+{"type":"session","version":3,"id":"__SESSION_ID__","timestamp":"2026-09-08T10:00:00.000Z","cwd":"__CWD__"}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"compaction_start","reason":"threshold"}
+{"type":"compaction_end","reason":"threshold","result":{"summary":"..."},"aborted":false,"willRetry":false}
+{"type":"message_end","message":{"role":"assistant","api":"anthropic-messages","provider":"anthropic","model":"claude-sonnet-5","stopReason":"error","errorMessage":"overloaded_error: the upstream provider is overloaded","timestamp":1789000000000,"content":[{"type":"text","text":"Starting the extraction."}],"usage":{"input":1000,"output":10,"cacheRead":0,"cacheWrite":0,"totalTokens":1010,"cost":{"input":0.003,"output":0.00015,"cacheRead":0,"cacheWrite":0,"total":0.00315}}}}
+{"type":"agent_end","messages":[],"willRetry":true}
+{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":2000,"errorMessage":"overloaded_error"}
+{"type":"auto_retry_end","success":false,"attempt":3,"finalError":"overloaded_error after 3 attempts"}
+{"type":"agent_end","messages":[],"willRetry":false}
+{"type":"agent_settled"}

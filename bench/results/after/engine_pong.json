@@ -1,0 +1,28 @@
+{
+  "suite": "engine_pong",
+  "git_sha": "e611050",
+  "timestamp": "2026-09-08T11:34:26.557020+00:00",
+  "machine": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "python": "3.12.11",
+    "processor": "arm",
+    "cpu_count": 10
+  },
+  "results": [
+    {
+      "name": "engine_pong.claude_cli_wall",
+      "unit": "s",
+      "n": 3,
+      "median": 5.683510208997177,
+      "p95": 6.031835542002227,
+      "min": 5.62339012499433,
+      "max": 6.031835542002227
+    }
+  ],
+  "notes": [
+    "model=claude-haiku-4-5-20251001, n=3, total_cost_usd=0.0453",
+    "raw_rows=[{'wall_s': 6.031835542002227, 'returncode': 0, 'cost_usd': 0.0248017, 'usage': {'input_tokens': 10, 'cache_creation_input_tokens': 11580, 'cache_read_input_tokens': 12667, 'output_tokens': 73, 'output_tokens_details': {'thinking_tokens': 65}, 'server_tool_use': {'web_search_requests': 0, 'web_fetch_requests': 0}, 'service_tier': 'standard', 'cache_creation': {'ephemeral_1h_input_tokens': 11580, 'ephemeral_5m_input_tokens': 0}, 'inference_geo': 'not_available', 'iterations': [{'input_tokens': 10, 'output_tokens': 73, 'cache_read_input_tokens': 12667, 'cache_creation_input_tokens': 11580, 'cache_creation': {'ephemeral_5m_input_tokens': 0, 'ephemeral_1h_input_tokens': 11580}, 'type': 'message'}], 'speed': 'standard'}, 'is_error': False}, {'wall_s': 5.683510208997177, 'returncode': 0, 'cost_usd': 0.017707900000000002, 'usage': {'input_tokens': 10, 'cache_creation_input_tokens': 7893, 'cache_read_input_tokens': 16919, 'output_tokens': 44, 'output_tokens_details': {'thinking_tokens': 36}, 'server_tool_use': {'web_search_requests': 0, 'web_fetch_requests': 0}, 'service_tier': 'standard', 'cache_creation': {'ephemeral_1h_input_tokens': 7893, 'ephemeral_5m_input_tokens': 0}, 'inference_geo': 'not_available', 'iterations': [{'input_tokens': 10, 'output_tokens': 44, 'cache_read_input_tokens': 16919, 'cache_creation_input_tokens': 7893, 'cache_creation': {'ephemeral_5m_input_tokens': 0, 'ephemeral_1h_input_tokens': 7893}, 'type': 'message'}], 'speed': 'standard'}, 'is_error': False}, {'wall_s': 5.62339012499433, 'returncode': 0, 'cost_usd': 0.0028162000000000005, 'usage': {'input_tokens': 10, 'cache_creation_input_tokens': 0, 'cache_read_input_tokens': 24812, 'output_tokens': 65, 'output_tokens_details': {'thinking_tokens': 58}, 'server_tool_use': {'web_search_requests': 0, 'web_fetch_requests': 0}, 'service_tier': 'standard', 'cache_creation': {'ephemeral_1h_input_tokens': 0, 'ephemeral_5m_input_tokens': 0}, 'inference_geo': 'not_available', 'iterations': [{'input_tokens': 10, 'output_tokens': 65, 'cache_read_input_tokens': 24812, 'cache_creation_input_tokens': 0, 'cache_creation': {'ephemeral_5m_input_tokens': 0, 'ephemeral_1h_input_tokens': 0}, 'type': 'message'}], 'speed': 'standard'}, 'is_error': False}]",
+    "harness.engines.claude_code is importable but ClaudeCodeEngine.run() requires a real Stage/RunContext via native_ctx, not just prompt+cwd \u2014 confirmed: the claude-code adapter needs native_ctx={'stage': Stage, 'ctx': RunContext} on the EngineRequest \u2014 `run_claude` still owns MCP materialisation, effort resolution and session bookkeeping, all of which read the stage and the run context. See this module's docstring for why the wrapper is shaped this way."
+  ]
+}

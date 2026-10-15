@@ -1,0 +1,77 @@
+{
+  "_comment": "Everything YOU supply, secrets included. Lives at ~/.config/rfc-agent/config.json (chmod 600), never inside the plugin. Values marked 'team' are the same for everyone on your team — ask a teammate for them. Anything here overrides the plugin's config.harness.json, which lists the harness's own settings.",
+  "REPOS_ROOT": "~/path/to/your/repo/checkouts",
+  "RUNS_ROOT": "~/rfc-runs",
+  "ATLASSIAN": {
+    "_comment": "Team. Your Atlassian site; Scope opens Confluence/Jira through it. Env ATLASSIAN_SITE wins.",
+    "SITE": "https://your-company.atlassian.net"
+  },
+  "LANGFUSE": {
+    "_comment": "HOST is the team's Langfuse; the keys are yours.",
+    "HOST": "https://cloud.langfuse.com",
+    "PUBLIC_KEY": "",
+    "SECRET_KEY": "",
+    "_ENVIRONMENT_note": "Optional. Langfuse environment for this machine's runs (e.g. 'eval' on a benchmark box) — partitions eval traffic from operator runs. Empty = Langfuse default. The LANGFUSE_TRACING_ENVIRONMENT env var wins (smokes set it).",
+    "ENVIRONMENT": ""
+  },
+  "MCP": {
+    "mcpServers": {
+      "_fleetlens_note": "The context layer: team URL + your token. Scope finds the repos a PRD touches with it; Investigate and Review trace endpoints and callers across repos. Keep the name 'fleetlens'. Needs network reachability (VPN if internal).",
+      "fleetlens": {
+        "type": "http",
+        "url": "http://your-fleetlens-host:9995/mcp",
+        "headers": {
+          "Authorization": "Bearer <your token>"
+        }
+      },
+      "_bitbucket_note": "Optional. Scope's fallback for reading the service inventory (SERVICES_MAP) when that repo is not checked out locally. Workspace is the team's; credentials and path are yours.",
+      "bitbucket": {
+        "type": "stdio",
+        "command": "node",
+        "args": [
+          "--dns-result-order=ipv4first",
+          "/absolute/path/to/bitbucket-mcp/src/server.js"
+        ],
+        "env": {
+          "BITBUCKET_DEFAULT_WORKSPACE": "your-workspace",
+          "BITBUCKET_USERNAME": "you",
+          "BITBUCKET_APP_PASSWORD": "app-password-read-scopes"
+        }
+      }
+    }
+  },
+  "SERVICES_MAP": {
+    "_comment": "Team. Where your repo -> deployed-service inventory lives (an Ansible group_vars file). Leave REPO empty if you have none: Scope then relies on STEERING.REPO_ALIASES.",
+    "REPO": "your-devops-repo",
+    "PATH": "group_vars/services_k8s"
+  },
+  "SCOPE": {
+    "_SURFACES_note": "Team. Your product surfaces -> the repos that build them. Scope matches the PRD against `what` and proposes those repos. A surface with no repos is still reported.",
+    "SURFACES": {
+      "customer_web": {
+        "what": "customer website and mobile web: storefront, product pages, cart, checkout",
+        "repos": [
+          "your-web-repo"
+        ]
+      },
+      "customer_app": {
+        "what": "customer Android / iOS app",
+        "repos": []
+      }
+    }
+  },
+  "_REPOS_EXCLUDE_note": "Team. Repos Scope never offers, comma list (e.g. an evals repo that holds model answers).",
+  "REPOS_EXCLUDE": "rfc_agent,rfc-agent",
+  "OBS": {
+    "_comment": "Trace identity: OBS.USER_ID (explicit — CI/shared boxes) > git config user.email (canonical org identity, the default) > $USER. Never the shared Claude account.",
+    "USER_ID": ""
+  },
+  "AGENT": {
+    "_comment": "Optional — leave out what you don't need. CLAUDE_BIN: the claude binary (default `claude`). CLAUDE_CONFIG_DIR / CLAUDE_CODE_OAUTH_TOKEN_FILE: a separate Claude login for the agents (empty = your normal login). Any harness value from config.harness.json can be overridden here too.",
+    "CLAUDE_BIN": "claude",
+    "CLAUDE_CONFIG_DIR": "",
+    "CLAUDE_CODE_OAUTH_TOKEN_FILE": "",
+    "_EXTRA_DISALLOWED_TOOLS_note": "Comma-separated tool/server patterns denied in every harness stage, appended to each stage's own disallowed list — e.g. 'mcp__claude_ai_Canva' to keep a claude.ai connector your account has away from the agents. Deny wins over allow.",
+    "EXTRA_DISALLOWED_TOOLS": ""
+  }
+}

@@ -1,0 +1,27 @@
+# Installs the scanners scripts/security/scan.py calls. Versions are the ones run locally; a missing tool
+# fails the gate (scan.py fails closed), so this step must succeed.
+name: security-setup
+description: Install pinned scanners for scripts/security/scan.py
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v5
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: Install semgrep and trufflehog and trivy
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$HOME/.local/bin"
+        python -m pip install --quiet semgrep==1.164.0
+        curl -sSfL --retry 3 -o /tmp/trufflehog.tgz \
+          "https://github.com/trufflesecurity/trufflehog/releases/download/v3.88.28/trufflehog_3.88.28_linux_amd64.tar.gz"
+        tar -xzf /tmp/trufflehog.tgz -C "$HOME/.local/bin" trufflehog
+        curl -sSfL --retry 3 -o /tmp/trivy.tgz \
+          "https://github.com/aquasecurity/trivy/releases/download/v0.70.0/trivy_0.70.0_Linux-64bit.tar.gz"
+        tar -xzf /tmp/trivy.tgz -C "$HOME/.local/bin" trivy
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+    - name: Versions
+      shell: bash
+      run: semgrep --version && trufflehog --version && trivy --version && uv --version

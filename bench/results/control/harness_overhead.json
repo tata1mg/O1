@@ -1,0 +1,80 @@
+{
+  "suite": "harness_overhead",
+  "git_sha": "1958ea8",
+  "timestamp": "2026-09-08T07:51:18.658500+00:00",
+  "machine": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "python": "3.12.11",
+    "processor": "arm",
+    "cpu_count": 10
+  },
+  "results": [
+    {
+      "name": "harness_overhead.full_pipeline",
+      "unit": "s",
+      "n": 20,
+      "median": 0.13596495849924395,
+      "p95": 0.15475841599982232,
+      "min": 0.1245485830004327,
+      "max": 0.17778162499598693
+    },
+    {
+      "name": "harness_overhead.stage_gap[0]",
+      "unit": "s",
+      "n": 20,
+      "median": 0.0012412920041242614,
+      "p95": 0.0016098750056698918,
+      "min": 0.0010968340066028759,
+      "max": 0.035007791986572556
+    },
+    {
+      "name": "harness_overhead.stage_gap[1]",
+      "unit": "s",
+      "n": 20,
+      "median": 0.0013117290000081994,
+      "p95": 0.0017738329916028306,
+      "min": 0.0010687079920899123,
+      "max": 0.005114708008477464
+    },
+    {
+      "name": "harness_overhead.stage_gap[2]",
+      "unit": "s",
+      "n": 20,
+      "median": 0.0013265620000311173,
+      "p95": 0.0016940420027822256,
+      "min": 0.0010972500022035092,
+      "max": 0.0018014160013990477
+    },
+    {
+      "name": "harness_overhead.stage_gap[3]",
+      "unit": "s",
+      "n": 20,
+      "median": 0.001281083001231309,
+      "p95": 0.0018245419923914596,
+      "min": 0.0011176660045748577,
+      "max": 0.002244374991278164
+    },
+    {
+      "name": "harness_overhead.stage_gap[4]",
+      "unit": "s",
+      "n": 20,
+      "median": 0.0013671254928340204,
+      "p95": 0.0019139159994665533,
+      "min": 0.0011784159869421273,
+      "max": 0.001973708000150509
+    },
+    {
+      "name": "harness_overhead.tail_after_last_stage",
+      "unit": "s",
+      "n": 20,
+      "median": 0.12951158350915648,
+      "p95": 0.14289816599921323,
+      "min": 0.11851345800096169,
+      "max": 0.14631062500120606
+    }
+  ],
+  "notes": [
+    "n_stages=5, engine=fake (instant), obs=disabled (no LANGFUSE_* keys in this process)"
+  ]
+}

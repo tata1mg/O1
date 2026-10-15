@@ -1,0 +1,26 @@
+{
+  "suite": "stream_translate",
+  "git_sha": "e611050",
+  "timestamp": "2026-09-08T11:34:04.424742+00:00",
+  "machine": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "python": "3.12.11",
+    "processor": "arm",
+    "cpu_count": 10
+  },
+  "results": [
+    {
+      "name": "stream_translate.translate_5mb",
+      "unit": "s",
+      "n": 5,
+      "median": 0.3504134170070756,
+      "p95": 0.35822170799656305,
+      "min": 0.3402579579997109,
+      "max": 0.35822170799656305
+    }
+  ],
+  "notes": [
+    "fixture_bytes=5243241"
+  ]
+}

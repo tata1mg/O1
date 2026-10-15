@@ -1,0 +1,34 @@
+{
+  "suite": "test_suite",
+  "git_sha": "8a0dd53",
+  "timestamp": "2026-09-08T07:51:06.978988+00:00",
+  "machine": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "python": "3.12.11",
+    "processor": "arm",
+    "cpu_count": 10
+  },
+  "results": [
+    {
+      "name": "test_suite.pytest_wall",
+      "unit": "s",
+      "n": 1,
+      "median": 45.31510433299991,
+      "p95": 45.31510433299991,
+      "min": 45.31510433299991,
+      "max": 45.31510433299991,
+      "counts": {
+        "failed": 0,
+        "passed": 794,
+        "skipped": 0,
+        "xfailed": 0,
+        "errors": 0,
+        "seconds": 43.82
+      }
+    }
+  ],
+  "notes": [
+    "parsed pytest summary: {'failed': 0, 'passed': 794, 'skipped': 0, 'xfailed': 0, 'errors': 0, 'seconds': 43.82}"
+  ]
+}
