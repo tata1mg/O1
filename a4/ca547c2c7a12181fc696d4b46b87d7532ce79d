@@ -1,0 +1,648 @@
+docs/RFC_SHAPE.md
+  s_a4c7dd8d9c1f79::t_249bc72d5b2635 1-96
+docs/harness/ENGINES.md
+  s_a4c7dd8d9c1f79::t_1b55655144d1a3 1-318
+docs/HLD.md
+  s_a4c7dd8d9c1f79::t_4b11ea85d90769 1-128
+docs/REVISE.md
+  s_a4c7dd8d9c1f79::t_92a965edea3a9f 1-261
+docs/harness/README.md
+  s_a4c7dd8d9c1f79::t_9aa3c70a490dc5 1-71
+docs/harness/BENCHMARKS.md
+  s_a4c7dd8d9c1f79::t_c060d2b256a6ef 1-65
+tests/COVERAGE.md
+  s_a4c7dd8d9c1f79::t_7f86bea362e20e 1-65
+  s_a4c7dd8d9c1f79::t_31ec907e185d94 66
+docs/SUMMARIZE.md
+  s_a4c7dd8d9c1f79::t_7872b9bfea4bb6 1-67
+docs/INVESTIGATE.md
+  s_a4c7dd8d9c1f79::t_91f4e34d78854e 1-710
+tests/README.md
+  s_a4c7dd8d9c1f79::t_83802612001bd4 1-33
+docs/OBSERVABILITY.md
+  s_a4c7dd8d9c1f79::t_803e3b65fd976a 1-157
+tests/rfc/test_scope_main.py
+  s_a4c7dd8d9c1f79::t_2d87a7b1e1d24c 1-142
+  s_a4c7dd8d9c1f79::t_c946192a3f63f1 143
+docs/harness/ARCHITECTURE.md
+  s_a4c7dd8d9c1f79::t_728fa6734f1c83 1-411
+docs/SCOPE.md
+  s_a4c7dd8d9c1f79::t_2513ee98114b53 1-465
+CHANGELOG.md
+  s_a4c7dd8d9c1f79::t_85e115b8b34705 6-26
+  s_a4c7dd8d9c1f79::t_b58415c324de26 1-5
+docs/DRAFT.md
+  s_a4c7dd8d9c1f79::t_451e5f4cdb4374 1-377
+docs/REVIEW.md
+  s_a4c7dd8d9c1f79::t_859bc9d4ad3619 1-250
+.claude-plugin/marketplace.json
+  s_a4c7dd8d9c1f79::t_941fb1cc7f7368 1-14
+.claude-plugin/plugin.json
+  s_a4c7dd8d9c1f79::t_d5b5308722138f 1-9
+.githooks/pre-push
+  s_a4c7dd8d9c1f79::t_bbdc448e265227 1-13
+.github/actions/security-setup/action.yml
+  s_a4c7dd8d9c1f79::t_f57287aae03db9 1-27
+.github/workflows/security.yml
+  s_a4c7dd8d9c1f79::t_6f2a3322c9107e 1-84
+INSTALL.md
+  s_a4c7dd8d9c1f79::t_a3ad0cd84a6439 1-152
+Makefile
+  s_a4c7dd8d9c1f79::t_e4a16794a411ca 1-50
+README.md
+  s_a4c7dd8d9c1f79::t_565b07c30a6f40 1-194
+SETUP.md
+  s_a4c7dd8d9c1f79::t_108cb8bcc76c6e 1-146
+bench/__init__.py
+  s_a4c7dd8d9c1f79::t_caa40e6ca48ea5 1-6
+bench/__main__.py
+  s_a4c7dd8d9c1f79::t_ff20467203a104 1-45
+bench/fixtures.py
+  s_a4c7dd8d9c1f79::t_db3c68a4179d40 1-113
+bench/machine.py
+  s_a4c7dd8d9c1f79::t_62b653947b7cd7 1-45
+bench/results/after/cli_startup.json
+  s_a4c7dd8d9c1f79::t_aa52197c25bcc1 1-51
+bench/results/after/engine_pong.json
+  s_a4c7dd8d9c1f79::t_f6fa64191cd7dc 1-28
+bench/results/after/gate_latency.json
+  s_a4c7dd8d9c1f79::t_cb62da41ca4424 1-71
+bench/results/after/harness_overhead.json
+  s_a4c7dd8d9c1f79::t_d7837e24ff8444 1-80
+bench/results/after/stream_translate.json
+  s_a4c7dd8d9c1f79::t_c733adbff5c1c6 1-26
+bench/results/after/test_suite.json
+  s_a4c7dd8d9c1f79::t_8cfd3c8acff942 1-34
+bench/results/before/cli_startup.json
+  s_a4c7dd8d9c1f79::t_4716a9902b8069 1-35
+bench/results/before/engine_pong.json
+  s_a4c7dd8d9c1f79::t_91a64477c72c35 1-28
+bench/results/before/gate_latency.json
+  s_a4c7dd8d9c1f79::t_48d8723858a86e 1-71
+bench/results/before/harness_overhead.json
+  s_a4c7dd8d9c1f79::t_30c2429e101eac 1-80
+bench/results/before/stream_translate.json
+  s_a4c7dd8d9c1f79::t_94b89a0c7bae0d 1-16
+bench/results/before/test_suite.json
+  s_a4c7dd8d9c1f79::t_0ce43063df34b5 1-34
+bench/results/control/cli_startup.json
+  s_a4c7dd8d9c1f79::t_5c682adee2ec90 1-35
+bench/results/control/engine_pong.json
+  s_a4c7dd8d9c1f79::t_57c89167eec907 1-28
+bench/results/control/gate_latency.json
+  s_a4c7dd8d9c1f79::t_ce477e1d05cb17 1-71
+bench/results/control/harness_overhead.json
+  s_a4c7dd8d9c1f79::t_527d617c3c9c2a 1-80
+bench/results/control/stream_translate.json
+  s_a4c7dd8d9c1f79::t_722192a534bde8 1-16
+bench/results/control/test_suite.json
+  s_a4c7dd8d9c1f79::t_7b443ef7c4b7dd 1-34
+bench/suites/__init__.py
+  s_a4c7dd8d9c1f79::t_26098068e45e1c 1-21
+bench/suites/cli_startup.py
+  s_a4c7dd8d9c1f79::t_743434dc024657 1-59
+bench/suites/engine_pong.py
+  s_a4c7dd8d9c1f79::t_b9ffb169fba7fc 1-88
+bench/suites/harness_overhead.py
+  s_a4c7dd8d9c1f79::t_b2b12f9236849a 1-70
+bench/suites/stream_translate.py
+  s_a4c7dd8d9c1f79::t_595a8a704da2a9 1-37
+bench/suites/test_suite.py
+  s_a4c7dd8d9c1f79::t_031fbe7eddd7b2 1-40
+bench/timing.py
+  s_a4c7dd8d9c1f79::t_7397ecce16f6fa 1-71
+commands/doctor.md
+  s_a4c7dd8d9c1f79::t_079ef38204da75 1-56
+commands/draft.md
+  s_a4c7dd8d9c1f79::t_7a4247a853054c 1-44
+commands/feedback.md
+  s_8ba8efda98ef1e::t_5951bc3798ada7 1-42
+commands/investigate.md
+  s_a4c7dd8d9c1f79::t_3746dbbcc40dda 1-86
+commands/review.md
+  s_a4c7dd8d9c1f79::t_7b24b7683f1a55 1-67
+commands/revise.md
+  s_a4c7dd8d9c1f79::t_54bbffb695e9d4 1-34
+commands/rfc.md
+  s_8ba8efda98ef1e::t_5f021b7f045350 1-116
+commands/scope.md
+  s_a4c7dd8d9c1f79::t_bbc03b246fe445 1-104
+commands/setup.md
+  s_a4c7dd8d9c1f79::t_858378aaf673e4 1-227
+commands/summarize.md
+  s_a4c7dd8d9c1f79::t_775f88d35d937f 1-23
+config.example.json
+  s_a4c7dd8d9c1f79::t_1b4e127381854c 1-77
+config.harness.json
+  s_a4c7dd8d9c1f79::t_e6a8c018d8fba5 1-24
+docs/FEEDBACK.md
+  s_8ba8efda98ef1e::t_36d4aff8bc22c7 1-117
+hooks/agents.ts
+  s_a4c7dd8d9c1f79::t_b721625f85211d 1-140
+hooks/hooks.json
+  s_a4c7dd8d9c1f79::t_adb85a03eb8ee1 1
+hooks/register.tsx
+  s_a4c7dd8d9c1f79::t_c3bd3d93a61267 1-200
+pyproject.toml
+  s_a4c7dd8d9c1f79::t_0692577b608251 1-43
+scripts/install-deps.sh
+  s_a4c7dd8d9c1f79::t_f4d40837b64432 1-61
+scripts/mine_reasons.py
+  s_a4c7dd8d9c1f79::t_a5011507caeb58 1-184
+scripts/security/policy.json
+  s_a4c7dd8d9c1f79::t_8493c98e961ae2 1-55
+scripts/security/scan.py
+  s_a4c7dd8d9c1f79::t_b60ca69ef78830 1-361
+scripts/security/setup.sh
+  s_a4c7dd8d9c1f79::t_770e379081a737 1-155
+src/harness/__init__.py
+  s_a4c7dd8d9c1f79::t_a6e1b440750e96 1-15
+src/harness/cli.py
+  s_a4c7dd8d9c1f79::t_4d90ea2e0951f4 1-646
+src/harness/constants.py
+  s_a4c7dd8d9c1f79::t_4ba81f0b6a4f5d 1-32
+src/harness/contracts.py
+  s_a4c7dd8d9c1f79::t_08f91ef500ca44 1-248
+src/harness/engines/__init__.py
+  s_a4c7dd8d9c1f79::t_d4a0cbd510d034 1-164
+src/harness/engines/claude_code.py
+  s_a4c7dd8d9c1f79::t_24b416dbdeb3f7 1-219
+src/harness/engines/claude_translate.py
+  s_a4c7dd8d9c1f79::t_cf007acf443852 1-339
+src/harness/engines/pi.py
+  s_a4c7dd8d9c1f79::t_fad648ed108b07 1-731
+src/harness/engines/pi_ext/README.md
+  s_a4c7dd8d9c1f79::t_aecd39532c5b03 1-168
+src/harness/engines/pi_ext/harness-guard.js
+  s_a4c7dd8d9c1f79::t_33f9f5475af1bf 1-226
+src/harness/engines/pi_ext/harness-guard.ts
+  s_a4c7dd8d9c1f79::t_d9c7c6843223d8 1-8
+src/harness/engines/pi_ext/package.json
+  s_a4c7dd8d9c1f79::t_d9626ad68905b0 1-8
+src/harness/engines/pi_translate.py
+  s_a4c7dd8d9c1f79::t_55e45cda964420 1-533
+src/harness/engines/replay.py
+  s_a4c7dd8d9c1f79::t_01ae9b65e4bb39 1-281
+src/harness/events.py
+  s_a4c7dd8d9c1f79::t_238c9c88db273c 1-227
+src/harness/flags.py
+  s_a4c7dd8d9c1f79::t_43625a75fd3ea7 1-351
+src/harness/policy/__init__.py
+  s_a4c7dd8d9c1f79::t_128d4d7c63fa53 1-220
+src/harness/policy/__main__.py
+  s_a4c7dd8d9c1f79::t_19a1dbe688241c 1-46
+src/harness/policy/allowlist.py
+  s_a4c7dd8d9c1f79::t_f95b0b62bc2949 1-56
+src/harness/policy/mutators.py
+  s_a4c7dd8d9c1f79::t_7f351c9efac82b 1-98
+src/harness/policy/paths.py
+  s_a4c7dd8d9c1f79::t_48537ff75ac094 1-64
+src/harness/policy/shell.py
+  s_a4c7dd8d9c1f79::t_109e24050a61ba 1-160
+src/harness/workflows.py
+  s_a4c7dd8d9c1f79::t_604ff872a91118 1-68
+src/rfc_agent/__init__.py
+  s_a4c7dd8d9c1f79::t_927fb3eb0640e7 1
+src/rfc_agent/ask.py
+  s_a4c7dd8d9c1f79::t_a41b6e927eb348 1-155
+src/rfc_agent/config.py
+  s_a4c7dd8d9c1f79::t_1194247a90f65c 1-202
+src/rfc_agent/constants.py
+  s_a4c7dd8d9c1f79::t_19675831f90e90 1-87
+src/rfc_agent/contracts.py
+  s_a4c7dd8d9c1f79::t_71b7ecef481f0a 1-20
+src/rfc_agent/decisions.py
+  s_a4c7dd8d9c1f79::t_ebdccdebf28b7c 1-41
+src/rfc_agent/draft/__init__.py
+  s_a4c7dd8d9c1f79::t_fac272a8e88a01 1
+src/rfc_agent/draft/__main__.py
+  s_a4c7dd8d9c1f79::t_5373789c347e47 1-5
+src/rfc_agent/draft/cli.py
+  s_a4c7dd8d9c1f79::t_cf648b614c8ce2 1-271
+src/rfc_agent/draft/coverage.py
+  s_a4c7dd8d9c1f79::t_bb728f2dc5f5a9 1-153
+src/rfc_agent/draft/gate.py
+  s_a4c7dd8d9c1f79::t_9731cff8c682b3 1-284
+src/rfc_agent/draft/prompts/write.md
+  s_a4c7dd8d9c1f79::t_42f6cb1e21a297 1-44
+src/rfc_agent/emit.py
+  s_a4c7dd8d9c1f79::t_f349b9953298d6 1-199
+src/rfc_agent/engine.py
+  s_a4c7dd8d9c1f79::t_9e9fab09f82185 1-1725
+src/rfc_agent/feedback.py
+  s_8ba8efda98ef1e::t_6d300cc709f276 1-242
+src/rfc_agent/figma_snapshot.py
+  s_a4c7dd8d9c1f79::t_5886f181847562 1-813
+src/rfc_agent/gates.py
+  s_a4c7dd8d9c1f79::t_994c127e836ec0 1-866
+src/rfc_agent/hooks/__init__.py
+  s_a4c7dd8d9c1f79::t_72604e32810f2b 1-26
+src/rfc_agent/hooks/approve_readonly.py
+  s_a4c7dd8d9c1f79::t_fde4fd3ed73d78 1-95
+src/rfc_agent/hooks/byte_budget.py
+  s_a4c7dd8d9c1f79::t_1551281e92900d 1-184
+src/rfc_agent/hooks/feedback.py
+  s_a4c7dd8d9c1f79::t_e28f94754fdb18 1-37
+src/rfc_agent/hooks/guard_writes.py
+  s_a4c7dd8d9c1f79::t_c8f9139b00f666 1-224
+src/rfc_agent/hooks/repo_history.py
+  s_a4c7dd8d9c1f79::t_a3b699c75158e1 1-67
+src/rfc_agent/hooks/stage_tools.py
+  s_a4c7dd8d9c1f79::t_12129278439315 1-130
+src/rfc_agent/hooks_canary.py
+  s_a4c7dd8d9c1f79::t_e1e11bddaabbc7 1-104
+src/rfc_agent/identity.py
+  s_a4c7dd8d9c1f79::t_d3349b70a28cd8 1-154
+src/rfc_agent/investigate/__init__.py
+  s_a4c7dd8d9c1f79::t_3060af768ef682 1
+src/rfc_agent/investigate/__main__.py
+  s_a4c7dd8d9c1f79::t_3b0ba5977afbb0 1-5
+src/rfc_agent/investigate/agent.py
+  s_a4c7dd8d9c1f79::t_e4849966004f67 1-335
+src/rfc_agent/investigate/checks.py
+  s_a4c7dd8d9c1f79::t_ea6ff2f5a4b71d 1-245
+src/rfc_agent/investigate/cli.py
+  s_a4c7dd8d9c1f79::t_2ff327abf2dd89 1-617
+src/rfc_agent/investigate/config.py
+  s_a4c7dd8d9c1f79::t_63a68966e09c55 1-55
+src/rfc_agent/investigate/hook.py
+  s_a4c7dd8d9c1f79::t_4cbd0d27d41689 1-122
+src/rfc_agent/investigate/pauses.py
+  s_a4c7dd8d9c1f79::t_abe2531dc5ea88 1-157
+src/rfc_agent/investigate/plan.py
+  s_a4c7dd8d9c1f79::t_56c19c7c41d487 1-240
+src/rfc_agent/investigate/progress.py
+  s_a4c7dd8d9c1f79::t_a353f76f50c74f 1-118
+src/rfc_agent/investigate/prompts/facts_template.md
+  s_a4c7dd8d9c1f79::t_73262b94127552 1-11
+src/rfc_agent/investigate/prompts/lead_1a.md
+  s_a4c7dd8d9c1f79::t_82966d3d4c7ef0 1-64
+src/rfc_agent/investigate/prompts/lead_1c.md
+  s_a4c7dd8d9c1f79::t_5cadaa0bb4803f 1-20
+src/rfc_agent/investigate/prompts/tracer.md
+  s_a4c7dd8d9c1f79::t_0f656f6d7eb4b3 1-44
+src/rfc_agent/investigate/prompts/ui_reader.md
+  s_a4c7dd8d9c1f79::t_c9035bb337b228 1-34
+src/rfc_agent/investigate/repo_info.py
+  s_a4c7dd8d9c1f79::t_98008ecbf14545 1-79
+src/rfc_agent/investigate/ui.py
+  s_a4c7dd8d9c1f79::t_e1d721d45ba972 1-118
+src/rfc_agent/ledger.py
+  s_a4c7dd8d9c1f79::t_fec43eecc775c3 1-195
+src/rfc_agent/legacy_names.py
+  s_a4c7dd8d9c1f79::t_0a0651ac3183b6 1-51
+src/rfc_agent/localnet.py
+  s_a4c7dd8d9c1f79::t_3f9c17d5e3e6b4 1-27
+src/rfc_agent/mcp_tools.py
+  s_a4c7dd8d9c1f79::t_eee1f973b56fe5 1-122
+src/rfc_agent/memory.py
+  s_a4c7dd8d9c1f79::t_bb7a4a5ddb8fd0 1-271
+src/rfc_agent/obs.py
+  s_a4c7dd8d9c1f79::t_931edc6a56cc34 1-1329
+src/rfc_agent/observe.py
+  s_8ba8efda98ef1e::t_1903b8501991c3 1-631
+src/rfc_agent/privacy.py
+  s_a4c7dd8d9c1f79::t_d78d1c819691cb 1-144
+src/rfc_agent/review/__init__.py
+  s_a4c7dd8d9c1f79::t_fbb0ca4ed8c29f 1
+src/rfc_agent/review/__main__.py
+  s_a4c7dd8d9c1f79::t_25f93f9897e830 1-5
+src/rfc_agent/review/cli.py
+  s_a4c7dd8d9c1f79::t_ce9daea5b5d744 1-319
+src/rfc_agent/review/prompts/cross_reviewer.md
+  s_a4c7dd8d9c1f79::t_35d7dbc9e3bd98 1-22
+src/rfc_agent/review/prompts/finding_format.md
+  s_a4c7dd8d9c1f79::t_9695c66adf15c0 1-21
+src/rfc_agent/review/prompts/flow_reviewer.md
+  s_a4c7dd8d9c1f79::t_9f1bb0e15d0540 1-28
+src/rfc_agent/review/review.py
+  s_a4c7dd8d9c1f79::t_291e2ddc46eb33 1-110
+src/rfc_agent/revise/__init__.py
+  s_a4c7dd8d9c1f79::t_db02014a28690f 1
+src/rfc_agent/revise/__main__.py
+  s_a4c7dd8d9c1f79::t_26dcc19451bf79 1-5
+src/rfc_agent/revise/cli.py
+  s_a4c7dd8d9c1f79::t_9345c016b77c0d 1-385
+src/rfc_agent/revise/fixlog.py
+  s_a4c7dd8d9c1f79::t_32693700b51d78 1-120
+src/rfc_agent/revise/prompts/confirm.md
+  s_a4c7dd8d9c1f79::t_30c60b3f56d1d0 1-25
+src/rfc_agent/revise/prompts/fix.md
+  s_a4c7dd8d9c1f79::t_d5b42750a3205b 1-15
+src/rfc_agent/run.py
+  s_a4c7dd8d9c1f79::t_c080ec2a19436c 1-232
+src/rfc_agent/run_facts.py
+  s_8ba8efda98ef1e::t_c359cb8382a439 1-46
+src/rfc_agent/runner.py
+  s_a4c7dd8d9c1f79::t_d27c229919cc59 1-920
+src/rfc_agent/scope/__init__.py
+  s_a4c7dd8d9c1f79::t_6dd5d30e262bd3 1
+src/rfc_agent/scope/__main__.py
+  s_a4c7dd8d9c1f79::t_445abc27a993ec 1-5
+src/rfc_agent/scope/atlassian.py
+  s_a4c7dd8d9c1f79::t_1e67463abc6c42 1-321
+src/rfc_agent/scope/cli.py
+  s_a4c7dd8d9c1f79::t_769d2fb89206fe 1-478
+src/rfc_agent/scope/confirm.py
+  s_a4c7dd8d9c1f79::t_d58889ee82a9e5 1-141
+src/rfc_agent/scope/context.py
+  s_a4c7dd8d9c1f79::t_4d6cffdc210418 1-360
+src/rfc_agent/scope/figma.py
+  s_a4c7dd8d9c1f79::t_f1c3f6cab4a03c 1-291
+src/rfc_agent/scope/repos.py
+  s_a4c7dd8d9c1f79::t_be2da1d0c3a974 1-250
+src/rfc_agent/services_map.py
+  s_a4c7dd8d9c1f79::t_30911a064b9436 1-207
+src/rfc_agent/steer.py
+  s_a4c7dd8d9c1f79::t_58d6d20b13513d 1-330
+src/rfc_agent/steering.py
+  s_a4c7dd8d9c1f79::t_a353c54334c3ba 1-147
+src/rfc_agent/streams.py
+  s_a4c7dd8d9c1f79::t_e8cba38f3e68e6 1-187
+src/rfc_agent/summarize/__init__.py
+  s_a4c7dd8d9c1f79::t_6a4f63e601a9ac 1
+src/rfc_agent/summarize/__main__.py
+  s_a4c7dd8d9c1f79::t_e1aa980179c1a9 1-5
+src/rfc_agent/summarize/cli.py
+  s_a4c7dd8d9c1f79::t_3af2b6746dea45 1-116
+src/rfc_agent/summarize/prompts/readable.md
+  s_a4c7dd8d9c1f79::t_885ab0073568dc 1-24
+src/rfc_agent/think_tap.py
+  s_a4c7dd8d9c1f79::t_3abc77614d0903 1-251
+src/rfc_agent/watch.py
+  s_a4c7dd8d9c1f79::t_f7d8745b7fcddf 1-59
+src/workflows/__init__.py
+  s_a4c7dd8d9c1f79::t_0a4ebf727263ad 1-4
+src/workflows/testing/README.md
+  s_a4c7dd8d9c1f79::t_16bec12ae69bc3 1-254
+src/workflows/testing/__init__.py
+  s_a4c7dd8d9c1f79::t_0b05564a9db735 1-138
+src/workflows/testing/_io.py
+  s_a4c7dd8d9c1f79::t_1ac8c90dfe38ce 1-123
+src/workflows/testing/be_execute.py
+  s_a4c7dd8d9c1f79::t_b2fa28ba943847 1-221
+src/workflows/testing/be_spec.py
+  s_a4c7dd8d9c1f79::t_21c0c6e6ccd664 1-258
+src/workflows/testing/flags.py
+  s_a4c7dd8d9c1f79::t_b1e3f15ef62128 1-124
+src/workflows/testing/mechanical.py
+  s_a4c7dd8d9c1f79::t_714d787c36e4da 1-214
+src/workflows/testing/route_map.py
+  s_a4c7dd8d9c1f79::t_df57ce37f6f76a 1-51
+src/workflows/testing/schema.py
+  s_a4c7dd8d9c1f79::t_edfe102c2ff10b 1-252
+src/workflows/testing/skills/qa-test-case-evaluator/SKILL.md
+  s_a4c7dd8d9c1f79::t_65cd0b61a2f225 1-184
+src/workflows/testing/skills/qa-test-case-generator/SKILL.md
+  s_a4c7dd8d9c1f79::t_5f4762d7d25ab0 1-395
+src/workflows/testing/stages/__init__.py
+  s_a4c7dd8d9c1f79::t_38190de4a0d9ef 1-149
+src/workflows/testing/stages/derive_spec/__init__.py
+  s_a4c7dd8d9c1f79::t_0904b8e3f4797d 1-76
+src/workflows/testing/stages/evaluate/__init__.py
+  s_a4c7dd8d9c1f79::t_bbcea5d5a992ac 1-212
+src/workflows/testing/stages/execute_be/__init__.py
+  s_a4c7dd8d9c1f79::t_e3551ea7bb5532 1-175
+src/workflows/testing/stages/generate_cases/__init__.py
+  s_a4c7dd8d9c1f79::t_94aa40b5d86116 1-164
+src/workflows/testing/stages/render_xlsx/__init__.py
+  s_a4c7dd8d9c1f79::t_e3b785a8480f7d 1-80
+src/workflows/testing/stages/sources/__init__.py
+  s_a4c7dd8d9c1f79::t_18ef5a1513eb2d 1-121
+src/workflows/testing/stages/store_cases/__init__.py
+  s_a4c7dd8d9c1f79::t_946a826ba86ec7 1-71
+src/workflows/testing/store/__init__.py
+  s_a4c7dd8d9c1f79::t_1baf58a1e239b2 1-102
+src/workflows/testing/store/json_store.py
+  s_a4c7dd8d9c1f79::t_4668f0232a94fb 1-163
+src/workflows/testing/store/kiwi.py
+  s_a4c7dd8d9c1f79::t_a57785e1332262 1-370
+src/workflows/testing/xlsx.py
+  s_a4c7dd8d9c1f79::t_82fced912c8599 1-271
+tests/SCENARIOS.md
+  s_a4c7dd8d9c1f79::t_1e86fea6b7ee6f 1-1370
+tests/conftest.py
+  s_a4c7dd8d9c1f79::t_063a61258dd179 1-11
+tests/fixtures/fake_repo/labs_agg/app/handlers.py
+  s_a4c7dd8d9c1f79::t_c5aadf3d52cb83 1-5
+tests/fixtures/pi/fake_pi.py
+  s_a4c7dd8d9c1f79::t_43d9ac51723fce 1-173
+tests/fixtures/pi/guard_cases.mjs
+  s_a4c7dd8d9c1f79::t_11f835972c4ccd 1-229
+tests/fixtures/pi/session.error.jsonl
+  s_a4c7dd8d9c1f79::t_ce365e15cd6d44 1-11
+tests/fixtures/pi/session.nocost.jsonl
+  s_a4c7dd8d9c1f79::t_f5032737e7d230 1-26
+tests/fixtures/pi/session.sample.jsonl
+  s_a4c7dd8d9c1f79::t_c8f1600a58562a 1-26
+tests/fixtures/stream_error.jsonl
+  s_a4c7dd8d9c1f79::t_6b7bd58422fa75 1-2
+tests/fixtures/stream_full.jsonl
+  s_a4c7dd8d9c1f79::t_a88648718a94dc 1-28
+tests/fixtures/stream_ok.jsonl
+  s_a4c7dd8d9c1f79::t_08de96a665506a 1-4
+tests/harness/test_engine_pi.py
+  s_a4c7dd8d9c1f79::t_6ecf1be82f4599 1-634
+tests/harness/test_engine_pi_guard.py
+  s_a4c7dd8d9c1f79::t_7ffb3eb7afe99b 1-64
+tests/harness/test_engine_pi_translate.py
+  s_a4c7dd8d9c1f79::t_92e31d79235d7a 1-429
+tests/harness/test_harness_claude_engine.py
+  s_a4c7dd8d9c1f79::t_dc67f9aa26a7c0 1-415
+tests/harness/test_harness_cli.py
+  s_a4c7dd8d9c1f79::t_c799d599197f88 1-313
+tests/harness/test_harness_layering.py
+  s_a4c7dd8d9c1f79::t_eac22df2524197 1-66
+tests/harness/test_harness_policy.py
+  s_a4c7dd8d9c1f79::t_071f2a3c76264d 1-230
+tests/harness/test_harness_replay.py
+  s_a4c7dd8d9c1f79::t_6bf1fe3805d1e6 1-246
+tests/harness/test_harness_review_fixes.py
+  s_a4c7dd8d9c1f79::t_9fa69f71c27f45 1-418
+tests/harness/test_harness_runner_flags.py
+  s_a4c7dd8d9c1f79::t_1ea05fce5a3755 1-403
+tests/harness/test_harness_trace_postcondition.py
+  s_a4c7dd8d9c1f79::t_1f2d9a61b29ba4 1-240
+tests/infra/test_approve_readonly.py
+  s_a4c7dd8d9c1f79::t_4a49f5faa32f51 1-166
+tests/infra/test_backjump.py
+  s_a4c7dd8d9c1f79::t_bf60cdebf60ec7 1-238
+tests/infra/test_bonus_patch.py
+  s_a4c7dd8d9c1f79::t_a92ca2afa914e6 1-72
+tests/infra/test_byte_budget.py
+  s_a4c7dd8d9c1f79::t_a0f9675ace4d39 1-106
+tests/infra/test_config.py
+  s_a4c7dd8d9c1f79::t_4b8a93e18b8221 1-106
+tests/infra/test_diff_only_revision.py
+  s_a4c7dd8d9c1f79::t_47bea12a26724a 1-83
+tests/infra/test_gates.py
+  s_a4c7dd8d9c1f79::t_230e27e5910913 1-426
+tests/infra/test_gates_prd_soft_markers.py
+  s_a4c7dd8d9c1f79::t_9e02d9f4762451 1-24
+tests/infra/test_guard_writes.py
+  s_a4c7dd8d9c1f79::t_67b6ba85a02559 1-129
+tests/infra/test_hooks_canary.py
+  s_a4c7dd8d9c1f79::t_da4e522673155a 1-55
+tests/infra/test_ledger.py
+  s_a4c7dd8d9c1f79::t_8103a88d74e4d6 1-351
+tests/infra/test_memory.py
+  s_a4c7dd8d9c1f79::t_9313f9f76b6d58 1-107
+tests/infra/test_obs.py
+  s_a4c7dd8d9c1f79::t_f18a28ff3e893b 1-1800
+tests/infra/test_operator_wait.py
+  s_a4c7dd8d9c1f79::t_17160a203f438f 1-67
+tests/infra/test_privacy.py
+  s_a4c7dd8d9c1f79::t_3d475d955bf3ce 1-109
+tests/infra/test_resume.py
+  s_a4c7dd8d9c1f79::t_ee38f96919c288 1-349
+tests/infra/test_resume_policy.py
+  s_a4c7dd8d9c1f79::t_981b71c433ac25 1-108
+tests/infra/test_runner.py
+  s_a4c7dd8d9c1f79::t_b65dbfe9f2d478 1-431
+tests/infra/test_security.py
+  s_a4c7dd8d9c1f79::t_d7b7260b18a42f 1-295
+tests/infra/test_stage_effort.py
+  s_a4c7dd8d9c1f79::t_d2b9029f6ce24a 1-56
+tests/infra/test_stage_tools.py
+  s_a4c7dd8d9c1f79::t_8f70bcf8068628 1-90
+tests/infra/test_steer.py
+  s_a4c7dd8d9c1f79::t_bb4c111755bb29 1-491
+tests/infra/test_streams.py
+  s_a4c7dd8d9c1f79::t_3083c2d607df01 1-434
+tests/infra/test_think_tap.py
+  s_a4c7dd8d9c1f79::t_8cf18446c18cef 1-156
+tests/infra/test_witness_carry.py
+  s_a4c7dd8d9c1f79::t_24fc69986684e8 1-37
+tests/panel.test.tsx
+  s_a4c7dd8d9c1f79::t_93e8ef2e93476f 1-156
+tests/parity/README.md
+  s_a4c7dd8d9c1f79::t_92134618767af0 1-55
+tests/parity/__init__.py
+  s_a4c7dd8d9c1f79::t_6a8415f353f2c4 1
+tests/parity/conftest.py
+  s_a4c7dd8d9c1f79::t_729764893086a4 1-73
+tests/parity/decision_vocabulary.golden
+  s_a4c7dd8d9c1f79::t_d3101c889acf86 1-37
+tests/parity/manifest_keys.golden
+  s_a4c7dd8d9c1f79::t_d8d7bee760fb29 1-56
+tests/parity/recording_layout.golden
+  s_a4c7dd8d9c1f79::t_ba2bd857fb9b08 1-19
+tests/parity/run_dir_layout.golden
+  s_a4c7dd8d9c1f79::t_1911045a7d30b4 1-11
+tests/parity/test_differential.py
+  s_a4c7dd8d9c1f79::t_cbcbd7efc727e4 1-207
+tests/parity/test_manifest_golden.py
+  s_a4c7dd8d9c1f79::t_0a14f4e8a03534 1-166
+tests/rfc/test_activity_feed.py
+  s_a4c7dd8d9c1f79::t_a23e352245bf47 1-104
+tests/rfc/test_ask.py
+  s_a4c7dd8d9c1f79::t_bf6bd3dd69a7ec 1-30
+tests/rfc/test_draft.py
+  s_a4c7dd8d9c1f79::t_337d86b5ec9499 1-129
+tests/rfc/test_draft_gate.py
+  s_a4c7dd8d9c1f79::t_ed7c99491d7a4e 1-204
+tests/rfc/test_feed_server.py
+  s_a4c7dd8d9c1f79::t_767e621771b361 1-382
+tests/rfc/test_feedback.py
+  s_a4c7dd8d9c1f79::t_042758dfb446c6 1-179
+tests/rfc/test_figma_snapshot.py
+  s_a4c7dd8d9c1f79::t_634f8cec0b4650 1-274
+tests/rfc/test_freshness.py
+  s_a4c7dd8d9c1f79::t_f538b7f8288f98 1-65
+tests/rfc/test_identity.py
+  s_a4c7dd8d9c1f79::t_faa89dbceffa34 1-150
+tests/rfc/test_investigate.py
+  s_a4c7dd8d9c1f79::t_dd708c519fa7f2 1-361
+tests/rfc/test_mine_reasons.py
+  s_a4c7dd8d9c1f79::t_f6f8328ca3c262 1-80
+tests/rfc/test_observe.py
+  s_a4c7dd8d9c1f79::t_e83606881ae79a 1-496
+tests/rfc/test_repo_info.py
+  s_a4c7dd8d9c1f79::t_6c4f2d1d151f50 1-43
+tests/rfc/test_review.py
+  s_a4c7dd8d9c1f79::t_565b6209831793 1-155
+tests/rfc/test_revise.py
+  s_a4c7dd8d9c1f79::t_32febc3e4de2dc 1-237
+tests/rfc/test_run.py
+  s_a4c7dd8d9c1f79::t_8ac58b89e65efd 1-117
+tests/rfc/test_scope.py
+  s_a4c7dd8d9c1f79::t_405ad4b5d4a39e 1-473
+tests/rfc/test_scope_discovery.py
+  s_a4c7dd8d9c1f79::t_0a422d34a83cdb 1-182
+tests/rfc/test_services_map.py
+  s_a4c7dd8d9c1f79::t_acb86c97360f60 1-130
+tests/rfc/test_steering.py
+  s_a4c7dd8d9c1f79::t_ceb6a93239ddc4 1-27
+tests/rfc/test_summarize.py
+  s_a4c7dd8d9c1f79::t_eb6d57d13557c2 1-68
+tests/testing/conftest.py
+  s_a4c7dd8d9c1f79::t_5fa183c80a55e4 1-104
+tests/testing/fixtures/cases.sample.json
+  s_a4c7dd8d9c1f79::t_212f552b3e2974 1-240
+tests/testing/fixtures/scenarios.sample.json
+  s_a4c7dd8d9c1f79::t_247ab960d8587c 1-182
+tests/testing/test_be_execute.py
+  s_a4c7dd8d9c1f79::t_4e1f5d25cf779d 1-217
+tests/testing/test_be_spec.py
+  s_a4c7dd8d9c1f79::t_17a303a2d567b2 1-209
+tests/testing/test_evaluate_gate.py
+  s_a4c7dd8d9c1f79::t_f0fb20ecf28626 1-150
+tests/testing/test_execute_be_stage.py
+  s_a4c7dd8d9c1f79::t_0c26fbc508b49e 1-258
+tests/testing/test_io_durability.py
+  s_a4c7dd8d9c1f79::t_b0da035588cf3e 1-332
+tests/testing/test_json_store.py
+  s_a4c7dd8d9c1f79::t_5be3529a48f780 1-187
+tests/testing/test_kiwi_store.py
+  s_a4c7dd8d9c1f79::t_05a28911253557 1-325
+tests/testing/test_mechanical.py
+  s_a4c7dd8d9c1f79::t_4f6606e2ce266f 1-175
+tests/testing/test_pipeline.py
+  s_a4c7dd8d9c1f79::t_39fd712344480d 1-457
+tests/testing/test_route_map.py
+  s_a4c7dd8d9c1f79::t_d1fcccbe096b3c 1-60
+tests/testing/test_schema.py
+  s_a4c7dd8d9c1f79::t_8c0cc58d4ba804 1-178
+tests/testing/test_secrets_and_tls.py
+  s_a4c7dd8d9c1f79::t_4c92789a013c17 1-201
+tests/testing/test_stages_python.py
+  s_a4c7dd8d9c1f79::t_01b4c5a680c846 1-308
+tools/feed_server.py
+  s_a4c7dd8d9c1f79::t_7600105b9fff71 1-691
+tools/figma_snapshot_plugin/code.js
+  s_a4c7dd8d9c1f79::t_bf1a17591950f5 1-196
+tools/figma_snapshot_plugin/manifest.json
+  s_a4c7dd8d9c1f79::t_a0f84dcb94958a 1-14
+tools/figma_snapshot_plugin/ui.html
+  s_a4c7dd8d9c1f79::t_449c5bd396ef68 1-38
+tools/score_external_rfc.py
+  s_a4c7dd8d9c1f79::t_88caacbab5a334 1-100
+types/index.d.ts
+  s_a4c7dd8d9c1f79::t_d191c28f9fc3de 1-32
+uv.lock
+  s_a4c7dd8d9c1f79::t_81636d3e23904d 1-498
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a4ca547c2c7a12181fc696d4b46b87d7532ce79d",
+  "prompts": {},
+  "sessions": {
+    "s_8ba8efda98ef1e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ba7d747-a280-4350-a38f-aa6ec26a3464",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    },
+    "s_a4c7dd8d9c1f79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c6f7237e-8863-41c9-8c34-4003741b2991",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}
