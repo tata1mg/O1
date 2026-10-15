@@ -52,21 +52,17 @@ separate from the desktop app's.
 
 ### Step 2 — Install the plugin
 
-**Check:** `claude plugin list --json` has `rfc-agent@rfc-agent-marketplace` with `"enabled": true`, and its
-`version` is 0.1.0 or newer. If so, skip to "Find the plugin folder". If it's installed but older, it likely
-comes from an old branch: run `claude plugin marketplace remove rfc-agent-marketplace`, then install below.
+**Check:** `claude plugin list --json` has `rfc-agent@rfc-agent-marketplace` with `"enabled": true`. If so, skip to
+"Find the plugin folder".
 
 Install from GitHub:
 
 ```bash
-claude plugin marketplace add "tata1mg/O1#main"
+claude plugin marketplace add tata1mg/O1
 claude plugin install rfc-agent@rfc-agent-marketplace
 ```
 
-Keep `#main`. It's the branch the team installs from.
-
-If `marketplace add` says `rfc-agent-marketplace` already exists (an older install), run
-`claude plugin marketplace remove rfc-agent-marketplace` and try again.
+This tracks the repo's default branch, which is what the team installs from.
 
 **Find the plugin folder.** In `claude plugin list --json`, the `rfc-agent@rfc-agent-marketplace` entry gives:
 
@@ -137,7 +133,7 @@ in.
 | You see | Fix |
 |---|---|
 | `Not logged in · Please run /login` | Sign in the `claude` command: in Terminal, run `claude`, then `/login` |
-| `/rfc-agent:setup` or `/rfc-agent:rfc` isn't found | Restart Claude Code. Check `claude plugin list` shows `rfc-agent` enabled |
+| `/rfc-agent:setup` or `/rfc-agent:rfc` isn't found | Restart Claude Code. Check `claude plugin list` shows `rfc-agent@rfc-agent-marketplace` enabled |
 | Stuck fetching the PRD, or "Atlassian is not connected" | Reconnect Atlassian (claude.ai → Settings → Connectors), then check `claude mcp list` |
 | `ATLASSIAN.SITE is not set` | Run `/rfc-agent:setup` and give the team's Atlassian site |
 | `context layer unavailable` | Run `/rfc-agent:setup` to check the fleetlens URL and token, and that the server is reachable |
