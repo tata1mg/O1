@@ -15,7 +15,7 @@ plugin into Figma. It takes about
 | What | Why | Where to get it |
 |---|---|---|
 | Claude Code, already installed | The plugin runs inside it | — |
-| Access to the GitHub repo `tata1mg/O1` | It's where the plugin is installed from https://github.com/tata1mg/O1/tree/main | Your team |
+| Access to the GitHub repo `tata1mg/O1` | It's where the plugin is installed from https://github.com/tata1mg/O1 | Your team |
 | An account on your team's **Confluence / Jira** site | PRDs and tickets are read from there | Your team |
 | The **team values**: Atlassian site, fleetlens URL, product surfaces, service inventory | Settings shared by the whole team. Not secret | A teammate |
 | A running **fleetlens** server (the context layer), its URL and token | Scope, Investigate and Review use it to find and trace code across repos. fleetlens is open source: [github.com/tata1mg/fleetlens](https://github.com/tata1mg/fleetlens) | Your team runs it. The token is in the team vault |
