@@ -194,3 +194,26 @@ process-group reader and killer, and the session-file lookup.
 and live ticks while the agent runs. Wrapping the engine would mean tailing its trace from a second thread.
 Sharing the helpers keeps one implementation of every risky piece (flag validation, killing the process group,
 the read deadline).
+
+---
+
+## Live verification (2026-10-28, Axon 0.2.6 / Pi 1.4.0)
+
+All runs used copies of the finished Claude run `prd-5672665111` (Upload Report optimisation), with Langfuse off.
+
+| Stage on Axon | Result | Time | Cost (gateway) |
+|---|---|---|---|
+| Scope (local PRD, `--no-figma --yes`) | Discovery made 42 fleetlens calls and found the same 4 repos as the Claude run; the summary found `consumer_web` | 1m51s | $0.12 |
+| Investigate (`--fresh --yes`) | 6 flows, 30 REQs. Plan check sent it back once and the lead resumed its Axon session. 6 parallel tracers, all citation checks clean. 40+ fleetlens calls over MCP | 21m06s | $2.78 |
+| Draft (`--fresh`) | The Claude lead session couldn't be resumed, so it fell back to a fresh lead (D-13); one "not finished" retry. Gate clean: 82 citations, 8 CHANGEs, 6 diagrams | 20m21s | $1.36 |
+| Review (`--fresh`) | 7 reviewers in parallel: 19 blocker, 25 major, 5 minor | 13m41s | $5.65 |
+| Revise (`--fresh`) + Summarize | Round 1: 43/44 resolved, 4 new blockers. Round 2: 3 resolved. 4 left unresolved and published. Gate clean: 117 citations | 23m15s + 1m39s | $7.24 + $0.08 |
+
+**Observations for the quality A/B (AXON_PLAN §6):**
+
+- The Axon RFC is smaller than the Claude one for the same PRD: 76.7 KB vs 116.3 KB, 8 CHANGEs vs 12, 117
+  citations vs 178.
+- Both ended with 4 unresolved review findings. Claude's whole run cost $148.63; the Axon stages above total
+  about $17. The two RFCs haven't been compared by a human yet.
+- The "N rate-limit event(s)" count is noisy on both engines. It counts the text `rate_limit` anywhere in the
+  stream, including source code the agents read. It is not an Axon problem.
