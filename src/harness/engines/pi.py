@@ -145,6 +145,7 @@ class PiEngine:
     """The `pi` adapter. Construct via `harness.engines.get_engine("pi", ...)`."""
 
     name = "pi"
+    supports_mcp = False  # pi 0.85 has none; AxonEngine (pi 1.4) overrides
 
     def __init__(self, bin: str | None = None, node_bin: str | None = None, flags: object | None = None,
                  **_ignored) -> None:
@@ -252,10 +253,11 @@ class PiEngine:
         if resume_file is not None and not resume_file.exists():
             resume_file = None
         containment = req.containment or Containment()
-        # Pi has no MCP, by design and with no upstream extension. A stage that names servers cannot
+        # Pi 0.85 has no MCP, by design and with no upstream extension. A stage that names servers cannot
         # possibly succeed here, so it is refused BEFORE any model spend rather than run and failed at its
         # output check — and the error names the override that fixes it (docs/harness/ENGINES.md §3).
-        if containment.mcp_servers:
+        # Subclasses on a Pi with built-in MCP (axon: Pi 1.4) set `supports_mcp` and register the servers.
+        if containment.mcp_servers and not self.supports_mcp:
             raise PipelineConfigError(
                 f"stage '{req.label}' needs MCP server(s) {sorted(containment.mcp_servers)} but the `pi` "
                 f"engine has no MCP support (an explicit pi non-feature). Either fetch those inputs in the "
@@ -369,7 +371,7 @@ class PiEngine:
         return EngineResult(
             summary=summary,
             duration_s=duration,
-            engine_desc=f"pi:{summary.model or req.model or 'default'}",
+            engine_desc=f"{self.name}:{summary.model or req.model or 'default'}",
             prompt_sent=req.prompt,
             trace_path=req.trace_path,
             raw_trace_path=raw_path,
@@ -380,16 +382,11 @@ class PiEngine:
 
     def _argv(self, req: EngineRequest, *, session_id: str, session_dir: Path, resume_file: Path | None,
               containment: Containment) -> list[str]:
-        argv: list[str] = [self.bin, "--mode", "json", "-p"]
+        argv: list[str] = [*self._cmd_prefix(), "--mode", "json", "-p"]
         if self._flag("pi.hermetic"):
             argv += list(HERMETIC_FLAGS)
-        if self._guard_on(containment):
-            # discovery off, exactly one extension: ours. A CLI `-e` extension loads BEFORE the
-            # project-trust decision, so the guard is active even in an untrusted repo.
-            argv += ["--no-extensions", "-e", str(self._guard_path())]
-        elif self._flag("pi.hermetic"):
-            argv += ["--no-extensions"]
-        provider = str(self._flag("pi.provider") or "")
+        argv += self._extension_args(req, containment)
+        provider = self._provider()
         if provider:
             argv += ["--provider", provider]
         if req.model:
@@ -411,10 +408,10 @@ class PiEngine:
             append_file.parent.mkdir(parents=True, exist_ok=True)
             append_file.write_text(req.system_prompt_append, encoding="utf-8")
             argv += ["--append-system-prompt", str(append_file)]
-        allowed = _pi_tool_names(containment.allowed_tools)
+        allowed = _pi_tool_names(containment.allowed_tools, keep_mcp=self.supports_mcp)
         if allowed:
             argv += ["--tools", ",".join(allowed)]
-        denied = _pi_tool_names(containment.disallowed_tools)
+        denied = _pi_tool_names(containment.disallowed_tools, keep_mcp=self.supports_mcp)
         if denied:
             argv += ["--exclude-tools", ",".join(denied)]
         argv += ["--session-dir", str(session_dir)]
@@ -427,6 +424,27 @@ class PiEngine:
         # `--` ALWAYS: a prompt beginning with "-" would otherwise be parsed as flags.
         argv += ["--", req.prompt]
         return argv
+
+    # ---- subclass seams (AxonEngine) ---------------------------------------------------------------
+
+    def _cmd_prefix(self) -> list[str]:
+        """The argv before pi's own flags: the pi binary itself, or a launcher plus `pi`."""
+        return [self.bin]
+
+    def _provider(self) -> str:
+        return str(self._flag("pi.provider") or "")
+
+    def _extension_args(self, req: EngineRequest, containment: Containment) -> list[str]:
+        if self._guard_on(containment):
+            # discovery off, exactly one extension: ours. A CLI `-e` extension loads BEFORE the
+            # project-trust decision, so the guard is active even in an untrusted repo.
+            return ["--no-extensions", "-e", str(self._guard_path())]
+        if self._flag("pi.hermetic"):
+            return ["--no-extensions"]
+        return []
+
+    def _private_home(self) -> bool:
+        return bool(self._flag("pi.private_home"))
 
     def _guard_on(self, containment: Containment) -> bool:
         """The guard extension is the ONLY containment pi has, so it is on unless something explicitly
@@ -445,7 +463,7 @@ class PiEngine:
              containment: Containment, writable: tuple[Path, ...]) -> dict[str, str]:
         env = os.environ.copy()
         env.update({k: str(v) for k, v in (req.env or {}).items()})
-        if self._flag("pi.private_home"):
+        if self._private_home():
             home = cwd / ".pi-home"
             (home).mkdir(parents=True, exist_ok=True)
             # compaction OFF by default: it is lossy, and a stage that summarises its own evidence away
@@ -469,6 +487,9 @@ class PiEngine:
                 "readable_roots": [str(p) for p in containment.readable_roots],
                 "readonly_shell": bool(containment.readonly_shell),
                 "disabled_tools": list(_pi_tool_names(containment.disallowed_tools)),
+                # MCP tools the stage explicitly granted (Claude: --allowedTools). The guard has no
+                # path rule for them, so without this an MCP-capable pi would default-deny every one.
+                "granted_tools": [t for t in containment.allowed_tools if "mcp__" in t],
                 # The same three the Claude transport passes. Without them the policy's teaching strings
                 # interpolate an empty broker path and a literal "<repos_root>", and — worse — a pinned
                 # harness entrypoint stops being exempt, so a bash stage that works on claude-code has its
@@ -506,7 +527,7 @@ class PiEngine:
             tr.note(f"containment declared no writable_roots — defaulting to the run dir ({writable[0]})")
         dropped = [t for t in tuple(containment.allowed_tools) + tuple(containment.disallowed_tools)
                    if "mcp__" in t]
-        if dropped:
+        if dropped and not self.supports_mcp:
             tr.note(f"dropped {len(dropped)} MCP tool name(s) from the pi tool lists: {sorted(dropped)}")
         if containment.readable_roots:
             tr.note("pi has no --add-dir equivalent: readable_roots are enforced by the harness guard "
@@ -534,11 +555,12 @@ class PiEngine:
 # ---- module helpers --------------------------------------------------------------------------------
 
 
-def _pi_tool_names(names) -> tuple[str, ...]:
-    """Normalise a Containment tool list to Pi spellings, dropping MCP tools (Pi has none)."""
+def _pi_tool_names(names, keep_mcp: bool = False) -> tuple[str, ...]:
+    """Normalise a Containment tool list to Pi spellings, dropping MCP tools unless this pi has MCP
+    (pi 1.4 names them `mcp__<server>__<tool>`, the Claude spelling, so they pass through unchanged)."""
     out: list[str] = []
     for n in names or ():
-        if "mcp__" in n:
+        if "mcp__" in n and not keep_mcp:
             continue
         mapped = CLAUDE_TO_PI_TOOLS.get(n, n)
         if mapped not in out:

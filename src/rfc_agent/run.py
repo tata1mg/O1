@@ -50,6 +50,15 @@ def _mains():
     return {"scope": scope, "investigate": investigate, "draft": draft, "review": review, "revise": revise}
 
 
+def _engines() -> dict:
+    """Which engine each stage's agents ran on (run.json records it, so a finished run says what ran it)."""
+    from .axon_agent import engine_for
+    from .config import get_config
+
+    cfg = get_config()
+    return {stage: engine_for(stage, cfg) for stage in (*STAGES, "summarize")}
+
+
 def _read(p: Path):
     try:
         return json.loads(p.read_text(encoding="utf-8"))
@@ -92,6 +101,9 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--redo-scope", action="store_true", help="run Scope again even if the inputs exist")
     g.add_argument("--redo-prep", dest="redo_scope", action="store_true", help=argparse.SUPPRESS)  # old name
     g.add_argument("--yes", action="store_true", help="accept every pause's default (no questions)")
+    from .axon_agent import add_engine_args
+
+    add_engine_args(p.add_argument_group("engine (claude-code | axon)"))
     g = p.add_argument_group("observability (Langfuse)")
     g.add_argument(observe.FLAG, metavar="true|false", help="trace this run (default: config LANGFUSE.ENABLED, true)")
     g.add_argument(
@@ -166,6 +178,9 @@ def _summary(run_dir: Path, ran: list[dict]) -> dict:
 @observe.entry(None)
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    from .axon_agent import apply_engine_args
+
+    apply_engine_args(args.engine, args.stage_engine)
     if args.run_dir:
         run_dir = Path(args.run_dir).expanduser().resolve()
     elif args.prd:
@@ -213,6 +228,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             break
     summary = _summary(run_dir, ran)
+    summary["engines"] = _engines()
     summary["status"] = "done" if code == 0 else f"stopped at {ran[-1]['stage']}"
     (run_dir / "logs" / "run.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     if code == 0:

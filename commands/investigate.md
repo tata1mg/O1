@@ -1,6 +1,6 @@
 ---
 description: The investigate stage — lead plans, tracers trace the code in parallel, lead integrates (progress and pauses shown here)
-argument-hint: --run-dir <scope run dir> [--preset balanced|fast] [--req-granularity grouped|fine] [--ask] [--fresh]
+argument-hint: --run-dir <scope run dir> [--preset balanced|fast] [--req-granularity grouped|fine] [--ask] [--fresh] [--engine claude-code|axon] [--stage-engine STAGE=ENGINE]
 ---
 
 Run rfc-agent's Investigate for: `$ARGUMENTS`

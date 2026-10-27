@@ -1,6 +1,6 @@
 ---
 description: Generate a tech RFC from a PRD — the whole pipeline (Scope → Summarize) in one command; progress and every pause shown here
-argument-hint: --prd <confluence-url | page-id | file> [--jira KEY] [--repos a,b] [--no-figma] [--preset balanced|fast] [--ask] [--ask-review] [--langfuse true|false] [--langfuse-verbose true|false]
+argument-hint: --prd <confluence-url | page-id | file> [--jira KEY] [--repos a,b] [--no-figma] [--preset balanced|fast] [--ask] [--ask-review] [--langfuse true|false] [--langfuse-verbose true|false] [--engine claude-code|axon] [--stage-engine STAGE=ENGINE]
 ---
 
 Run the whole rfc-agent pipeline for: `$ARGUMENTS`
@@ -29,6 +29,12 @@ context layer and Bitbucket. Then Langfuse (skip when `$ARGUMENTS` has
 `--langfuse false`): `uv run --project "$PROJ" python -c "from rfc_agent import observe; raise SystemExit(observe.preflight())"`
 — exit 2 means tracing is on (the default) but the keys are missing: stop and relay its message (add the keys to
 the config, or rerun with `--langfuse false`). Never pick `false` for the user.
+
+**Axon** (only when `$ARGUMENTS` has `--engine axon` or a `--stage-engine …=axon`): the agents run on the org's
+managed Pi instead of `claude -p`; progress, pauses and outputs look the same. Preflight
+`uv run --project "$PROJ" python -m rfc_agent.axon_agent doctor` — anything but `axon: READY` stops the run; relay
+its FAIL lines (each names its fix). The Atlassian preflight above still applies to a Confluence/Jira PRD: Scope
+fetches it through Claude's Atlassian connector on either engine (a local `--prd <file>` needs neither).
 
 ## 2. Relay progress
 

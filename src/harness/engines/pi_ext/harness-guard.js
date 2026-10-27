@@ -81,6 +81,7 @@ export function loadPolicy(env = process.env) {
     readable_roots: p.readable_roots || [],
     readonly_shell: p.readonly_shell !== false,
     disabled_tools: p.disabled_tools || [],
+    granted_tools: p.granted_tools || [],
     denials_path: env.HARNESS_DENIALS_PATH || "",
     denials_echo: env.HARNESS_DENIALS_ECHO === "1",
     cmd: JSON.parse(env.HARNESS_POLICY_CMD || "[]"),
@@ -125,6 +126,9 @@ export function decide({ tool, input, policy, call = callPolicy }) {
   if ((policy.disabled_tools || []).includes(native)) {
     return { block: true, reason: `Tool "${native}" is disabled for this stage by the harness.` };
   }
+  // An MCP tool the stage granted by name (Claude: --allowedTools). The policy has no path rule for it, so
+  // asking would only return "no policy rule" and default-deny the grant. A trailing "*" grants a prefix.
+  if (isGranted(native, policy.granted_tools)) return { block: false };
 
   const canonical = CANONICAL_TOOL[native] || native;
   const request = {
@@ -168,6 +172,12 @@ export function decide({ tool, input, policy, call = callPolicy }) {
       `${verdict.reason || "no policy opinion"} — blocked because this run is headless and has nobody to ask. ` +
       `Use a provably read-only form, or write under the run dir.`,
   };
+}
+
+/** Is `native` one of the explicitly granted MCP tools? Only `mcp__` names can be granted this way. */
+export function isGranted(native, granted) {
+  if (!native.startsWith("mcp__")) return false;
+  return (granted || []).some((g) => (g.endsWith("*") ? native.startsWith(g.slice(0, -1)) : native === g));
 }
 
 /** Build the policy-facing input: a resolved absolute path, or the shell command, and nothing else. */

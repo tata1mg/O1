@@ -3,6 +3,16 @@
 All notable changes to this project. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions match `.claude-plugin/plugin.json`.
 
+## 0.2.0
+
+### Added
+
+- **Axon engine.** The pipeline's agents can run on Axon, the org's managed Pi, instead of `claude -p`:
+  `rfc --engine axon`, or a single stage with `--stage-engine review=axon` (also config `AGENT.ENGINE` /
+  `AGENT.STAGE_ENGINES`). Claude Code stays the default and its path is unchanged. Claude models map to gateway
+  models by tier (`AGENT.AXON.MODELS`). `python -m rfc_agent.axon_agent doctor` checks the setup. The harness
+  gains an `axon` adapter. See [docs/AXON.md](docs/AXON.md) and [decisions.md](decisions.md).
+
 ## 0.1.0 (pilot)
 
 First public release.

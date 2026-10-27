@@ -1,7 +1,8 @@
 """Engine protocol + registry. An ENGINE runs one headless agent invocation under a containment policy and
 writes a canonical trace. It knows nothing about stages' meaning; the runner and stage-owned fan-out
 engines drive it. Adapters: `claude_code` (the existing `claude -p` primitive, default), `pi` (badlogic
-pi-coding-agent, `--mode json`), `replay` (re-emits a recorded trace + fixture outputs: parity + benchmarks).
+pi-coding-agent, `--mode json`), `axon` (the org's managed Pi, `axon pi --mode json`), `replay` (re-emits a
+recorded trace + fixture outputs: parity + benchmarks).
 
 Selection is by NAME through flags (`engine`, `stage_engines`), so switching an engine — globally or for one
 stage — is an argument, not a code edit: `harness run rfc --engine pi --stage-engine review=claude-code`.
@@ -94,6 +95,7 @@ class Engine(Protocol):
 _BUILTIN: dict[str, str] = {
     "claude-code": "harness.engines.claude_code:ClaudeCodeEngine",
     "pi": "harness.engines.pi:PiEngine",
+    "axon": "harness.engines.axon:AxonEngine",
     "replay": "harness.engines.replay:ReplayEngine",
 }
 _REGISTRY: dict[str, Callable[..., Engine]] = {}

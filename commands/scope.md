@@ -1,6 +1,6 @@
 ---
 description: The scope stage — fetch the PRD, pick repos / pages / Figma sections with selection questions, snapshot the repos
-argument-hint: --prd <confluence-url | page-id | file> [--jira KEY] [--repos a,b] [--no-figma] [--fresh-clone]
+argument-hint: --prd <confluence-url | page-id | file> [--jira KEY] [--repos a,b] [--no-figma] [--fresh-clone] [--engine claude-code|axon] [--stage-engine STAGE=ENGINE]
 ---
 
 Run rfc-agent's Scope for: `$ARGUMENTS`

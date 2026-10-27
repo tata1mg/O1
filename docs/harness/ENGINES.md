@@ -1,7 +1,7 @@
 # Engines: selecting, running and adding them
 
 An **engine** runs one headless agent invocation under a containment policy and writes a canonical trace. It
-knows nothing about what a stage means. Three ship: `claude-code` (default), `pi`, `replay`.
+knows nothing about what a stage means. Four ship: `claude-code` (default), `pi`, `axon`, `replay`.
 
 ---
 
@@ -257,7 +257,50 @@ indirection), and Pi has no OS-level fallback. Pair the guard with a container w
 
 ---
 
-## 4. `replay`
+## 4. `axon`
+
+The org's managed Pi: `axon pi --mode json -p`. Axon (DeputyDev) owns sign-in, the LiteLLM gateway (provider
+`litellm`), Pi's home (`~/.axon/pi`) and a set of managed extensions (OTEL, terminal policy, compaction, session
+backup, model recommender). The event stream is plain Pi, so `AxonEngine` subclasses `PiEngine` and reuses its
+translator, guard, argv validation, budget kill and timeout handling. Source: `src/harness/engines/axon.py`.
+
+The rfc-agent pipeline uses the same pieces through its own agent seam (`rfc_agent/axon_agent.py`, selected with
+`rfc --engine axon`); see [docs/AXON.md](../AXON.md).
+
+### Prerequisites
+
+| Requirement | Check | Fix |
+|---|---|---|
+| Axon installed | `axon --version` >= flag `axon.min_version` (0.2.6) | `curl --proto '=https' --tlsv1.2 -fsSL https://deputydev.ai/axon/install.sh \| sh` |
+| signed in | `axon auth status` exits 0 | run `axon` once, choose *Login from browser* |
+| managed Pi | `axon doctor pi` reports >= flag `axon.min_pi` (1.4.0) | `axon update`, `axon setup pi --sync-packages` |
+
+`harness doctor` / `harness engines` run all three.
+
+### How it differs from `pi` (each one measured on Axon 0.2.6 / Pi 1.4.0)
+
+| `pi` adapter | `axon` adapter | Why |
+|---|---|---|
+| `--no-extensions -e guard` | `-e guard -e rfc-tools.js`, **no** `--no-extensions` | `--no-extensions` unloads the gateway provider: `Unknown provider "litellm"` |
+| private `PI_CODING_AGENT_DIR` | none | Axon ignores the override; auth is Axon's encrypted session |
+| `PI_OFFLINE=1` | unset | gateway model discovery is a startup network call |
+| MCP refused | registered per session by `pi_ext/rfc-tools.js` (`pi.registerMcpServer`, `direct` exposure) | Pi 1.4 has built-in MCP; nothing is written to `~/.axon/pi/mcp.json` |
+| MCP tool names dropped | kept in `--tools`; listed as `granted_tools` for the guard | the guard otherwise default-denies them ("no policy rule") |
+| `--model` as given | Claude ids mapped to gateway ids by tier (flag `axon.models`) | the gateway serves no Claude models |
+| compaction off via settings | Axon's **threshold** compaction cancelled by `rfc-tools.js` (flag `axon.threshold_compaction`) | Axon enables early compaction for every session |
+
+### Known gaps
+
+| Gap | Behaviour |
+|---|---|
+| Axon's session backup | Every agent is a backed-up session (full transcript). No supported headless opt-out yet |
+| Axon's terminal policy | Loaded alongside the guard. Stages give agents no bash, so it is mostly inert |
+| No steering channel | As `pi`: `--mode json` has no stdin turns; a `LOG` event records the drop |
+| Atlassian | Not available headless without a one-time `axon pi mcp login` or a gateway MCP route; rfc Scope keeps fetching through Claude |
+
+---
+
+## 5. `replay`
 
 Re-emits a recorded canonical trace and writes a fixture output tree. Three jobs and no others: the
 differential parity run, the structural benchmarks, and offline tests of runner behaviour.
@@ -272,7 +315,7 @@ catch a protocol change.
 
 ---
 
-## 5. Adding an adapter
+## 6. Adding an adapter
 
 Five steps.
 

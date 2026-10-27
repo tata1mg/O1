@@ -145,7 +145,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="never touch your checkouts: take every repo from the repo cache "
                         "(~/.cache/rfc-agent/repos, shallow-cloned once, fetched on later runs)")
     p.add_argument("--model", default=at.DEFAULT_MODEL, help="model that makes the connector calls")
+    from ..axon_agent import add_engine_args, apply_engine_args
+
+    add_engine_args(p)
     args = p.parse_args(argv)
+    apply_engine_args(args.engine, args.stage_engine)
 
     cfg = get_config()
     timer = _Timer()

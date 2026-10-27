@@ -112,7 +112,16 @@ def run(
 ) -> AgentResult:
     """Run (or resume) one agent to completion.
     `on_event(label, kind, data)` gets "start", "tool", "text" and "end" ticks.
-    `trace_step` names the step on the Langfuse trace only (default: the log file's step)."""
+    `trace_step` names the step on the Langfuse trace only (default: the log file's step).
+    The stage's engine (`--engine` / AGENT.ENGINE, default claude-code) picks the backend: `axon` runs the
+    same spec on the org's managed Pi (rfc_agent.axon_agent) and returns the same AgentResult."""
+    from ..axon_agent import engine_for
+
+    if engine_for(stage, cfg) == "axon":
+        from .. import axon_agent
+
+        return axon_agent.run(spec, prompt, run_dir, cfg, resume=resume, on_event=on_event, stage=stage,
+                              step=step, trace_step=trace_step)
     run_dir = run_dir.resolve()
     binary = cfg.get("AGENT.CLAUDE_BIN", "claude") if cfg else "claude"
     if os.environ.get("RFC_AGENT_NO_REAL_CLAUDE") and Path(binary).name == "claude" and not Path(binary).is_file():

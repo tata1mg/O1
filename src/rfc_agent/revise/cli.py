@@ -51,7 +51,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--run-dir", required=True, help="the run folder, after Review")
     p.add_argument("--fresh", action="store_true", help="start over (keeps review/review.md)")
     p.add_argument("--no-readable", action="store_true", help="don't write the readable copy (Summarize) afterwards")
+    from ..axon_agent import add_engine_args, apply_engine_args
+
+    add_engine_args(p)
     args = p.parse_args(argv)
+    apply_engine_args(args.engine, args.stage_engine)
     run_dir = Path(args.run_dir).expanduser().resolve()
     migrate_run_dir(run_dir)
     review_md_path = run_dir / "review" / "review.md"

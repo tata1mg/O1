@@ -52,5 +52,12 @@ each, with the concrete fix for every FAIL. Read-only — change nothing without
    is green. The `--rootdir` + explicit test path are REQUIRED: a bare `pytest -q` inherits the shell's
    cwd and, run from a workspace, collects every repo it can see (measured: 255 collection errors).
 
+10. **Axon engine** (only when config `AGENT.ENGINE` or `AGENT.STAGE_ENGINES` names `axon`, or the user says they
+   will run with `--engine axon`; otherwise report `n/a`):
+   `uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m rfc_agent.axon_agent doctor` prints `axon: READY`, or one
+   `FAIL` line per problem with its fix (Axon installed, `axon auth status` valid, managed Pi >= 1.4.0, every
+   mapped model on the gateway, fleetlens answering). `python -m rfc_agent.axon_agent models` shows which gateway
+   model each stage model maps to. Claude checks 2 and 8 still apply: Scope fetches Confluence/Jira through Claude.
+
 Finish with a one-line verdict: READY (all pass) or BLOCKED (name the first blocking failure). If check 0
 failed, say explicitly that the remaining results describe the STALE copy.

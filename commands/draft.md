@@ -1,6 +1,6 @@
 ---
 description: The draft stage — the lead writes the RFC (out/rfc.md), then the gate checks it
-argument-hint: --run-dir <run dir after Investigate> [--fresh] [--check-only]
+argument-hint: --run-dir <run dir after Investigate> [--fresh] [--check-only] [--engine claude-code|axon] [--stage-engine STAGE=ENGINE]
 ---
 
 Run rfc-agent's Draft for: `$ARGUMENTS`

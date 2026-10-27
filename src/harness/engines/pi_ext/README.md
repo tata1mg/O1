@@ -166,3 +166,19 @@ and only exercised pi's startup path.
 | `-e <abs>/probe.js` with `--mode json -p --no-extensions` | the extension factory ran — a plain `.js` extension loads. |
 | a `console.log` from that extension | arrived on **stderr**; stdout stayed empty. |
 | the `{"type":"session",...}` header as line 1 | **not** observed: with an invalid API key pi produced no stdout at all before it was killed at 120 s, so the header may be written after provider setup rather than at process start. The translator tolerates a missing header for exactly this reason. |
+
+## rfc-tools.js (axon only)
+
+Loaded next to the guard by the `axon` adapter and by rfc-agent's Axon backend. Configured by one 0600 JSON
+file named in `RFC_TOOLS_CONFIG`, it does three things:
+
+- registers the stage's MCP servers for the one session (`pi.registerMcpServer`, `direct` exposure, so the
+  tools keep their `mcp__<server>__<tool>` names);
+- runs rfc-agent's `investigate/hook.py` with a Claude-shaped payload: `pre` on write/edit `tool_call`
+  (exit 2 blocks with the hook's message), `post` on `tool_result` (its `additionalContext` is appended to
+  the result);
+- cancels Axon's threshold compaction unless the config allows it.
+
+Failure policy matches the guard. A write check that can't run blocks the write; a post check that can't run
+adds nothing. `tests/fixtures/axon/rfc_tools_cases.mjs` drives it under plain `node`, including once against
+the real `hook.py`.
