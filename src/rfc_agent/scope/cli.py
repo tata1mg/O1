@@ -11,7 +11,8 @@ Steps (timed, written to logs/scope.json):
   2. PRD + child-page list + Jira via the claude.ai Atlassian connector (byte-exact, Haiku, no rewriting)
   3. Figma: per PRD link, open the node in the desktop app and wait for one plugin run (or reuse a cache)
      — scope candidates are computed meanwhile (a fleetlens discovery agent + a Haiku PRD summary)
-  4. ONE confirm screen: repos (+branch), extra pages, Jira, Figma sections
+  4. ONE confirm screen: repos (+branch), extra pages, Jira, Figma sections — or, with no design, whether
+     to go on without one
   5. in parallel: repo snapshots pinned to the default branch, and the ticked pages/Jira
   6. scope.json + findings/scope_approved.json + raw/figma_index.md
 """
@@ -347,13 +348,23 @@ def main(argv: list[str] | None = None) -> int:
         header = (f"── Scope · confirm ── PRD: {scope.get('prd_title') or prd_path.name}\n"
                   f"  context layer: {'ok' if layer.get('ok') else 'UNAVAILABLE — ' + str(layer.get('why'))}"
                   + (f"\n  surfaces: {', '.join(disc['surfaces'])}" if disc.get("surfaces") else ""))
+        # no design to read (and Figma not skipped on purpose): the operator decides whether to go on
+        no_design = None
+        if not args.no_figma and not any(it.kind == "figma" for it in items):
+            errs = [ex["error"] for ex in exports if ex.get("error")]
+            no_design = ("the PRD links no Figma design" if not exports
+                         else "no Figma screens could be read: " + "; ".join(errs or ["no sections found"]))
+            _say(f"no design available — {no_design}")
+        scope["no_design"] = no_design
         with timer.step("confirm_wait"):
             if interactive and (args.confirm_file or not sys.stdin.isatty()):
-                items = confirm.via_file(items, repo_item, header, run_dir)
+                items = confirm.via_file(items, repo_item, header, run_dir, no_design=no_design)
             elif interactive:
-                items = confirm.ask(items, repo_item, header)
+                items = confirm.ask(items, repo_item, header, no_design=no_design)
             else:
                 print(f"\n{header}{confirm.render(items)}\n", file=sys.stderr)
+                if no_design:
+                    _say("WARNING: going on without a design (--yes)")
         for name in _dropped_added_repos(items):  # never silent: file mode has no second screen to show it
             _say(f"WARNING: '{name}' is NOT on Bitbucket (wrong name, or no access) — dropped. "
                  "Rerun scope with the exact repo name.")
