@@ -514,14 +514,55 @@ def doctor(cfg) -> list[str]:
     return problems
 
 
+RFC_COMMAND_JS = Path(__file__).resolve().parent / "axon_ext" / "rfc-command.js"
+EXTENSION_NAME = "rfc-agent.js"
+
+
+def axon_agent_dir() -> Path:
+    """Axon's user-level Pi config dir (extensions/, skills/, mcp.json): PI_CODING_AGENT_DIR, else ~/.axon/pi."""
+    return Path(os.environ.get("PI_CODING_AGENT_DIR") or Path.home() / ".axon" / "pi").expanduser()
+
+
+def extension_stub(project: Path, uv: str) -> str:
+    """The file Axon loads: imports /rfc from this checkout, so a `git pull` updates it without reinstalling."""
+    return (
+        "// rfc-agent's /rfc command for Axon. Written by `python -m rfc_agent.axon_agent install`;\n"
+        "// rerun that after moving the project. Remove this file (or run `… uninstall`) to drop /rfc.\n"
+        f"import make from {json.dumps(str(RFC_COMMAND_JS))};\n"
+        f"export default (pi) => make(pi, {{ project: {json.dumps(str(project))}, uv: {json.dumps(uv)} }});\n"
+    )
+
+
+def install(agent_dir: Path | None = None) -> Path:
+    import shutil
+
+    uv = shutil.which("uv")
+    if not uv:
+        raise SystemExit("install: uv is not on PATH (rfc-agent runs through `uv run`)")
+    target = (agent_dir or axon_agent_dir()) / "extensions" / EXTENSION_NAME
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(extension_stub(_SRC.parent, uv), encoding="utf-8")
+    return target
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
     from .config import get_config
 
     p = argparse.ArgumentParser(prog="python -m rfc_agent.axon_agent")
-    p.add_argument("command", choices=("doctor", "models"))
+    p.add_argument("command", choices=("doctor", "models", "install", "uninstall"))
     args = p.parse_args(argv)
+    if args.command == "install":
+        path = install()
+        print(f"installed {path}")
+        print("In Axon: /reload (or start a new session), then /rfc --prd <confluence url | page id | file.md>")
+        return 0
+    if args.command == "uninstall":
+        path = axon_agent_dir() / "extensions" / EXTENSION_NAME
+        path.unlink(missing_ok=True)
+        print(f"removed {path}")
+        return 0
     cfg = get_config()
     if args.command == "models":
         for m in _STAGE_MODELS:

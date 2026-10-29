@@ -154,16 +154,10 @@ DeputyDev team: a run starts 10–40 agents, and each is a backed-up session.
 **Decision.** `rfc_agent/memory.py` (a post-run learning pass of the older ingest/extract/ground stages) is not
 moved. It isn't on the current Scope → Summarize path.
 
-## D-17 No in-Axon `/rfc` front end yet (plan P5)
+## D-17 ~~No in-Axon `/rfc` front end yet~~ — superseded by D-21
 
-**Decision.** There is no Pi extension that adds `/rfc` inside an `axon` session. You start an Axon-backed run
-from the terminal (`uv run rfc … --engine axon`) or from Claude Code (`/rfc-agent:rfc … --engine axon`, the same
-progress cards and pause UI).
-
-**Why.** The engine choice is independent of the front end. The UI only reads `progress.jsonl`,
-`activity.log` and the confirm files, which both engines write the same way. Building a Pi TUI front end needs
-interactive testing in a terminal session, which an unattended overnight build can't do. It's the next
-follow-up.
+**Decision (original).** No Pi extension adding `/rfc` inside an `axon` session; runs started from the terminal
+or from Claude Code. Deferred because a Pi front end needed interactive testing. D-21 builds it.
 
 ## D-18 The engine choice is per invocation, recorded in `run.json`
 
@@ -196,6 +190,40 @@ Sharing the helpers keeps one implementation of every risky piece (flag validati
 the read deadline).
 
 ---
+
+## D-21 `/rfc` inside Axon: a Pi extension that drives the CLI (plan P5)
+
+**Decision.** `src/rfc_agent/axon_ext/rfc-command.js` registers `/rfc` in Axon. It does what
+`commands/rfc.md` tells Claude Code to do, in code: it runs the Axon doctor as a preflight, starts
+`uv run rfc … --run-dir <run> --confirm-file` as a detached child, and tails `run.out`, `progress.jsonl` and
+`activity.log` into a widget above the editor plus a status entry. Each `WAITING FOR …` pause is asked with Pi
+dialogs, and the answers file is written in the format the CLI already reads. When the run finishes, the CLI's
+closing lines are posted into the conversation. `/rfc` without `--engine`/`--stage-engine` adds `--engine axon`.
+`/rfc attach <run>` follows a run again after Axon restarts, and `/rfc doctor` runs the doctor.
+
+`python -m rfc_agent.axon_agent install` writes a two-line stub, `~/.axon/pi/extensions/rfc-agent.js` (or under
+`PI_CODING_AGENT_DIR`). The stub imports the file from this checkout and records the project path and `uv`, so
+a `git pull` updates `/rfc` without reinstalling. `uninstall` removes it.
+
+**Why this shape.**
+- **A command, not a skill.** A Pi skill only adds instructions for the model. The model would then need a
+  background shell and a wake-up on each pause, and Pi has neither. A command needs no model at all: the
+  pipeline is unchanged, and the extension is just its progress view and pause UI. So `/rfc`, not `/skill:rfc`.
+- **Pause UI on `ui.select`/`ui.input`.** These work in the TUI and over RPC. Pi has no multi-select dialog, so
+  a checklist is a toggle loop: pick a row to flip it, then `✔ Done`. Escape keeps the proposal's ticks.
+  `ui.custom` would look nicer but is TUI-only and untestable over RPC.
+- **Detached child, pid file.** A 30–60 min run shouldn't die with the Axon session. `/rfc attach` uses the pid
+  file to tell a live run from a finished one. A proposal left by a dead process is never asked.
+- **`PI_*` variables are stripped from the child's environment.** They belong to the running session. The
+  pipeline's own `axon pi` children set up their own (same reasoning as D-05).
+- **No feedback step yet.** The 👍/👎 rating `/rfc-agent:rfc` asks for at the end is not ported. Run
+  `/rfc-agent:feedback` from Claude Code, or skip it.
+
+**Verified.** Node tests (`tests/fixtures/axon/rfc_command_cases.mjs` + `fake_uv.py`) drive the command
+end to end: preflight failure, launch argv, all three pause kinds, the answer formats and the finish. In real
+Axon (0.2.6 / Pi 1.4.0): `/rfc help` and `/rfc doctor` (→ `axon: READY`) run in print mode, and in RPC mode
+`/rfc --prd …` against the fake pipeline got every dialog, wrote all three answers files and posted the
+closing summary. Still to try: a real PRD driven from the interactive TUI.
 
 ## Live verification (2026-10-28, Axon 0.2.6 / Pi 1.4.0)
 

@@ -1,0 +1,8 @@
+{
+  "name": "rfc-agent-axon-ext",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "The /rfc command for Axon (Pi). No dependencies, no build step: Axon loads rfc-command.js through the stub `python -m rfc_agent.axon_agent install` writes. This manifest only declares ESM so plain `node` can import it in tests.",
+  "dependencies": {}
+}

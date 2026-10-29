@@ -29,7 +29,36 @@ and Langfuse traces. What changes is which agent runtime and which models do the
    sign-in is valid, the managed Pi is at least 1.4.0, every mapped model exists on the gateway, and fleetlens
    answers (VPN on).
 
-## 2. Run
+## 2. Run from inside Axon (`/rfc`)
+
+Install the command once (from the rfc-agent checkout):
+
+```bash
+uv run python -m rfc_agent.axon_agent install
+```
+
+Then, in any `axon` session (`/reload` an open one first):
+
+```
+/rfc --prd <confluence url | page id | file.md>
+```
+
+- `/rfc` checks Axon first (`/rfc doctor` runs that check on its own), then starts the pipeline in the
+  background. It takes 30–60 minutes.
+- Progress shows above the editor: stage, milestones, agents started.
+- Each pause (Scope's selection, Investigate's pauses, Review triage with `--ask-review`) opens as a question in
+  the session. To answer a list, pick rows to tick or untick them, then `✔ Done`.
+- When it finishes, the time, cost and RFC paths are posted into the conversation, so you can ask Axon about the
+  RFC right there.
+- Every rfc flag works (`--jira`, `--repos`, `--ask`, `--ask-review`, `--yes`, `--from`, `--run-dir`, …). The
+  agents run on Axon unless you pass `--engine` or `--stage-engine` yourself.
+- The run keeps going if you quit Axon. `/rfc attach <run folder>` follows it again and asks any pause that is
+  still waiting.
+
+`python -m rfc_agent.axon_agent uninstall` removes the command. The installed file points at this checkout, so
+pulling new code updates `/rfc` and you don't need to reinstall.
+
+## 3. Run from a terminal or Claude Code
 
 ```bash
 uv run rfc --prd <confluence url | page id | file.md> --engine axon
@@ -57,7 +86,7 @@ default, set it in `~/.config/rfc-agent/config.json`:
 Precedence: `--stage-engine` > `--engine` > `AGENT.STAGE_ENGINES` > `AGENT.ENGINE` > `claude-code`.
 `logs/run.json` records which engine each stage used.
 
-## 3. Models
+## 4. Models
 
 The stages name Claude models. On Axon each is mapped to a gateway model by tier:
 
@@ -82,7 +111,7 @@ Override by tier or by exact id in config:
 
 Effort maps to Pi's `--thinking` level of the same name.
 
-## 4. What is the same, and what isn't
+## 5. What is the same, and what isn't
 
 The same on both engines:
 
