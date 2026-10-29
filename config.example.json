@@ -77,8 +77,9 @@
     "ENGINE": "claude-code",
     "STAGE_ENGINES": {},
     "AXON": {
-      "_comment": "Only read when a stage runs on axon. MODELS maps the stages' Claude models to gateway models, by tier (opus[1m], opus, sonnet, haiku) or by exact Claude id; `python -m rfc_agent.axon_agent models` prints the mapping. THRESHOLD_COMPACTION: allow Axon's early compaction (default false — it summarises evidence away).",
+      "_comment": "Only read when a stage runs on axon. MODELS maps the stages' Claude models to gateway models, by tier (opus[1m], opus, sonnet, haiku) or by exact Claude id; `python -m rfc_agent.axon_agent models` prints the mapping. THRESHOLD_COMPACTION: allow Axon's early compaction (default false — it summarises evidence away). ATLASSIAN_SERVER: the Atlassian MCP server's name in Axon's mcp.json, used by Scope to fetch Confluence/Jira (default atlassian).",
       "BIN": "axon",
+      "ATLASSIAN_SERVER": "atlassian",
       "MODELS": {},
       "THRESHOLD_COMPACTION": false
     }

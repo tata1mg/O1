@@ -109,13 +109,15 @@ def apply_engine_args(engine: str | None, stage_items: list[str] | None) -> None
 
 
 def settings(cfg) -> dict:
-    """AGENT.AXON from config: BIN, PROVIDER, MODELS (tier/id -> gateway id), THRESHOLD_COMPACTION."""
+    """AGENT.AXON from config: BIN, PROVIDER, MODELS (tier/id -> gateway id), THRESHOLD_COMPACTION,
+    ATLASSIAN_SERVER (the name of the Atlassian MCP server in Axon's mcp.json)."""
     s = (cfg.get("AGENT.AXON", {}) if cfg else {}) or {}
     return {
         "bin": str(s.get("BIN") or os.environ.get("AXON_BIN") or "axon"),
         "provider": str(s.get("PROVIDER") or "litellm"),
         "models": dict(s.get("MODELS") or {}),
         "threshold_compaction": bool(s.get("THRESHOLD_COMPACTION", False)),
+        "atlassian_server": str(s.get("ATLASSIAN_SERVER") or "atlassian"),
     }
 
 
@@ -488,9 +490,10 @@ def list_models(bin: str, timeout: int = 120) -> set[str] | None:
     return ids or None
 
 
-def doctor(cfg) -> list[str]:
+def doctor(cfg, *, atlassian: bool = True) -> list[str]:
     """Preflight for `--engine axon`: the launcher (installed, signed in, managed Pi >= 1.4), every mapped model
-    exists on the gateway, and the context layer answers. [] = ready. Each problem names its fix."""
+    exists on the gateway, the context layer answers and, with `atlassian`, Axon's Atlassian MCP server is
+    signed in (Scope fetches a Confluence/Jira PRD through it, D-22). [] = ready. Each problem names its fix."""
     from harness.engines.axon import AxonEngine
 
     from .scope.context import health, spec_of
@@ -511,6 +514,18 @@ def doctor(cfg) -> list[str]:
     ok, why = health(spec_of(cfg))
     if not ok:
         problems.append(f"fleetlens (the context layer): {why}")
+    if atlassian:
+        from .scope.atlassian_axon import AxonConnectorSession
+
+        name = s["atlassian_server"]
+        state = AxonConnectorSession(Path("."), axon_bin=s["bin"], server=name).server_status()
+        if state == "missing":
+            problems.append(f"Axon has no Atlassian MCP server '{name}' (needed for a Confluence/Jira PRD) — "
+                            f"`axon pi mcp add {name} --url https://mcp.atlassian.com/v1/mcp`, then "
+                            f"`axon pi mcp login {name}`. A local --prd file doesn't need it")
+        elif state != "connected":
+            problems.append(f"Axon's Atlassian MCP server '{name}' is '{state}' (needed for a Confluence/Jira PRD)"
+                            f" — `axon pi mcp login {name}`. A local --prd file doesn't need it")
     return problems
 
 
@@ -552,6 +567,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = argparse.ArgumentParser(prog="python -m rfc_agent.axon_agent")
     p.add_argument("command", choices=("doctor", "models", "install", "uninstall"))
+    p.add_argument("--no-atlassian", action="store_true", help="doctor: skip the Atlassian check (local --prd file)")
     args = p.parse_args(argv)
     if args.command == "install":
         path = install()
@@ -568,7 +584,7 @@ def main(argv: list[str] | None = None) -> int:
         for m in _STAGE_MODELS:
             print(f"{m:32} -> {gateway_model(m, cfg)}")
         return 0
-    problems = doctor(cfg)
+    problems = doctor(cfg, atlassian=not args.no_atlassian)
     for line in problems:
         print(f"FAIL  {line}")
     print("axon: READY" if not problems else f"axon: BLOCKED ({len(problems)} problem(s))")

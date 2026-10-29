@@ -15,6 +15,9 @@ versions match `.claude-plugin/plugin.json`.
 - **`/rfc` inside Axon.** `uv run python -m rfc_agent.axon_agent install` adds an `/rfc` command to Axon.
   It runs the same pipeline, shows progress above the editor and asks each pause as a question in the
   session. `/rfc attach <run>` reconnects to a run, and `/rfc doctor` checks the setup.
+- **Confluence/Jira on Axon.** When Scope runs on Axon, it fetches the PRD through Axon's own Atlassian MCP
+  sign-in (`axon pi mcp login atlassian`), so `--engine axon` no longer needs `claude`. The Axon doctor checks
+  the sign-in.
 
 ## 0.1.0 (pilot)
 

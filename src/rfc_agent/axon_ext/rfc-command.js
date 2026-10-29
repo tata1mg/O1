@@ -77,6 +77,13 @@ export function usesAxon(argv) {
   return argv.some((a, i) => (a === "--stage-engine" && /=axon$/.test(argv[i + 1] || "")) || /^--stage-engine=.*=axon$/.test(a));
 }
 
+/** Whether Scope will fetch from Confluence/Jira (then the doctor also checks Axon's Atlassian sign-in). */
+export function needsAtlassian(argv, cwd, exists = fs.existsSync) {
+  if (argValue(argv, "--jira")) return true;
+  const prd = argValue(argv, "--prd");
+  return !!prd && !exists(path.resolve(cwd, prd));
+}
+
 const WAITING = /WAITING FOR (SELECTION|PAUSE (\d))[^:]*: proposal at (.+?) — answers expected at (.+?)\s*$/;
 
 /** A `WAITING FOR …` line → {kind: "scope"|"investigate"|"triage", n, proposal, answers}, else null. */
@@ -92,6 +99,7 @@ const RELAY = [
   /\[rfc\] ── (.+?) ──/, // stage banner
   /\[rfc\] (done in .+)/,
   /\[rfc\] (STOPPED at .+)/,
+  /\[\w+\] (STOP: .+)/, // a stage's own reason, printed just before the STOPPED line
   /\[rfc\] (read: .+)/,
   /\[rfc\] (full: .+)/,
   /(press ⌥⌘P.*)/,
@@ -354,7 +362,7 @@ class Run {
       changed = true;
       const banner = /\[rfc\] ── (.+?) ──/.exec(line);
       if (banner) this.stage = banner[1].split(" — ")[0];
-      if (/^(done in|STOPPED at|read:|full:)/.test(t)) this.closing.push(t);
+      if (/^(done in|STOPPED at|STOP:|read:|full:)/.test(t)) this.closing.push(t);
       else if (/^(press ⌥⌘P|ONE-TIME SETUP|Figma plugin|an OLD rfc-agent|Langfuse)/.test(t)) this.ui?.notify(t, "warning");
       this.push(banner ? `── ${banner[1]}` : t);
     }
@@ -535,7 +543,9 @@ export default function make(pi, { project, uv = "uv" } = {}) {
       const full = withEngine(argv);
       if (usesAxon(full)) {
         ui.setWorkingMessage?.("rfc: checking Axon…");
-        const d = await uvRun(["python", "-m", "rfc_agent.axon_agent", "doctor"], ctx.cwd);
+        const doc = ["python", "-m", "rfc_agent.axon_agent", "doctor"];
+        if (!needsAtlassian(full, ctx.cwd)) doc.push("--no-atlassian");
+        const d = await uvRun(doc, ctx.cwd);
         ui.setWorkingMessage?.();
         if (d.code !== 0) {
           pi.sendMessage({ customType: "rfc-agent", content: `rfc: not started — Axon preflight failed\n${(d.out + d.err).trim()}`, display: true });

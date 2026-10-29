@@ -33,8 +33,9 @@ the config, or rerun with `--langfuse false`). Never pick `false` for the user.
 **Axon** (only when `$ARGUMENTS` has `--engine axon` or a `--stage-engine …=axon`): the agents run on the org's
 managed Pi instead of `claude -p`; progress, pauses and outputs look the same. Preflight
 `uv run --project "$PROJ" python -m rfc_agent.axon_agent doctor` — anything but `axon: READY` stops the run; relay
-its FAIL lines (each names its fix). The Atlassian preflight above still applies to a Confluence/Jira PRD: Scope
-fetches it through Claude's Atlassian connector on either engine (a local `--prd <file>` needs neither).
+its FAIL lines (each names its fix). When Scope runs on Axon, it fetches a Confluence/Jira PRD through Axon's own
+Atlassian MCP sign-in, which the doctor checks, so skip the Claude Atlassian preflight above. Pass the doctor
+`--no-atlassian` for a local `--prd <file>`.
 
 ## 2. Relay progress
 

@@ -19,15 +19,27 @@ and Langfuse traces. What changes is which agent runtime and which models do the
    ```
 
    Choose *Login from browser*, sign in, then quit the session.
-2. Check everything rfc-agent needs:
+2. Connect Axon to Atlassian, for Confluence and Jira PRDs:
+
+   ```bash
+   axon pi mcp add atlassian --url https://mcp.atlassian.com/v1/mcp
+   ```
+
+   ```bash
+   axon pi mcp login atlassian
+   ```
+
+   The second command opens Atlassian's consent page in the browser. Pi keeps the token. A local `--prd file.md`
+   doesn't need this. If your server has another name, set `AGENT.AXON.ATLASSIAN_SERVER`.
+3. Check everything rfc-agent needs:
 
    ```bash
    uv run python -m rfc_agent.axon_agent doctor
    ```
 
    It prints `axon: READY`, or one `FAIL` line per problem with its fix. It checks that Axon is installed, the
-   sign-in is valid, the managed Pi is at least 1.4.0, every mapped model exists on the gateway, and fleetlens
-   answers (VPN on).
+   sign-in is valid, the managed Pi is at least 1.4.0, every mapped model exists on the gateway, fleetlens
+   answers (VPN on), and Axon's Atlassian server is signed in (`--no-atlassian` skips that check).
 
 ## 2. Run from inside Axon (`/rfc`)
 
@@ -126,8 +138,9 @@ The same on both engines:
 
 Different on Axon:
 
-- **The Confluence/Jira fetch in Scope still uses Claude's Atlassian connector.** A Confluence PRD on
-  `--engine axon` still needs `claude` installed with Atlassian connected. A local `--prd file.md` needs neither.
+- **Scope fetches Confluence and Jira through Axon's own Atlassian sign-in** (set up in §1). Claude isn't
+  involved, and the PRD is saved exactly as Atlassian returns it, the same as on Claude. A Scope that runs on
+  Claude (for example `--stage-engine review=axon`) still uses Claude's connector.
 - **A run started on Claude can't resume its Claude sessions on Axon.** The pipeline then starts the agent cold,
   exactly as when a Claude session has expired.
 - **Axon's early (threshold) compaction is turned off for pipeline agents**, because it summarises evidence away.

@@ -18,12 +18,17 @@ check("withEngine adds axon", m.withEngine(["--prd", "x"]).join(" ") === "--prd 
 check("withEngine keeps a chosen engine", m.withEngine(["--engine", "claude-code"]).join(" ") === "--engine claude-code");
 check("withEngine keeps a stage map", m.withEngine(["--stage-engine", "review=axon"]).length === 2);
 check("usesAxon stage map", m.usesAxon(["--stage-engine", "review=axon"]) && !m.usesAxon(["--engine", "claude-code"]));
+check("needsAtlassian: confluence url, jira, local file, rerun",
+  m.needsAtlassian(["--prd", "https://x.atlassian.net/wiki/pages/1"], "/") && m.needsAtlassian(["--jira", "AB-1"], "/") &&
+  !m.needsAtlassian(["--prd", "prd.md"], "/w", () => true) && !m.needsAtlassian(["--run-dir", "/r", "--from", "review"], "/"));
 check("argValue = form", m.argValue(["--run-dir=/r"], "--run-dir") === "/r");
 const w = m.parseWaiting("  [investigate] WAITING FOR PAUSE 3: proposal at /r/confirm/p3.proposal.json — answers expected at /r/confirm/p3.answers.json");
 check("parseWaiting triage", w && w.kind === "triage" && w.n === 3 && w.answers === "/r/confirm/p3.answers.json", w);
 const s = m.parseWaiting("  [scope] WAITING FOR SELECTION: proposal at /r/confirm/proposal.json — answers expected at /r/confirm/answers.json");
 check("parseWaiting scope", s && s.kind === "scope" && s.proposal === "/r/confirm/proposal.json", s);
 check("relayLine banner", m.relayLine("  [rfc] ── Review ──") === "Review");
+check("relayLine keeps a stage's STOP reason",
+  m.relayLine("  [scope] STOP: no Atlassian MCP server is connected") === "STOP: no Atlassian MCP server is connected");
 check("relayLine ignores noise", m.relayLine("  [investigate] tracer T1 call 4") === null);
 check("progressText", m.progressText('{"text": "Plan: 3 flows"}') === "Plan: 3 flows" && m.progressText("nope") === null);
 check("parseRepoExtras", JSON.stringify(m.parseRepoExtras("a, b=feature/x ,c")) ===

@@ -128,7 +128,7 @@ re-bill them.
 **Decision.** If `--session` has no file to continue, the agent returns an error without starting. Callers
 already rerun cold with a "fallback intro" when a resume fails on Claude, so they behave the same.
 
-## D-14 Scope on Axon: discovery and summary move; the Atlassian fetch stays on Claude
+## D-14 Scope on Axon: discovery and summary move; ~~the Atlassian fetch stays on Claude~~ (fetch: see D-22)
 
 **Decision.** Under `--engine axon`, Scope's repo-discovery agent (fleetlens) and PRD-summary call run on
 Axon. Fetching the PRD and Jira from Confluence still uses the claude.ai Atlassian connector through
@@ -224,6 +224,40 @@ end to end: preflight failure, launch argv, all three pause kinds, the answer fo
 Axon (0.2.6 / Pi 1.4.0): `/rfc help` and `/rfc doctor` (→ `axon: READY`) run in print mode, and in RPC mode
 `/rfc --prd …` against the fake pipeline got every dialog, wrote all three answers files and posted the
 closing summary. Still to try: a real PRD driven from the interactive TUI.
+
+## D-22 Scope's Confluence/Jira fetch runs on Axon's own Atlassian sign-in
+
+**Decision.** When Scope runs on Axon, `scope/atlassian_axon.py` (`AxonConnectorSession`) fetches the PRD, its
+descendants and Jira, in place of Claude's `ConnectorSession`. The interface is the same, so `scope/cli.py` only
+picks which one `open_session` builds. The server is the operator's own `atlassian` entry in
+`~/.axon/pi/mcp.json`, added with `axon pi mcp add` and signed in once with `axon pi mcp login` (Pi keeps the OAuth
+token). `AGENT.AXON.ATLASSIAN_SERVER` names it if it's called something else. With this, `--engine axon` needs no
+`claude` at all.
+
+**How.**
+- **Each turn is one short `axon pi -p` process with no session**, running the haiku-tier gateway model
+  (`gemini-3.8-flash`). Pi waits for direct-exposure servers before the first model call, so there's no warm-up
+  turn or `pending` polling as on Claude.
+- **Exposure is overridden only for this process.** The user-level server is `codemode` by default, which hides
+  the tools behind scripts. The turn runs in `logs/atlassian-axon/`, whose `.pi/mcp.json` changes only
+  `exposure` to `direct` (Pi's documented override of a user-level server), loaded with `--approve`. The operator's
+  config is never edited. Registering the server from an extension wouldn't work: a `mcp.json` entry with the
+  same name wins, and a different name means a separate OAuth sign-in.
+- **`--tools` lists exactly the four fetch tools.** No read, write or shell. Otherwise it's Pi's hermetic set,
+  minus `--no-approve`.
+- **Byte-exact despite Pi's 20 KB cut.** Pi trims tool results over 20 KB before the model sees them, and the
+  stream carries the cut text. The full result goes to a file named in `details.fullOutputPath`, and that file
+  is what gets parsed.
+- **Errors.** No resources result, then `axon pi mcp list --json` explains why: a missing server or a missing
+  sign-in fails at once and names the fix; a connected but silent server is retried with a fresh process, as on
+  Claude.
+- **Doctor.** The Axon doctor checks the server is `connected`. `--no-atlassian` skips the check, and `/rfc`
+  passes it when the PRD is a local file and there's no `--jira`.
+
+**Verified (2026-10-29).** Live: connect plus fetch of PRD 5672665111, its descendants, and a 25 KB page
+(5640028226, cut to 20 KB in the stream) cost $0.015 in about 20 s. The PRD body is byte-identical to the one
+Claude's connector fetched. The 25 KB page came back whole. Unit tests stub `axon` for the turn parsing, the
+truncation file, the missing / signed-out / silent server and the retry.
 
 ## Live verification (2026-10-28, Axon 0.2.6 / Pi 1.4.0)
 

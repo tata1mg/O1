@@ -91,9 +91,10 @@ def _run_dir(args, cfg) -> Path:
     return root / name
 
 
-def _write_page(path: Path, page: dict) -> None:
+def _write_page(path: Path, page: dict, site: str | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(at.provenance(page["url"] or f"confluence page {page['id']}", page["title"], _now(),
+    url = page["url"] or (f"{site.rstrip('/')}/wiki/pages/viewpage.action?pageId={page['id']}" if site else "")
+    path.write_text(at.provenance(url or f"confluence page {page['id']}", page["title"], _now(),
                                   {"page_id": page["id"], "last_modified": page["last_modified"]})
                     + page["body"], encoding="utf-8")
 
@@ -105,6 +106,19 @@ def _write_jira(path: Path, key: str, call: at.ToolCall) -> None:
 
 def _blob_images(text: str) -> int:
     return len(re.findall(r"!\[[^\]]*\]\(blob:", text))
+
+
+def _axon_atlassian(cfg, model: str, run_dir: Path):
+    """On Axon (D-22) the PRD comes through Axon's own Atlassian sign-in; None keeps Claude's connector."""
+    if not context._on_axon(cfg):
+        return None
+    from ..axon_agent import gateway_model, settings
+    from .atlassian_axon import AxonConnectorSession
+
+    ax = settings(cfg)
+    log = run_dir / "logs" / "scope.atlassian.stream.jsonl"
+    return lambda: AxonConnectorSession(log, axon_bin=ax["bin"], model=gateway_model(model, cfg),
+                                        provider=ax["provider"], server=ax["atlassian_server"])
 
 
 @observe.entry("scope")
@@ -191,7 +205,8 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     session, paid = at.open_session(stack, run_dir / "logs" / "scope.atlassian.stream.jsonl", site,
                                                     claude_bin=cfg.get("AGENT.CLAUDE_BIN", "claude"),
-                                                    model=args.model, cwd=run_dir, say=_say)
+                                                    model=args.model, cwd=run_dir, say=_say,
+                                                    make=_axon_atlassian(cfg, args.model, run_dir))
                     cost += paid
                 except at.AtlassianError as e:
                     _say(f"STOP: {e}")
@@ -206,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
                     elif c.name == "getConfluencePage" and str(c.input.get("pageId")) == pid:
                         page = at.parse_page(c)
                         if page:
-                            _write_page(run_dir / "raw" / "prd.md", page)
+                            _write_page(run_dir / "raw" / "prd.md", page, site)
                             scope["prd_title"] = page["title"]
                     elif c.name == "getConfluencePageDescendants":
                         descendants = at.parse_descendants(c)
@@ -397,7 +412,8 @@ def main(argv: list[str] | None = None) -> int:
                     elif c.name == "getConfluencePage":
                         page = at.parse_page(c)
                         if page:
-                            _write_page(run_dir / "raw" / "linked" / f"{page['id']}-{_slugify(page['title'])}.md", page)
+                            _write_page(run_dir / "raw" / "linked" / f"{page['id']}-{_slugify(page['title'])}.md", page,
+                                        cfg.get("ATLASSIAN.SITE"))
                             fetched_pages.append({"id": page["id"], "title": page["title"]})
                     elif c.name == "getJiraIssue":
                         k = str(c.input.get("issueIdOrKey"))

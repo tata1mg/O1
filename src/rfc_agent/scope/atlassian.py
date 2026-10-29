@@ -256,8 +256,14 @@ def parse_page(call: ToolCall) -> dict | None:
         node = nodes[0] if nodes else (data if "body" in data else None)
     if not isinstance(node, dict) or not isinstance(node.get("body"), str):
         return None
+    # the claude.ai connector returns webUrl/lastModified; Atlassian's own MCP server (the user-scope `atlassian`
+    # server, and Axon's) returns the Confluence v2 shape: _links.webui (+ base) and version.createdAt
+    links = node.get("_links") if isinstance(node.get("_links"), dict) else {}
+    web = links.get("webui") and (links.get("base") or "") + links["webui"]
+    version = node.get("version") if isinstance(node.get("version"), dict) else {}
     return {"id": str(node.get("id") or call.input.get("pageId") or ""), "title": node.get("title") or "",
-            "body": node["body"], "url": node.get("webUrl") or "", "last_modified": node.get("lastModified") or ""}
+            "body": node["body"], "url": node.get("webUrl") or web or "",
+            "last_modified": node.get("lastModified") or version.get("createdAt") or ""}
 
 
 def parse_descendants(call: ToolCall) -> list[dict]:
@@ -296,12 +302,13 @@ def jira_keys(body: str) -> list[str]:
 
 def open_session(stack, log_path: Path, site: str, *, claude_bin: str = "claude", model: str = DEFAULT_MODEL,
                  cwd: Path | None = None, say=None, attempts: int = CONNECT_ATTEMPTS,
-                 wait_s: float = RETRY_WAIT_S) -> tuple[ConnectorSession, float]:
+                 wait_s: float = RETRY_WAIT_S, make=None) -> tuple[ConnectorSession, float]:
     """A connected session, entered on `stack` (an ExitStack), and the cost of connecting. A slow Atlassian
-    server gets a fresh connection, up to `attempts` in all; a missing sign-in or a refusal stops at once."""
+    server gets a fresh connection, up to `attempts` in all; a missing sign-in or a refusal stops at once.
+    `make()` builds another kind of session with the same API (Scope on Axon passes AxonConnectorSession)."""
     cost = 0.0
     for attempt in range(1, attempts + 1):
-        session = ConnectorSession(log_path, claude_bin=claude_bin, model=model, cwd=cwd)
+        session = make() if make else ConnectorSession(log_path, claude_bin=claude_bin, model=model, cwd=cwd)
         session.__enter__()
         try:
             res = session.connect(site)
