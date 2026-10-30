@@ -339,8 +339,9 @@ printed summary. See [Output](#output).
 
 ## Output
 
-The run folder is `RUNS_ROOT/<jira-key>` or `RUNS_ROOT/prd-<page id>` (e.g.
-`~/rfc-runs/prd-5541855972/`), unless `--run-dir` is given.
+The run folder is new every time: `RUNS_ROOT/<jira-key>-<timestamp>` or `RUNS_ROOT/prd-<page id>-<timestamp>` (e.g.
+`~/rfc-runs/prd-5541855972-20261030-143502/`), unless `--run-dir` is given. A PRD that was run before gets a second
+folder, never the first one reused.
 
 | Path | Contents |
 |---|---|

@@ -11,6 +11,8 @@ import contextlib
 import json
 from pathlib import Path
 
+from . import run_metrics
+
 
 def _json(path: Path):
     with contextlib.suppress(OSError, json.JSONDecodeError):
@@ -42,5 +44,10 @@ def collect(run_dir: Path, prd_ref: str | None = None) -> dict:
             out["review_unresolved"] = sum(1 for r in recs if r.get("status") in ("unresolved", "not_reviewed"))
         run = _json(run_dir / "logs" / "run.json") or {}
         out["cost_usd"] = run.get("cost_usd_total")
-        out["duration_s"] = sum(s.get("seconds") or 0 for s in run.get("stages") or [] if isinstance(s, dict)) or None
+        # every attempt's time when the run records it; before that, only the stages of the last attempt
+        out["duration_s"] = run.get("seconds_all_attempts") or (
+            sum(s.get("seconds") or 0 for s in run.get("stages") or [] if isinstance(s, dict)) or None
+        )
+        out["attempts"], out["resumes"], out["status"] = run.get("attempts"), run.get("resumes"), run.get("status")
+        out |= run_metrics.collect(run_dir)  # input size, tokens, coverage counts, context layer, waits
     return {k: v for k, v in out.items() if v is not None}

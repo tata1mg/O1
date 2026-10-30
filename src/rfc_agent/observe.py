@@ -282,6 +282,7 @@ def _run_dir_of(argv: list[str], cfg) -> Path | None:
 
 TRACES_FILE = "traces.jsonl"
 _facts_src: tuple[Path, str | None] | None = None  # (run dir, original --prd) for run_facts at close
+_entry_name: str | None = None  # `rfc` for a whole run, else the stage name
 
 
 def _record_trace_id(run_dir: Path, entry: str, trace_id: str | None, prd: str | None = None) -> None:
@@ -300,7 +301,7 @@ def _record_trace_id(run_dir: Path, entry: str, trace_id: str | None, prd: str |
 
 def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
     """Open the root observation + trace attributes. Returns the start-as-current context manager."""
-    global _client, _root, _root_otel_ctx, _facts_src
+    global _client, _root, _root_otel_ctx, _facts_src, _entry_name
     from langfuse import propagate_attributes
 
     from . import identity
@@ -343,6 +344,7 @@ def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
         _root.set_trace_io(input={"entry": entry, "argv": argv})
     if run_dir is not None:  # feedback (rfc_agent.feedback) scores the trace this run produced
         _facts_src = (run_dir, _arg(argv, "--prd"))
+        _entry_name = entry
         with contextlib.suppress(Exception):
             _record_trace_id(run_dir, entry, _client.get_current_trace_id(), _arg(argv, "--prd"))
     with contextlib.suppress(Exception):
@@ -352,8 +354,62 @@ def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
     return cm, prop
 
 
+# Run facts that are numbers. Metadata cannot be summed or averaged on a dashboard, a score can, so each of these is
+# also written as a NUMERIC score named `fact_<key>` on the run's root observation when the trace closes.
+FACT_SCORES = (
+    "prd_words", "prd_tokens_est", "figma_sections", "figma_frames", "figma_frames_in_scope", "figma_sections_skipped",
+    "snapshot_age_days", "flows", "flows_without_screens", "reqs", "open_questions",
+    "req_covered", "req_assumes", "req_deferred", "req_open", "alternatives", "review_findings", "review_unresolved",
+    "rfc_chars", "tokens_total", "tokens_input", "tokens_output", "tokens_cache_read", "tokens_cache_write",
+    "cache_hit_ratio", "agent_runs", "agent_turns", "compactions", "peak_context_tokens",
+    "context_calls", "context_errors", "context_empty", "rate_limit_rejections",
+    "operator_wait_s", "triage_wait_s", "cost_usd", "duration_s", "attempts", "resumes",
+    "repos_proposed", "repos_preticked", "repos_kept", "pages_proposed", "pages_preticked", "pages_kept",
+    "figma_sections_kept", "readable_chars", "readable_ratio", "review_blockers", "review_majors", "review_minors",
+    "review_fixed", "review_ignored", "revise_rounds", "revise_lines_changed",
+)  # fmt: skip
+
+
+def _score_facts(root, facts: dict) -> None:
+    """One numeric score per fact that is a number; a fact the run does not have is simply absent."""
+    for key in FACT_SCORES:
+        value = facts.get(key)
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            with contextlib.suppress(Exception):
+                root.score(name=f"fact_{key}", value=float(value), data_type="NUMERIC")
+
+
+def _outcome(status: str | None) -> str | None:
+    """How a whole run stands, from run.json's status: `completed`, or `stopped_at_<stage>`."""
+    if not status:
+        return None
+    return "completed" if status == "done" else status.replace("stopped at ", "stopped_at_").replace(" ", "_")
+
+
+def _score_outcome(root, client, facts: dict, run_dir: Path) -> None:
+    """Two scores per whole-run attempt. `rfc_run_outcome` sits on this attempt's trace and never changes, so it counts
+    every stop. `rfc_run_outcome_final` sits on the run's session with a fixed id, so each attempt replaces the last:
+    a run that stopped at draft and was then resumed ends as `completed`."""
+    import json
+
+    outcome = _outcome(facts.get("status"))
+    if not outcome:
+        return
+    with contextlib.suppress(Exception):
+        root.score(name="rfc_run_outcome", value=outcome, data_type="CATEGORICAL")
+    with contextlib.suppress(Exception):
+        session = json.loads((run_dir / "identity.json").read_text(encoding="utf-8")).get("session_id") or run_dir.name
+        client.create_score(
+            name="rfc_run_outcome_final",
+            value=outcome,
+            data_type="CATEGORICAL",
+            session_id=str(session),
+            score_id=f"outcome:{session}",
+        )
+
+
 def _close_root(cm, prop, code) -> None:
-    global _client, _root, _root_otel_ctx, _tool_spans_left, _warned, _facts_src
+    global _client, _root, _root_otel_ctx, _tool_spans_left, _warned, _facts_src, _entry_name
     with contextlib.suppress(Exception):
         out = {"exit": code}
         _root.update(output=out, level="ERROR" if code else "DEFAULT")
@@ -362,8 +418,13 @@ def _close_root(cm, prop, code) -> None:
         with contextlib.suppress(Exception):
             from . import run_facts
 
-            _root.update(metadata={"run_facts": run_facts.collect(*_facts_src)})
+            facts = run_facts.collect(*_facts_src)
+            _root.update(metadata={"run_facts": facts})
+            _score_facts(_root, facts)
+            if _entry_name == "rfc":  # a stage run on its own does not rewrite the whole run's run.json
+                _score_outcome(_root, _client, facts, _facts_src[0])
         _facts_src = None
+    _entry_name = None
     if prop is not None:
         with contextlib.suppress(Exception):
             prop.__exit__(None, None, None)

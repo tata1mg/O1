@@ -1,9 +1,13 @@
 ---
 description: Generate a tech RFC from a PRD — the whole pipeline (Scope → Summarize) in one command; progress and every pause shown here
-argument-hint: --prd <confluence-url | page-id | file> [--jira KEY] [--repos a,b] [--no-figma] [--preset balanced|fast] [--ask] [--ask-review] [--langfuse true|false] [--langfuse-verbose true|false]
+argument-hint: --prd <confluence-url | page-id | file> [--jira KEY] [--repos a,b] [--no-figma] [--preset balanced|fast] [--ask] [--ask-review] [--langfuse true|false] [--langfuse-verbose true|false]  |  --run-dir <run folder> (continue a stopped run)
 ---
 
 Run the whole rfc-agent pipeline for: `$ARGUMENTS`
+
+Every `--prd` starts a NEW run in its own folder (`<name>-<timestamp>`), even for a PRD that was run before. A run
+that stopped, paused or failed is continued with `--run-dir <that folder>` and no `--prd`: same folder, same
+options, finished stages skipped. Say which of the two this is in your first line, with the folder name.
 
 It runs in the background (typically 30–60 min — say so once at the start). YOU are its progress view and its pause
 UI: relay milestones in short lines, open one task card per agent (section 2), and at each pause show the
@@ -13,7 +17,7 @@ proposal as AskUserQuestion selections and write the answers back. Never answer 
 
 ```
 PROJ="${CLAUDE_PLUGIN_ROOT}"
-RUN="$(uv run --project "$PROJ" python -m rfc_agent.scope run-dir $ARGUMENTS)"     # or the --run-dir given
+RUN="$(uv run --project "$PROJ" python -m rfc_agent.scope run-dir $ARGUMENTS)"     # a new folder for --prd; the --run-dir given when continuing
 mkdir -p "$RUN/logs"
 TASK="rfc pipeline · <run folder name>" uv run --project "$PROJ" rfc $ARGUMENTS --run-dir "$RUN" --confirm-file > "$RUN/logs/run.out" 2>&1
 ```
@@ -93,7 +97,7 @@ one."* It is drawn in the terminal; nothing is served or opened in a browser.
 | `WAITING FOR PAUSE 1` / `WAITING FOR PAUSE 2` (Investigate) | Follow section 3 of `${CLAUDE_PLUGIN_ROOT}/commands/investigate.md` (`$RUN/confirm/investigate-pause<n>.proposal.json` → `.answers.json`) |
 | `WAITING FOR PAUSE 3` (Review, only with `--ask-review`) | Follow section 3 of `${CLAUDE_PLUGIN_ROOT}/commands/review.md` (triage) |
 | `Langfuse observability is ON but the Langfuse keys are missing` (exit 2) | Nothing ran. Relay the message: add `LANGFUSE.PUBLIC_KEY`/`SECRET_KEY` to the config, or rerun with `--langfuse false` |
-| `[rfc] STOPPED at …` | Report the stage and the lines just before it (the cause), and that rerunning the same command resumes |
+| `[rfc] STOPPED at …` | Report the stage and the lines just before it (the cause), and that `/rfc-agent:rfc --run-dir <that folder>` continues it |
 
 Read the referenced section only when that pause arrives.
 
@@ -108,9 +112,10 @@ When the process exits, read `$RUN/logs/run.json` and report in a few lines:
 - Every agent's full Claude Code session is listed in `$RUN/logs/sessions.json` (`<stage>.<agent>.<step>` →
   session id). Offer once: `cd "$RUN" && claude --resume <id> --fork-session` opens one (`--fork-session` keeps
   the run's own session untouched — the lead's is resumed by later stages).
-- **Ask for a rating, once.** After the report, ask one AskUserQuestion: *"How was this RFC?"* — `👍 Good`,
-  `👎 Needs work`, `Later` (it lands in the run's Langfuse trace). On 👍 or 👎 follow `${CLAUDE_PLUGIN_ROOT}/commands/feedback.md`
-  from section 2 (👎 asks what was wrong, one question; 👍 asks nothing more). On `Later`, say they can run
-  `/rfc-agent:feedback` any time after reading the RFC, and drop it. Skip this whole step if the run STOPPED.
+- **Ask for a rating, once.** After the report, follow `${CLAUDE_PLUGIN_ROOT}/commands/feedback.md` from section 2.
+  It opens with *"How was this RFC overall?"* (`👍 Good`, `👍 Good, with notes`, `👎 Needs work`, `Later`): a plain
+  👍 is one tap, and the other two ask what was wrong in each area; the rating lands in the run's Langfuse trace. On
+  `Later`, say they can run `/rfc-agent:feedback` any time after reading the RFC, and drop it. Skip this whole step
+  if the run STOPPED.
 - The repo snapshots under `$RUN/_snap/` can be removed with
   `uv run --project "$PROJ" python -m rfc_agent.scope cleanup "$RUN"` once nobody needs to re-run a stage.

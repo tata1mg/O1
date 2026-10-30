@@ -5,6 +5,7 @@ unavailable, and the PRD summary refuses to start a real `claude` while RFC_AGEN
 """
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -126,16 +127,36 @@ def test_a_named_repo_that_is_not_on_the_remote_is_dropped_loudly(tmp_path, cfg,
     assert by["ghost"]["source"] == "context-index-only" and "not found" in by["ghost"]["error"]
 
 
-def test_run_dir_subcommand_names_the_folder_without_creating_it(tmp_path, cfg, capsys):
+def test_run_dir_subcommand_names_a_new_timestamped_folder_without_creating_it(tmp_path, cfg, capsys):
     assert scope_cli.main(["run-dir", "--prd", "5541855972"]) == 0
     out = capsys.readouterr().out.strip()
-    assert out == str(tmp_path / "runs" / "prd-5541855972")
+    assert Path(out).parent == tmp_path / "runs"
+    assert re.fullmatch(r"prd-5541855972-\d{8}-\d{6}", Path(out).name)
     assert not Path(out).exists()
+    # one process, one folder: tracing, the whole-run entry and Scope must all land in the same place
+    assert scope_cli.main(["run-dir", "--prd", "5541855972"]) == 0
+    assert capsys.readouterr().out.strip() == out
+
+
+def test_run_dir_never_reuses_a_folder_that_exists(tmp_path, cfg, capsys):
+    assert scope_cli.main(["run-dir", "--prd", "777"]) == 0
+    first = Path(capsys.readouterr().out.strip())
+    scope_cli._FRESH.clear()  # a new process
+    first.mkdir(parents=True)  # the earlier run is on disk, and a second run starts in the same second
+    assert scope_cli.main(["run-dir", "--prd", "777"]) == 0
+    second = Path(capsys.readouterr().out.strip())
+    assert second != first and second.name.startswith("prd-777-")
+
+
+def test_run_dir_subcommand_echoes_the_folder_to_continue(tmp_path, cfg, capsys):
+    assert scope_cli.main(["run-dir", "--run-dir", str(tmp_path / "old-run")]) == 0
+    assert capsys.readouterr().out.strip() == str(tmp_path / "old-run")
+    assert scope_cli.main(["run-dir"]) == 2  # neither a PRD nor a folder: nothing to name
 
 
 def test_run_dir_prefers_the_jira_key_when_given(tmp_path, cfg, capsys):
     assert scope_cli.main(["run-dir", "--prd", "5541855972", "--jira", "PROJ-12"]) == 0
-    assert capsys.readouterr().out.strip().endswith("proj-12")
+    assert Path(capsys.readouterr().out.strip()).name.startswith("proj-12-")
 
 
 def test_cleanup_needs_exactly_one_argument(capsys):

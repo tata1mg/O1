@@ -14,8 +14,9 @@ tightly scoped tool set; deterministic Python gates check the output between sta
 uv run rfc --prd <confluence url> [--jira KEY]         # in a terminal
 ```
 
-Runs Scope → Summarize in order (scope · plan, trace, integrate · write + gate · review · fix · readable copy). Rerunning
-the same command resumes; `--from N` restarts at a stage. Read **`out/rfc.readable.md`** first; `out/rfc.md` is the
+Runs Scope → Summarize in order (scope · plan, trace, integrate · write + gate · review · fix · readable copy). Every
+`--prd` starts a new run in its own folder, even for a PRD you ran before. A run that stopped is continued with
+`uv run rfc --run-dir <that folder>` (no `--prd`); `--from <stage>` restarts at a stage. Read **`out/rfc.readable.md`** first; `out/rfc.md` is the
 full RFC with citations. Options: `uv run rfc --help`. The stages, one by one:
 
 ## How it works
@@ -185,7 +186,8 @@ config.json survives updates; a git-installed plugin cache is wiped on update):
 ```
 
 Then `/rfc-agent:setup` once, and `/rfc-agent:rfc --prd <url>` per RFC (deliverables land in
-`$RUNS_ROOT/<jira-key-or-slug>/`, default `~/rfc-runs/`). `/rfc-agent:doctor` preflights
+`$RUNS_ROOT/<jira-key-or-slug>-<timestamp>/`, default `~/rfc-runs/`; continue a stopped run with
+`/rfc-agent:rfc --run-dir <folder>`). `/rfc-agent:doctor` preflights
 config/binaries/MCP/repos. Installed from a **directory** source, the plugin serves the checkout live — but
 Claude Code caches the manifest, so after a version bump reload the session (or re-add the marketplace).
 

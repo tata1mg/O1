@@ -40,7 +40,8 @@ run carries on untraced.
 ## Trace shape
 
 One trace per invocation. `rfc` is one trace for the whole run; a stage started on its own gets its own
-trace. Every trace from one run folder shares one Langfuse **session** (from the run folder's
+trace. A new run is a new folder, so it is a new session; a run you resume with `--run-dir` stays in its own. Every
+trace from one run folder shares one Langfuse **session** (from the run folder's
 `identity.json`), and a `--jira` run carries the `ticket:<KEY>` tag.
 
 ```

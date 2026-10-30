@@ -119,10 +119,13 @@ Run from Claude Code (`/rfc-agent:rfc`), these appear as clickable choices.
 | Final RFC | `out/rfc.md` |
 | Short copy | `out/rfc.readable.md` |
 | Review and fixes | `review/review.md`, `review/fixes.md` |
-| Run folder | `~/rfc-runs/<prd id>/` (set by `RUNS_ROOT`) |
+| Run folder | `~/rfc-runs/<prd id>-<timestamp>/` (set by `RUNS_ROOT`), a new one for every run |
 
-If a run stops, run the same command again; it continues where it stopped (`--from <stage>` restarts at a
-stage).
+Every `--prd` starts a new run in its own folder, even for a PRD you ran before. If a run stops, pauses or fails,
+continue it with `--run-dir <that folder>` and no `--prd`: it uses the same folder and the options it started with,
+skips the stages that are done, and goes on from where it stopped (`--from <stage>` restarts at a stage). A resumed
+run is still one run: `logs/run.json` records how many attempts it took (`attempts`, `resumes`) and the time of all
+of them, and `logs/attempts.jsonl` has one line per attempt.
 
 More on each stage: [Scope](SCOPE.md) · [Investigate](INVESTIGATE.md) · [Draft](DRAFT.md) ·
 [Review](REVIEW.md) · [Revise](REVISE.md) · [Summarize](SUMMARIZE.md) · [Observability](OBSERVABILITY.md) · [Feedback](FEEDBACK.md)

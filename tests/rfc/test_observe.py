@@ -50,6 +50,7 @@ class FakeClient:
         self.all: list[Obs] = []
         self.trace_io: dict = {}
         self.flushed = 0
+        self.created: list[dict] = []
         self.lock = threading.Lock()
 
     @contextlib.contextmanager
@@ -62,6 +63,9 @@ class FakeClient:
 
     def flush(self):
         self.flushed += 1
+
+    def create_score(self, **kw):
+        self.created.append(kw)
 
     def named(self, prefix):
         return [o for o in self.all if o.name.startswith(prefix)]
@@ -494,3 +498,78 @@ def test_secret_masking_is_on_by_default(monkeypatch):
 
 def test_mask_secrets_false_turns_the_scrubber_off(monkeypatch):
     assert "mask_otel_spans" not in _client_kwargs(monkeypatch, {"LANGFUSE.MASK_SECRETS": False})
+
+
+def test_numeric_run_facts_become_scores_on_the_root(traced, tmp_path):
+    (tmp_path / "raw").mkdir()
+    (tmp_path / "raw" / "prd.md").write_text("word " * 120)
+    (tmp_path / "work").mkdir()
+    (tmp_path / "work" / "reqs.json").write_text(json.dumps({"requirements": [{"id": "REQ-1"}, {"id": "REQ-2"}]}))
+    (tmp_path / "scope.json").write_text(json.dumps({"jira": "AB-1", "repos": [{"repo": "api"}]}))
+
+    @observe.entry("review")
+    def main(argv=None):
+        return 0
+
+    assert main(["--run-dir", str(tmp_path)]) == 0
+    root = traced["client"].one("rfc-run")
+    got = {s["name"]: s["value"] for s in root.scores}
+    assert got["fact_prd_words"] == 120.0 and got["fact_reqs"] == 2.0
+    assert all(s["data_type"] == "NUMERIC" for s in root.scores)
+    assert "fact_tokens_total" not in got and "fact_jira" not in got  # absent facts and non-numbers are skipped
+    assert root.updates["metadata"]["run_facts"]["jira"] == "AB-1"  # the metadata copy is still there
+
+
+def _finished_attempt(run, status, attempts=1):
+    (run / "logs").mkdir(parents=True, exist_ok=True)
+    summary = {"status": status, "attempts": attempts, "resumes": attempts - 1}
+    (run / "logs" / "run.json").write_text(json.dumps(summary))
+    (run / "identity.json").write_text(json.dumps({"session_id": "prd-1-20261030-101500"}))
+
+
+def test_a_stopped_attempt_is_scored_on_its_trace_and_on_the_run(traced, tmp_path):
+    _finished_attempt(tmp_path, "stopped at draft")
+
+    @observe.entry(None)
+    def main(argv=None):
+        return 1
+
+    assert main(["--run-dir", str(tmp_path)]) == 1
+    c = traced["client"]
+    outcome = [s for s in c.one("rfc-run").scores if s["name"] == "rfc_run_outcome"]
+    assert outcome == [{"name": "rfc_run_outcome", "value": "stopped_at_draft", "data_type": "CATEGORICAL"}]
+    assert c.created == [
+        {
+            "name": "rfc_run_outcome_final",
+            "value": "stopped_at_draft",
+            "data_type": "CATEGORICAL",
+            "session_id": "prd-1-20261030-101500",
+            "score_id": "outcome:prd-1-20261030-101500",  # the same id every attempt, so the latest one wins
+        }
+    ]
+
+
+def test_a_resumed_run_ends_as_completed_with_its_attempts_counted(traced, tmp_path):
+    _finished_attempt(tmp_path, "done", attempts=3)
+
+    @observe.entry(None)
+    def main(argv=None):
+        return 0
+
+    assert main(["--run-dir", str(tmp_path)]) == 0
+    c = traced["client"]
+    got = {s["name"]: s["value"] for s in c.one("rfc-run").scores}
+    assert got["rfc_run_outcome"] == "completed" and got["fact_attempts"] == 3.0 and got["fact_resumes"] == 2.0
+    assert c.created[0]["value"] == "completed" and c.created[0]["score_id"] == "outcome:prd-1-20261030-101500"
+
+
+def test_a_stage_run_on_its_own_does_not_claim_the_whole_runs_outcome(traced, tmp_path):
+    _finished_attempt(tmp_path, "stopped at draft")
+
+    @observe.entry("review")
+    def main(argv=None):
+        return 0
+
+    assert main(["--run-dir", str(tmp_path)]) == 0
+    c = traced["client"]
+    assert not [s for s in c.one("rfc-run").scores if s["name"] == "rfc_run_outcome"] and c.created == []
