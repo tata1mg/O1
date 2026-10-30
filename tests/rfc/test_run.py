@@ -199,3 +199,53 @@ def test_one_run_however_many_attempts_it_took(tmp_path, monkeypatch):
     assert last["seconds_all_attempts"] >= last["seconds_total"] + first["seconds_total"]
     kinds = [json.loads(x)["kind"] for x in (rd / "logs" / "attempts.jsonl").read_text().splitlines()]
     assert kinds == ["new", "resume"]
+
+
+# ---- stopping a run -------------------------------------------------------------------------------------------------
+
+
+def test_ctrl_c_stops_the_agents_and_records_the_attempt_as_stopped(tmp_path, monkeypatch, capsys):
+    from rfc_agent.investigate import agent
+
+    stopped = []
+    monkeypatch.setattr(agent, "kill_live_agents", lambda: stopped.append(1) or 2)
+
+    def stage(argv):
+        rd = Path(argv[argv.index("--run-dir") + 1])
+        (rd / "raw").mkdir(parents=True, exist_ok=True)
+        (rd / "raw" / "prd.md").write_text("prd")
+        (rd / "scope.json").write_text("{}")
+        return 0
+
+    def interrupted(argv):
+        raise KeyboardInterrupt
+
+    mains = {n: stage for n in run.STAGES} | {"draft": interrupted}
+    monkeypatch.setattr(run, "_mains", lambda: mains)
+    rd = tmp_path / "r"
+    assert run.main(["--prd", "5", "--run-dir", str(rd)]) == 130
+    assert stopped == [1] and "stopped 2 running agent(s)" in capsys.readouterr().err
+    summary = json.loads((rd / "logs" / "run.json").read_text())
+    assert summary["status"] == "stopped at draft" and (summary["attempts"], summary["resumes"]) == (1, 0)
+    last = json.loads((rd / "logs" / "attempts.jsonl").read_text().splitlines()[-1])
+    assert last["exit"] == 130 and last["status"] == "stopped at draft"
+    # and it can be continued from the same folder, starting where it stopped
+    mains["draft"] = stage
+    assert run.main(["--run-dir", str(rd)]) == 0
+    assert json.loads((rd / "logs" / "run.json").read_text())["resumes"] == 1
+
+
+def test_a_plain_stop_is_handled_like_ctrl_c():
+    import signal
+
+    old = signal.getsignal(signal.SIGTERM)
+    try:
+        run._stop_on_sigterm()
+        handler = signal.getsignal(signal.SIGTERM)
+        try:
+            handler(signal.SIGTERM, None)
+            raise AssertionError("the stop signal should raise KeyboardInterrupt")
+        except KeyboardInterrupt:
+            pass
+    finally:
+        signal.signal(signal.SIGTERM, old)

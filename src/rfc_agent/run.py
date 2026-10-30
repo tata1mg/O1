@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import sys
 import time
 from datetime import UTC, datetime
@@ -155,6 +156,19 @@ RUN_ARGS = ("prd", "jira", "repos", "repos_root", "no_figma", "reuse_figma", "fr
             "req_granularity", "ask", "ask_review")  # fmt: skip
 
 
+def _stop_on_sigterm() -> None:
+    """A plain stop (kill, or Claude Code stopping its background task) ends the run the way Ctrl-C does: the agents are
+    stopped and the attempt is recorded, so the run can be continued with --run-dir."""
+
+    def handler(signum, frame):
+        raise KeyboardInterrupt
+
+    try:
+        signal.signal(signal.SIGTERM, handler)
+    except ValueError:  # not the main thread (a test): nothing to install
+        pass
+
+
 def _has_run(run_dir: Path) -> bool:
     """A folder that holds a run: Scope wrote its inputs, or a first attempt at least recorded its options."""
     return (run_dir / "scope.json").exists() or (run_dir / "logs" / "run_args.json").exists()
@@ -183,6 +197,7 @@ def _summary(run_dir: Path, ran: list[dict]) -> dict:
 @observe.entry(None)
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    _stop_on_sigterm()
     if args.run_dir:
         run_dir = Path(args.run_dir).expanduser().resolve()
         if not args.prd and not _has_run(run_dir):
@@ -236,6 +251,12 @@ def main(argv: list[str] | None = None) -> int:
         t0 = time.monotonic()
         try:
             code = mains[stage](stage_args(args, stage, run_dir)) or 0
+        except KeyboardInterrupt:  # Ctrl-C or a stop: end the agents, then record the attempt like any other stop
+            from .investigate.agent import kill_live_agents
+
+            n = kill_live_agents()
+            print(f"  [rfc] interrupted{f' — stopped {n} running agent(s)' if n else ''}", file=sys.stderr)
+            code = 130
         except SystemExit as e:  # a stage stopping with SystemExit("message") or exit code
             code = e.code if isinstance(e.code, int) else 1
             if not isinstance(e.code, int) and e.code:

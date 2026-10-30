@@ -27,6 +27,9 @@ versions match `.claude-plugin/plugin.json`.
   are sent on the headline score and saved as `logs/run_brief.md`. New run numbers cover what Scope proposed against
   what was kept, the readable copy's length against the full RFC, and review findings by severity with how many were
   fixed and how many revise rounds it took.
+- **Stopping a run stops its agents, and the attempt is recorded.** Ctrl-C, or a plain stop of the process, now ends
+  every agent that is running (they run in their own process groups, so before they carried on and kept spending) and
+  records the attempt as `stopped at <stage>`, so it can be continued with `--run-dir`.
 - **How a run ended is a score.** `rfc_run_outcome` on each attempt's trace and `rfc_run_outcome_final` on the run's
   session, so a dashboard can chart stops per stage and runs that finished after a resume.
 - **Run facts grew.** Every feedback score and the `rfc-run` observation now carry input size (PRD words, Figma

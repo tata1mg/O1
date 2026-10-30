@@ -123,7 +123,8 @@ Run from Claude Code (`/rfc-agent:rfc`), these appear as clickable choices.
 
 Every `--prd` starts a new run in its own folder, even for a PRD you ran before. If a run stops, pauses or fails,
 continue it with `--run-dir <that folder>` and no `--prd`: it uses the same folder and the options it started with,
-skips the stages that are done, and goes on from where it stopped (`--from <stage>` restarts at a stage). A resumed
+skips the stages that are done, and goes on from where it stopped (Ctrl-C or a plain stop ends the running agents
+and records the attempt, so a run you interrupted can be continued the same way) (`--from <stage>` restarts at a stage). A resumed
 run is still one run: `logs/run.json` records how many attempts it took (`attempts`, `resumes`) and the time of all
 of them, and `logs/attempts.jsonl` has one line per attempt.
 
