@@ -252,8 +252,15 @@ def run_workflow(name: str, args: argparse.Namespace, hooks: RunHooks | None = N
             ask.log_skipped(run_dir, f"run is non-interactive ({why}): all asks disabled")
 
     pipeline_arg = getattr(args, "pipeline", None)
-    names = ([s.strip() for s in pipeline_arg.split(",") if s.strip()] if pipeline_arg
-             else list(wf.default_pipeline))
+    if pipeline_arg:
+        names = [s.strip() for s in pipeline_arg.split(",") if s.strip()]
+    else:
+        names = list(wf.compose_pipeline(flags) if wf.compose_pipeline else wf.default_pipeline)
+        # `--stages` naming a REGISTERED stage the composed pipeline left out (an opt-in stage such as
+        # testing's execute_be) adds it, in registry order, rather than failing as an unknown stage.
+        extra = {n for n in (selected or ()) if n not in names and n in {s.name for s in wf.stages}}
+        if extra:
+            names = [s.name for s in wf.stages if s.name in set(names) | extra]
     print(f"pipeline: {' -> '.join(names)}", file=sys.stderr)
 
     disabled = list(flags.get("disabled_stages") or [])

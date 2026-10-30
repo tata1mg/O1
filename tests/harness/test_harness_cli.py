@@ -311,3 +311,39 @@ def test_hooks_fire_in_the_documented_order(tmp_path):
     args = _ns(run_dir=str(tmp_path / "run"), no_interactive=True, pipeline="ingest")
     cli.run_workflow("testing", args, hooks)
     assert order == ["early_exit", "prepare", "before_run", "after_run"]
+
+
+# ---- the workflow composes its own pipeline from its flags ---------------------------------------------
+
+def _composed(tmp_path, **kw) -> list[str]:
+    """The stage names the CLI hands to `compose`, without running anything."""
+    seen: list[str] = []
+
+    def compose(names):
+        seen.extend(names)
+        return []
+
+    hooks = cli.RunHooks(load_config=lambda: _Cfg(), compose=compose, run=lambda s, ctx, **k: None,
+                         slug=lambda a: "t")
+    args = _ns(**{"run_dir": str(tmp_path / "run"), "no_interactive": True, "set": [], "enable": [],
+                  "disable": [], **kw})
+    assert cli.run_workflow("testing", args, hooks) == ExitCode.OK
+    return seen
+
+
+def test_the_workflows_composition_flags_shape_the_run(tmp_path):
+    """`testing.execute` used to be read by nothing: the CLI ran `default_pipeline` regardless."""
+    assert _composed(tmp_path)[-1] == "store_cases"
+    assert _composed(tmp_path, enable=["testing.execute"])[-2:] == ["derive_spec", "execute_be"]
+    assert "evaluate" not in _composed(tmp_path, disable=["testing.evaluate"])
+
+
+def test_stages_can_select_an_opt_in_stage(tmp_path):
+    """`--stages derive_spec,execute_be` is how a reviewed suite is run on its upload run dir."""
+    names = _composed(tmp_path, stages="derive_spec,execute_be")
+    assert names[-3:] == ["store_cases", "derive_spec", "execute_be"]
+
+
+def test_an_explicit_pipeline_still_wins(tmp_path):
+    assert _composed(tmp_path, pipeline="sources,store_cases", enable=["testing.execute"]) == \
+        ["sources", "store_cases"]

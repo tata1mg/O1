@@ -9,11 +9,28 @@ storage MCP tool, with nothing checking either. There was no manifest for those 
 or latency accounting, and the evaluator skill was wired to nothing at all.
 
 ```
-sources -> generate_cases -> render_xlsx -> evaluate -> store_cases -> derive_spec     [ -> execute_be ]
+generate and upload:  sources -> generate_cases -> render_xlsx -> evaluate -> store_cases
+                      (cases stored PROPOSED; a reviewer approves or rejects each one in Kiwi)
+run after review:     derive_spec -> execute_be
 ```
 
-`execute_be` is registered but NOT in the default pipeline: it issues real requests against a live
-service using a captured identity. Opt in with `--enable testing.execute` or `--stages execute_be`.
+The default pipeline stops at the upload. `derive_spec` reads only CONFIRMED cases, so it runs after review,
+with `execute_be`, which issues real requests against a live service using a captured identity. Opt in with
+`--enable testing.execute`, or run them on the upload's run dir with
+`--stages derive_spec,execute_be --run-dir <run>` (`--stages` may name a registered stage the composed
+pipeline left out).
+
+### Review rules
+
+- Every case is uploaded **PROPOSED**. Only a human sets CONFIRMED (approve) or DISABLED (reject), and only
+  CONFIRMED cases are attached to a run.
+- A regenerated suite **never overwrites a case a human has touched**: one whose status is no longer
+  PROPOSED, or whose `TestCase.history` shows a save by any account other than the agent's. The store leaves
+  it exactly as it is (status, fields, tags, plan membership) and comments the change it would have made,
+  once. Each such case is a `case_kept_for_human` decision. When the agent's own account is unknown
+  (credentials from `~/.tcms.conf` with no `testing.kiwi_user`), every existing case counts as touched.
+- `testing.upload_status=CONFIRMED` skips review for the **JSON store only** (offline trials, tests); the
+  Kiwi store refuses it. In the JSON store a reviewer edits `status` in `store/cases/<feature>.json`.
 
 ## Stages
 
@@ -23,13 +40,19 @@ service using a captured identity. Opt in with `--enable testing.execute` or `--
 | `generate_cases` | model (`skills/qa-test-case-generator`) | `qa/sources.json` | `qa/cases.json`, `qa/scenarios.json` | every schema validator; every `execution: http` case's steps re-parsed through `be_spec.parse_case` with a route and a status. `retry_on_gate_failure=1`, `revise_on_retry=True` |
 | `render_xlsx` | python | the two suite files | `qa/<FEATURE>_QA_Suite.xlsx` (conditional) | both sheets present, headers exactly the declared columns, row count equals `cases.json` |
 | `evaluate` | python + model (`skills/qa-test-case-evaluator`) | the suite + `qa/sources.json` | `qa/eval.mechanical.json`, `qa/eval.json` | schema valid; aggregates recomputed; every FAIL carries a violation naming a real id; `compliance_status` derived not asserted; the model's presence verdict equals the one Python computed. `retry_on_gate_failure=1`, `revise_on_retry=True` |
-| `store_cases` | python | `qa/cases.json` | `qa/store.json` | `created + updated == total`, and `total` equals the number of cases in the suite |
+| `store_cases` | python | `qa/cases.json` | `qa/store.json` | `created + updated + unchanged + protected == total`, and `total` equals the number of cases in the suite |
 | `derive_spec` | python | `qa/store.json` | `qa/spec.json`, `qa/spec.report.json` | non-empty; every entry has a path and asserts something. Dropped and status-only cases become decisions |
 | `execute_be` | python | `qa/spec.json` | `qa/results.json` | every row carries extid/status/detail/http_status/duration_s; status in PASS/FAIL/BLOCKED/ERROR; the tally matches the rows |
 
 Decisions recorded (`logs/decisions.jsonl`): `source_missing`, `xlsx_skipped`,
 `case_dropped_by_deriver`, `case_status_only`, `route_rewritten`, `case_not_attached`, `cases_stored`,
-`presence_check_mismatch`.
+`case_kept_for_human`, `response_attached`, `presence_check_mismatch`.
+
+`sources` also copies every present source into `qa/sources/`, and the persona prompts name those copies:
+the persona runs with the run dir as its cwd, and a headless Claude child cannot read outside it without a
+permission prompt nobody is there to answer. The persona's SKILL.md is staged into
+`.claude/skills/<stage>/` for the same engine, and the request carries `native_ctx`, which the claude-code
+adapter requires.
 
 ## Inputs
 
@@ -46,14 +69,15 @@ sources.
 
 ## Flags
 
-All 25 are `testing.*`, registered in `flags.py` with help text, and declared on `WORKFLOW.flags`. Today
+All 27 are `testing.*`, registered in `flags.py` with help text, and declared on `WORKFLOW.flags`. Today
 they are introspectable through the registry — after workflow discovery (`harness.workflows.names()`,
 which imports each workflow package and so registers its flags), `harness.flags.describe(owner="testing")`
 returns the machine-readable rows, including type, default, env var and help. `harness flags --workflow testing
 --json` is the intended CLI surface for the same data once the harness CLI lands.
 
 `testing.evaluate`, `testing.store` and `testing.execute` compose the pipeline rather than gating a stage
-from inside it: `compose_pipeline(ctx.flags)` maps them to a stage list. Turning `testing.store` off also
+from inside it: `compose_pipeline(flags)` maps them to a stage list, and the harness CLI calls it (as
+`Workflow.compose_pipeline`) for every run without `--pipeline`. Turning `testing.store` off also
 drops `derive_spec` and `execute_be`, since both read from the store. The harness-level equivalent is
 `--disable-stage <name>` or `--stages <names>`, and both routes end at the same list.
 
@@ -64,6 +88,7 @@ drops `derive_spec` and `execute_be`, since both read from the store. The harnes
 | `testing.product_prefix` | str | `"Diagno / "` | Store product-name prefix |
 | `testing.plan_template` | str | `"{feature} — imported test cases"` | Test-plan name |
 | `testing.run_template` | str | `"{feature} · {env} · {build}"` | Test-run summary, which is also the run's reuse key |
+| `testing.upload_status` | `PROPOSED`\|`CONFIRMED` | `PROPOSED` | Status a case is stored with. CONFIRMED skips review and is accepted by the JSON store only |
 | `testing.exec_tag` | str | `"exec:http"` | The tag a case must carry to be machine-executable |
 | `testing.evaluate` | bool | `True` | Run the evaluator stage |
 | `testing.store` | bool | `True` | Run `store_cases` |
@@ -76,6 +101,7 @@ drops `derive_spec` and `execute_be`, since both read from the store. The harnes
 | `testing.curl_path` | str | `/usr/bin/curl` | curl binary |
 | `testing.timeout_s` | int | `30` | Per-request timeout |
 | `testing.curl` / `.env` / `.build` / `.route_map` | str | `""` | `execute_be` inputs, also settable as CLI inputs |
+| `testing.attach_responses` | bool | `False` | Attach each case's full JSON response to its execution. Off because Kiwi attachments are readable by every account |
 | `testing.cohort_path` | str | `""` | Dotted response path recorded as the `cohort_observed` execution property. Empty = not recorded |
 | `testing.kiwi_url` / `.kiwi_user` / `.kiwi_password` | str | `""` | Kiwi credentials (env `TCMS_API_URL` / `TCMS_USERNAME` / `TCMS_PASSWORD`). Empty = fall back to `~/.tcms.conf` |
 | `testing.kiwi_web` | str | `https://localhost:8443` | Base URL used only to build the printed plan/run links (env `KIWI_WEB`) |
@@ -193,7 +219,7 @@ is deliberately identical so the move is a delete-and-import.
 
 ## What still needs Kiwi, Docker or a live environment
 
-Nothing in the default pipeline. With `testing.storage=json` the six default stages run entirely offline,
+Nothing in the default pipeline. With `testing.storage=json` the five default stages run entirely offline,
 which is how the test suite exercises them.
 
 | Needs | For what |
@@ -237,10 +263,11 @@ is also not ported: `store_cases` writes to the store directly, so there is no t
 | `be_execute` "nothing to run", exit 4 | `stages/execute_be`, raising `GateFailure` |
 | `be_execute` per-case stdout + tally | `qa/results.json` + the stage's `final_text` |
 | `EXEC_TAG`, `/usr/bin/curl`, timeout 30, `cohort_observed` path | Flags `testing.exec_tag`, `.curl_path`, `.timeout_s`, `.cohort_path` |
-| `kiwi_writer.upsert_cases` (ensure-by-name walk, extid idempotency, re-CONFIRM after `add_case`) | `store/kiwi.py:upsert_cases`, unchanged apart from the four documented changes |
+| `kiwi_writer.upsert_cases` (ensure-by-name walk, extid idempotency, re-CONFIRM after `add_case`) | `store/kiwi.py:upsert_cases`: uploads PROPOSED, drops the re-CONFIRM pass, never overwrites a human-touched case (see Review rules) |
 | `kiwi_writer.render_text`, `case_tags`, `PRIORITY_MAP` | `schema.render_text`, `schema.case_tags`, `store/kiwi.PRIORITY_MAP` |
 | `kiwi_runner.create_run` (CONFIRMED gate + `require_tag` gate, run reuse by summary) | `store/kiwi.py:create_run` and `store/json_store.py:create_run` |
-| `kiwi_runner.record_execution` (start/stop dates because `actual_duration` is read-only, 500/900 truncation) | `store/kiwi.py:record_execution`, unchanged |
+| `kiwi_runner.record_execution` (start/stop dates because `actual_duration` is read-only, 500/900 truncation) | `store/kiwi.py:record_execution`, plus test_agent's later fix (0188771): dates carry an explicit offset and `finished_at` is the real end time |
+| `kiwi_runner.add_attachment` / `attachment_url` (0188771, after the original port) | `CaseStore.attach` / `attachment_url` on both stores; scopes execution, case, run, plan |
 | `import_cases.py` stdlib xlsx reader + header aliasing | `xlsx.read_sheets` / `parse_cases` / `parse_scenarios`, with `execution` added |
 | `import_cases.py --dry-run` preview | `--from-cases` plus the `generate_cases` gate, which checks more than the preview showed |
 | `tests/test_be_spec.py` (14 checks) | `tests/testing/test_be_spec.py`, same assertions, source lines cited |

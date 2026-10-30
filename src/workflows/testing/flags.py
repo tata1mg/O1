@@ -62,6 +62,11 @@ NAMES = (
     _f("run_template", str, "{feature} · {env} · {build}",
        "Test-run summary template; also the run's identity for reuse (was kiwi_runner.py:62). "
        "Placeholders: {feature} {env} {build}."),
+    _f("upload_status", str, "PROPOSED",
+       "Status a case is stored with. PROPOSED (default): a human approves it (CONFIRMED) or rejects it "
+       "(DISABLED) before it can run. CONFIRMED skips that review and is accepted by the JSON store only, "
+       "for offline trials and tests; the Kiwi store refuses it.",
+       choices=("PROPOSED", "CONFIRMED")),
     _f("exec_tag", str, "exec:http",
        "The tag a case must carry to be machine-executable (was EXEC_TAG in be_execute.py:25)."),
     # ---- pipeline shape ------------------------------------------------------------------------------
@@ -104,6 +109,10 @@ NAMES = (
     _f("route_map", str, "",
        "Path to a JSON {contract_path: deployed_path} map. Empty = no rewriting (test_agent defaulted to "
        "config/route-map/<feature>.json inside its own repo, which a run dir has no business reading)."),
+    _f("attach_responses", bool, False,
+       "Attach each case's full JSON response to its execution (`response-<extid>.json`), beyond the "
+       "900-character `actual` property. OFF by default: Kiwi attachments are readable by every account, "
+       "so only turn it on where responses carry no personal data or secrets."),
     _f("cohort_path", str, "",
        "Dotted response path recorded as the `cohort_observed` execution property. Empty = do not record "
        "it. In test_agent this was hardcoded to `data.mix_panel_data.labs_careplan_variant` "

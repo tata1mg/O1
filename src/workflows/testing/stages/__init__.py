@@ -13,6 +13,7 @@ Two kinds of stage live here:
 
 from __future__ import annotations
 
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,8 @@ DECISIONS: tuple[str, ...] = (
     "route_rewritten",           # route map turned a contract path into the deployed one
     "case_not_attached",         # spec entry with no runnable case in the store
     "cases_stored",              # upsert summary
+    "case_kept_for_human",       # a reviewed/edited case the upload left alone (suggestion offered)
+    "response_attached",         # the full response body was attached to the execution as evidence
     "presence_check_mismatch",   # model's presence verdict != the mechanical one
 )
 
@@ -96,6 +99,7 @@ def run_engine_stage(stage: Stage, ctx: RunContext, skill_path: Path) -> StageRe
         )
     if not skill_path.exists():
         raise EngineFailure(f"stage {stage.name!r}: persona missing at {skill_path}")
+    _stage_persona(skill_path, ctx.run_dir, stage.name)
     req = EngineRequest(
         prompt=stage.build_prompt(ctx),
         cwd=ctx.run_dir,
@@ -110,6 +114,10 @@ def run_engine_stage(stage: Stage, ctx: RunContext, skill_path: Path) -> StageRe
             writable_roots=(ctx.run_dir,),
             readable_roots=tuple(_source_roots(ctx)),
         ),
+        # The claude-code adapter (the default engine) still delegates to `run_claude`, which reads the
+        # stage and the run context for MCP materialisation, effort and session bookkeeping. Without
+        # this it refuses the request outright, so neither persona stage could run on the default engine.
+        native_ctx={"stage": stage, "ctx": ctx},
     )
     res = ctx.engine.run(req)
     summary = res.summary
@@ -125,6 +133,18 @@ def run_engine_stage(stage: Stage, ctx: RunContext, skill_path: Path) -> StageRe
         denials=getattr(summary, "denials", 0),
         compactions=getattr(summary, "compactions", 0),
     )
+
+
+def _stage_persona(skill_path: Path, run_dir: Path, stage_name: str) -> None:
+    """Copy the persona to `<run_dir>/.claude/skills/<stage>/SKILL.md`.
+
+    `EngineRequest.skill_path` is how the pi adapter gets it (`--system-prompt`). The claude-code adapter
+    ignores that field: a headless child discovers skills from its cwd's `.claude/skills/`, and
+    `run_claude` leaves the staging to its caller. Staging here serves both.
+    """
+    dst = run_dir / ".claude" / "skills" / stage_name / "SKILL.md"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(skill_path, dst)
 
 
 def _source_roots(ctx: RunContext) -> list[Path]:

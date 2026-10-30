@@ -98,6 +98,29 @@ def sourced_ctx(tmp_path, clean_cases, clean_scenarios):
     return c
 
 
+def _approve(store_root: Path, feature: str = "RSE-1", extids=None, status: str = "CONFIRMED") -> None:
+    """The reviewer's step, for the JSON store: set `status` on the stored cases (all, or `extids`).
+
+    Cases are stored PROPOSED and nothing runs until a human approves them. This is that human, editing the
+    cases file the way the JSON store documents — so a test that needs a runnable suite goes through review
+    rather than around it.
+    """
+    from workflows.testing.store.json_store import JsonCaseStore
+
+    path = JsonCaseStore(store_root)._cases_path(feature)
+    rows = json.loads(path.read_text())
+    for extid, row in rows.items():
+        if extids is None or extid in extids:
+            row["status"] = status
+    path.write_text(json.dumps(rows, indent=2, sort_keys=True) + "\n")
+
+
+@pytest.fixture
+def approve():
+    """`_approve` as a fixture: `approve(ctx.run_dir / "store")` confirms every stored case."""
+    return _approve
+
+
 @pytest.fixture
 def ctx_factory():
     """`make_ctx` as a fixture, for tests that need a second run dir or non-default flags."""

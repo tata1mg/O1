@@ -37,7 +37,7 @@ def _build_prompt(ctx: RunContext) -> str:
         "Sources (read each file before generating):",
         "",
     ]
-    lines += [f"{r['label']}: {r['path']}" for r in present]
+    lines += [f"{r['label']}: {r.get('local') or r['path']}" for r in present]
     if missing:
         lines += [
             "",

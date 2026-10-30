@@ -11,10 +11,16 @@ and (c) the evaluator's requirement list. The path-preference rule is ported ver
 run's NORMALIZED local copy over the original URL/path. Measured 2026-08-11 (run_chain.sh:122-123):
 passing URLs made the generator stop mid-run to ask for Confluence/Figma permissions, killing draft
 after investigate had fully succeeded.
+
+Every present source is also COPIED into `qa/sources/` and the copy's path recorded as `local`. The
+persona stages run with the run dir as cwd, and a headless Claude child cannot read outside it without a
+permission prompt nobody is there to answer — so prompts name the copy, not the original. The copy is also
+the exact text this suite was generated from, which the original stops being the moment the RFC is revised.
 """
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from harness.contracts import RunContext, Stage
@@ -35,6 +41,8 @@ SOURCE_SPECS: tuple[tuple[str, str, str | None, bool], ...] = (
 )
 #: A source that must be present for generation to be worth attempting.
 REQUIRED_LABELS: tuple[str, ...] = ("PRD", "RFC")
+#: Run-dir-relative folder holding the copies the persona stages read.
+SOURCES_DIR = "qa/sources"
 
 
 def _resolve(ctx: RunContext, key: str, rfc_rel: str | None) -> Path | None:
@@ -66,9 +74,15 @@ def _inventory(ctx: RunContext) -> dict:
             continue
         if path.is_file():
             size = path.stat().st_size
-            rows.append({"label": label, "key": key, "path": str(path),
-                         "status": "present" if size else "blocked", "bytes": size,
-                         "note": "" if size else "file is empty"})
+            row = {"label": label, "key": key, "path": str(path),
+                   "status": "present" if size else "blocked", "bytes": size,
+                   "note": "" if size else "file is empty"}
+            if size:
+                local = ctx.path(f"{SOURCES_DIR}/{key}{path.suffix or '.md'}")
+                local.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(path, local)
+                row["local"] = str(local)
+            rows.append(row)
         else:
             rows.append({"label": label, "key": key, "path": str(path), "status": "missing",
                          "bytes": 0, "note": "path does not exist"})

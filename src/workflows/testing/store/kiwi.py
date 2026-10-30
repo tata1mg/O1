@@ -5,7 +5,7 @@ Ported from test_agent importer/kiwi_writer.py and importer/kiwi_runner.py @ ca7
 imported lazily inside `_rpc()` so importing this module (or the whole workflow) needs no dependency —
 that matters because `workflows.testing` is scanned at CLI startup.
 
-Four deliberate changes from test_agent, all recorded in the workflow README:
+Deliberate changes from test_agent, all recorded in the workflow README:
 
   1. **No password default.** kiwi_runner.py:28-30 and be_requirements.py:135-137 shipped the admin
      password as a literal. Credentials come from flags (env `TCMS_*`) or ~/.tcms.conf, and an incomplete
@@ -21,17 +21,22 @@ Four deliberate changes from test_agent, all recorded in the workflow README:
      the process stopped verifying. Here an `ssl.SSLContext` is built for this transport only, the
      process default is restored in a `finally`, and the global default is left as it was found.
   4. **Templates are flags**: product prefix, plan name, run summary.
+  5. **Cases are uploaded PROPOSED and a human edit is never overwritten** (Phase 1). test_agent set every
+     case CONFIRMED, then re-CONFIRMED them all after `TestPlan.add_case`, so a re-upload reset whatever a
+     reviewer had decided. Kiwi's `add_case` only links the case (tcms/testplans/models.py) and leaves its
+     status alone, so the extra pass is gone too.
+  6. **Execution timestamps carry an offset**, and the store can attach files — both ported from
+     test_agent after the original port (0188771).
 
-Everything else — the ensure-by-name walk, the `extid:`/`feature:` idempotency key, the re-CONFIRM pass
-after `TestPlan.add_case` (which resets status to NEED_UPDATE), the start_date/stop_date duration trick
-because `actual_duration` is read-only, the 500/900 property truncation — is unchanged.
+Everything else — the ensure-by-name walk, the `extid:`/`feature:` idempotency key, the start_date/stop_date
+duration trick because `actual_duration` is read-only, the 500/900 property truncation — is unchanged.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from . import STATUS, Case, Run
+from . import STATUS, Case, Run, check_scope
 
 
 def _apply_context(client, context) -> bool:
@@ -62,6 +67,21 @@ PRIORITY_MAP = {"high": "P1", "medium": "P3", "low": "P5", "critical": "P1"}
 #: Kiwi truncates nothing itself; these caps keep one response value from filling the properties table.
 PROP_VALUE_MAX = 500
 ACTUAL_VALUE_MAX = 900
+SUGGESTION_VALUE_MAX = 2000
+#: The only status the agent writes a case with. Approving (CONFIRMED) or rejecting (DISABLED) is a human's.
+UPLOAD_STATUS = "PROPOSED"
+#: scope -> the Kiwi API object. Every one exposes `list_attachments(id)` and `add_attachment(id, ...)`.
+_ATTACH_API = {"execution": "TestExecution", "case": "TestCase", "run": "TestRun", "plan": "TestPlan"}
+
+
+def _changed_fields(existing: dict, fields: dict) -> dict:
+    """{field: new value} for each field whose stored value differs. Ids compare as strings, because
+    XML-RPC hands back ints where the writer may hold either."""
+    return {k: v for k, v in fields.items() if str(existing.get(k, "")) != str(v)}
+
+
+def _basename(url: str) -> str:
+    return url.rsplit("/", 1)[-1]
 
 
 class KiwiCaseStore:
@@ -166,12 +186,17 @@ class KiwiCaseStore:
 
     # ---- CaseStore --------------------------------------------------------------------------------
     def upsert_cases(self, feature: str, cases: list[dict]) -> dict:
-        """Create/update `cases` under Product '<prefix><feature>' and its plan. Idempotent per extid."""
+        """Create/update `cases` under Product '<prefix><feature>' and its plan. Idempotent per extid.
+
+        New cases are created PROPOSED and added to the plan. An existing case is updated only while no
+        human has touched it; a touched one is left exactly as the reviewer left it (status, fields, tags
+        and plan membership) and the agent's would-be change is posted as a comment on it instead.
+        """
         from ..schema import case_tags, render_text
 
         if not cases:
-            return {"created": 0, "updated": 0, "total": 0, "backend": self.name,
-                    "feature": feature, "error": "no cases supplied"}
+            return {"created": 0, "updated": 0, "unchanged": 0, "protected": 0, "protected_ids": [],
+                    "total": 0, "backend": self.name, "feature": feature, "error": "no cases supplied"}
         rpc = self._rpc()
         product_name = self.product_name(feature)
 
@@ -187,7 +212,11 @@ class KiwiCaseStore:
         version = ensure("Version", {"product": product["id"], "value": "unspecified"},
                          {"product": product["id"], "value": "unspecified"})
         plan_type = rpc.PlanType.filter({})[0]
-        confirmed = rpc.TestCaseStatus.filter({"name": "CONFIRMED"})[0]
+        proposed = rpc.TestCaseStatus.filter({"name": UPLOAD_STATUS})
+        if not proposed:
+            raise RuntimeError(f"kiwi: no {UPLOAD_STATUS} case status — the review step needs it")
+        proposed = proposed[0]
+        agent_id = self._agent_user_id(rpc)
 
         plan_name = self.plan_template.format(feature=feature)
         plans = rpc.TestPlan.filter({"name": plan_name, "product": product["id"]})
@@ -196,8 +225,9 @@ class KiwiCaseStore:
             "product": product["id"], "product_version": version["id"], "type": plan_type["id"],
         })
 
-        created = updated = 0
-        case_ids, prio_cache, cat_cache = [], {}, {}
+        created = updated = unchanged = 0
+        protected: list[str] = []
+        prio_cache, cat_cache = {}, {}
         # Idempotency is scoped BY FEATURE: only match cases already tagged feature:<feature>, so the
         # same TC-id under a different feature never collides.
         feature_case_ids = {x["id"] for x in rpc.TestCase.filter({"tag__name": f"feature:{feature}"})}
@@ -214,34 +244,86 @@ class KiwiCaseStore:
                 "text": render_text(c),
                 "category": cat_cache[mod]["id"],
                 "priority": prio_cache[pname]["id"],
-                "case_status": confirmed["id"],
-                "is_automated": False,
             }
             found = [x for x in rpc.TestCase.filter({"tag__name": f"extid:{c['id']}"})
                      if x["id"] in feature_case_ids]
-            if found:
+            if not found:
+                # Status is set on create and never again: test_agent re-confirmed every case after
+                # `TestPlan.add_case`, which in Kiwi links the case and leaves its status alone — so the
+                # extra pass did nothing on a new case and, on a re-upload, overwrote the reviewer's.
+                case = rpc.TestCase.create({**fields, "case_status": proposed["id"], "is_automated": False})
+                feature_case_ids.add(case["id"])
+                rpc.TestPlan.add_case(plan["id"], case["id"])
+                created += 1
+            else:
                 case = found[0]
+                changed = _changed_fields(case, fields)
+                if not changed:
+                    unchanged += 1
+                    continue
+                touched = self._touched_by_human(rpc, case, agent_id)
+                if touched:
+                    self._suggest(rpc, case["id"], c["id"], touched, changed)
+                    protected.append(c["id"])
+                    continue
                 rpc.TestCase.update(case["id"], fields)
                 updated += 1
-            else:
-                case = rpc.TestCase.create(fields)
-                feature_case_ids.add(case["id"])
-                created += 1
             for t in case_tags(c, feature):
                 rpc.TestCase.add_tag(case["id"], t)
-            rpc.TestPlan.add_case(plan["id"], case["id"])
-            case_ids.append(case["id"])
-
-        # Adding a case to a plan resets its status to NEED_UPDATE; confirm as the final step so every
-        # case is CONFIRMED and therefore addable to a Test Run.
-        for cid in case_ids:
-            rpc.TestCase.update(cid, {"case_status": confirmed["id"]})
 
         return {
-            "created": created, "updated": updated, "total": len(cases), "backend": self.name,
+            "created": created, "updated": updated, "unchanged": unchanged, "protected": len(protected),
+            "protected_ids": protected, "total": len(cases), "backend": self.name,
             "feature": feature, "product": product_name, "plan": plan_name, "plan_id": plan["id"],
-            "plan_url": f"{self.web}/plan/{plan['id']}/",
+            "plan_url": f"{self.web}/plan/{plan['id']}/", "status": UPLOAD_STATUS,
         }
+
+    def _agent_user_id(self, rpc):
+        """The id of the account this store writes as, or None when it cannot be told (credentials from
+        ~/.tcms.conf name no username here). None makes every existing case count as human-touched."""
+        if not self.user:
+            return None
+        users = rpc.User.filter({"username": self.user})
+        return users[0]["id"] if users else None
+
+    def _touched_by_human(self, rpc, case: dict, agent_id) -> str:
+        """Why this case must not be overwritten, or "" when only the agent has ever written it.
+
+        A status other than PROPOSED is a reviewer's decision. Otherwise `TestCase.history` names every
+        account that saved the case; anyone but the agent is a human edit. When that cannot be read, or the
+        agent's own account is unknown, the answer is "touched": overwriting a reviewer's work is the one
+        mistake this rule exists to prevent, and the cost of erring the other way is a comment.
+        """
+        status = case.get("case_status__name")
+        if status and status != UPLOAD_STATUS:
+            return f"status is {status}"
+        if agent_id is None:
+            return "the agent's own Kiwi account is unknown, so its edits cannot be told from a human's"
+        try:
+            history = rpc.TestCase.history(case["id"], {})
+        except Exception as exc:
+            return f"its history could not be read ({type(exc).__name__})"
+        others = sorted({str(h.get("history_user_id")) for h in history
+                         if h.get("history_user_id") not in (None, agent_id)})
+        return f"edited by user {', '.join(others)}" if others else ""
+
+    def _suggest(self, rpc, case_id, extid: str, why: str, changed: dict) -> None:
+        """Comment the change the agent would have made. Skipped when the same suggestion is already
+        there, so re-running an unchanged suite does not stack identical comments."""
+        lines = [f"Agent suggestion for {extid}: a regenerated suite would change "
+                 f"{', '.join(sorted(changed))}. Not applied because {why}; the human edit wins.", ""]
+        for name in sorted(changed):
+            lines.append(f"{name}: {str(changed[name])[:SUGGESTION_VALUE_MAX]}")
+        text = "\n".join(lines)
+        try:
+            if any(c.get("comment") == text for c in rpc.TestCase.comments(case_id)):
+                return
+        except Exception:
+            pass
+        try:
+            rpc.TestCase.add_comment(case_id, text)
+        except Exception:
+            pass  # a lost suggestion is a missed hint, never a reason to fail the upload
 
     def list_cases(self, feature: str, *, status: str | None = None,
                    tags: tuple[str, ...] = ()) -> list[Case]:
@@ -315,7 +397,8 @@ class KiwiCaseStore:
                    skipped_wrong_execution=tuple(untagged), url=f"{self.web}/runs/{run['id']}/")
 
     def record_execution(self, run_id: str, extid: str, status: str, *, actual: str = "",
-                         duration_s: float | None = None, props: dict | None = None) -> str:
+                         duration_s: float | None = None, props: dict | None = None,
+                         finished_at: datetime | None = None) -> str:
         rpc = self._rpc()
         kiwi_status = STATUS.get(status.upper())
         if not kiwi_status:
@@ -338,10 +421,15 @@ class KiwiCaseStore:
             # directly is accepted and silently discarded (probed 2026-08-25 on Kiwi 15.x), so the
             # measured elapsed time was being thrown away. Set the two timestamps and let Kiwi compute
             # it. Microsecond precision matters: second-truncated strings made a 1.23s call report 2.0s.
-            stop = datetime.now(UTC)
+            stop = finished_at or datetime.now(UTC)
+            if stop.tzinfo is None:
+                stop = stop.replace(tzinfo=UTC)
             start = stop - timedelta(seconds=float(duration_s))
-            fields["start_date"] = start.strftime("%Y-%m-%dT%H:%M:%S.%f")
-            fields["stop_date"] = stop.strftime("%Y-%m-%dT%H:%M:%S.%f")
+            # An EXPLICIT offset, never a naive string. With KIWI_USE_TZ=True Django reads a naive value as
+            # the instance's TIME_ZONE, so naive UTC on the Asia/Kolkata deployment was stored 5h30m off.
+            # Ported from test_agent kiwi_runner.py (0188771).
+            fields["start_date"] = start.isoformat(timespec="microseconds")
+            fields["stop_date"] = stop.isoformat(timespec="microseconds")
         rpc.TestExecution.update(target["id"], fields)
 
         # evidence + metadata. Redact before this point; Kiwi is readable by every account.
@@ -356,6 +444,51 @@ class KiwiCaseStore:
             except Exception:
                 pass
         return str(target["id"])
+
+    def attach(self, scope: str, target_id: str, name: str, content: bytes, *,
+               replace: bool = False) -> bool:
+        """Ported from test_agent kiwi_runner.add_attachment (0188771): idempotent by name, never raises
+        on Kiwi's side of it — a missing attachment is lost evidence, not a failed run."""
+        import base64
+
+        check_scope(scope)
+        rpc = self._rpc()
+        api = getattr(rpc, _ATTACH_API[scope])
+        try:
+            existing = [a for a in api.list_attachments(int(target_id))
+                        if _basename(a.get("url", "")) == name]
+        except Exception:
+            existing = []  # read-back is an optimisation; attaching is still better than filing nothing
+        if existing and not replace:
+            return True
+        for a in existing:
+            try:
+                rpc.Attachment.remove_attachment(a["pk"])
+            except Exception:
+                pass
+        try:
+            api.add_attachment(int(target_id), name, base64.b64encode(content).decode("ascii"))
+            return True
+        except Exception:
+            return False
+
+    def attachment_url(self, scope: str, target_id: str, name: str) -> str:
+        """Read back BY NAME. Falls back to a stem match because Kiwi suffixes a clashing upload
+        (`response_qWGCM4Y.json`), and rows filed before attaching became idempotent carry that suffix."""
+        check_scope(scope)
+        try:
+            rows = getattr(self._rpc(), _ATTACH_API[scope]).list_attachments(int(target_id))
+        except Exception:
+            return ""
+        stem, _, suffix = name.rpartition(".")
+        fallback = ""
+        for a in rows:
+            base = _basename(a.get("url", ""))
+            if base == name:
+                return a.get("url", "")
+            if stem and base.startswith(stem) and base.endswith(suffix):
+                fallback = a.get("url", "")
+        return fallback
 
     def health(self) -> dict:
         try:

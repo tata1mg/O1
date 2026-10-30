@@ -6,12 +6,14 @@ trusted to build a spreadsheet at the right path and call a storage tool, with n
 (survey §10.1). Here each step is a gated stage over files in the run dir, so the whole chain is
 resumable, costed, traced and mechanically checked.
 
-Default pipeline:
+Default pipeline (generate and upload for review):
 
-    sources -> generate_cases -> render_xlsx -> evaluate -> store_cases -> derive_spec
+    sources -> generate_cases -> render_xlsx -> evaluate -> store_cases
 
-`execute_be` is registered but not in the default pipeline: it issues real requests against a live service
-with a captured identity, so it is opt-in (`--enable testing.execute`, or `--stages execute_be`).
+Cases are stored PROPOSED, and only a human approves them (CONFIRMED). `derive_spec` reads CONFIRMED cases
+only, so it belongs to the RUN pipeline, after review, together with `execute_be`, which issues real
+requests against a live service with a captured identity. Both are opt-in: `--enable testing.execute`, or
+`--stages derive_spec,execute_be --run-dir <run>`.
 
 See README.md in this package for the stage table, the flag table, and the parity map back to test_agent.
 """
@@ -34,7 +36,7 @@ from .stages.sources import STAGE as SOURCES
 from .stages.store_cases import STAGE as STORE_CASES
 
 DEFAULT_PIPELINE: tuple[str, ...] = (
-    "sources", "generate_cases", "render_xlsx", "evaluate", "store_cases", "derive_spec",
+    "sources", "generate_cases", "render_xlsx", "evaluate", "store_cases",
 )
 
 
@@ -50,6 +52,12 @@ def compose_pipeline(flags) -> tuple[str, ...]:
     Dropping `store_cases` also drops `derive_spec` and `execute_be`: both read from the store, and a
     pipeline that derived a spec from a store nothing had written to would fail on an empty spec rather
     than telling the operator what they actually did.
+
+    `derive_spec` rides with `execute_be` rather than with `store_cases`: it reads only CONFIRMED cases,
+    and a freshly stored suite is PROPOSED until someone reviews it, so deriving straight after the upload
+    could only ever fail.
+
+    The harness calls this (`Workflow.compose_pipeline`) for every run that does not pass --pipeline.
     """
     def on(name: str, default: bool) -> bool:
         try:
@@ -62,9 +70,8 @@ def compose_pipeline(flags) -> tuple[str, ...]:
         stages.append("evaluate")
     if on("store", True):
         stages.append("store_cases")
-        stages.append("derive_spec")
         if on("execute", False):
-            stages.append("execute_be")
+            stages += ["derive_spec", "execute_be"]
     return tuple(stages)
 
 
@@ -135,4 +142,5 @@ WORKFLOW = Workflow(
     flags=_flags.NAMES,
     decisions=DECISIONS,
     input_roots=("qa/sources.json",),
+    compose_pipeline=compose_pipeline,
 )

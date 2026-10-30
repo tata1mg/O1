@@ -1,0 +1,38 @@
+# Unit tests and lint. The whole suite is offline: a fake `claude`, recorded streams, fake XML-RPC for Kiwi
+# (tests/README.md), so CI needs no secrets, no model and no network beyond installing dependencies.
+# Action tags are not yet pinned to commit SHAs, same as security.yml; pin them before the repo goes public.
+name: tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # the pi guard's Node cases skip without it; pi itself requires Node >= 22.19
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: install
+        # the `testing` extra brings openpyxl, so the xlsx render tests run instead of skipping
+        run: uv sync --frozen --extra testing
+      - name: lint
+        run: uv run --frozen ruff check src tests
+      - name: test
+        run: uv run --frozen pytest -q

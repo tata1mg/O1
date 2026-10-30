@@ -21,6 +21,9 @@ from workflows.testing import _io
 from workflows.testing.stages import read_json, read_json_gated, write_json
 from workflows.testing.store.json_store import JsonCaseStore
 
+#: Runs need an approved suite; these tests are about durability, not review, so they store it approved.
+REVIEWED = "CONFIRMED"
+
 
 # ---- atomic_write_text ------------------------------------------------------------------------------
 def test_it_writes_the_content_and_creates_the_parent(tmp_path):
@@ -187,7 +190,7 @@ def test_the_store_writes_through_the_atomic_writer(tmp_path, monkeypatch, clean
         return real(path, text)
 
     monkeypatch.setattr("workflows.testing.store.json_store.atomic_write_text", spy)
-    store = JsonCaseStore(tmp_path / "store")
+    store = JsonCaseStore(tmp_path / "store", upload_status=REVIEWED)
     store.upsert_cases("RSE-1", clean_cases)
     run = store.create_run("RSE-1", "b1", "staging")
     store.record_execution(run.run_id, run.attached[0], "PASS")
@@ -196,7 +199,7 @@ def test_the_store_writes_through_the_atomic_writer(tmp_path, monkeypatch, clean
 
 def test_a_torn_store_file_is_a_named_gate_failure_not_a_json_decode_error(tmp_path, clean_cases):
     """Before: `json.loads` raised out of `list_cases`, a traceback that repeated on every retry."""
-    store = JsonCaseStore(tmp_path / "store")
+    store = JsonCaseStore(tmp_path / "store", upload_status=REVIEWED)
     store.upsert_cases("RSE-1", clean_cases)
     store._cases_path("RSE-1").write_text('{"TC-RSE-SLOT-FUNC-01": {"cas')
 
@@ -206,7 +209,7 @@ def test_a_torn_store_file_is_a_named_gate_failure_not_a_json_decode_error(tmp_p
 
 
 def test_a_torn_run_file_is_also_named(tmp_path, clean_cases):
-    store = JsonCaseStore(tmp_path / "store")
+    store = JsonCaseStore(tmp_path / "store", upload_status=REVIEWED)
     store.upsert_cases("RSE-1", clean_cases)
     run = store.create_run("RSE-1", "b1", "staging")
     next((store.root / "runs").rglob("*.json")).write_text("{trunc")
@@ -253,7 +256,7 @@ def test_the_lock_lives_on_a_sidecar_not_on_the_artifact(tmp_path):
 def test_concurrent_record_execution_loses_nothing(tmp_path, clean_cases):
     """Blocker 5.2: unlocked, the later read-modify-write silently discarded the other's executions —
     and nothing downstream noticed, because results.json is written by the stage independently."""
-    store = JsonCaseStore(tmp_path / "store")
+    store = JsonCaseStore(tmp_path / "store", upload_status=REVIEWED)
     store.upsert_cases("RSE-1", clean_cases)
     run = store.create_run("RSE-1", "b1", "staging")
     extids = list(run.attached)
@@ -265,7 +268,7 @@ def test_concurrent_record_execution_loses_nothing(tmp_path, clean_cases):
     def record(extid: str) -> None:
         try:
             ready.wait(5)   # maximise the overlap: every thread reads at the same moment
-            JsonCaseStore(tmp_path / "store").record_execution(
+            JsonCaseStore(tmp_path / "store", upload_status=REVIEWED).record_execution(
                 run.run_id, extid, "PASS", actual=f"ok {extid}", duration_s=0.1)
         except BaseException as exc:   # noqa: BLE001 — surfaced below so the assert names it
             errors.append(exc)
@@ -312,7 +315,7 @@ def test_concurrent_upsert_of_disjoint_slices_loses_nothing(tmp_path, sample_cas
 def test_a_rerun_prunes_executions_for_cases_no_longer_attached(tmp_path, clean_cases):
     """An execution for an unattached extid would sit in the run file reading as evidence for a case
     nobody ran (review nit 5.13, fixed while the lock went in)."""
-    store = JsonCaseStore(tmp_path / "store")
+    store = JsonCaseStore(tmp_path / "store", upload_status=REVIEWED)
     store.upsert_cases("RSE-1", clean_cases)
     first = store.create_run("RSE-1", "b1", "staging")
     for extid in first.attached:
@@ -325,7 +328,7 @@ def test_a_rerun_prunes_executions_for_cases_no_longer_attached(tmp_path, clean_
 
 
 def test_the_lock_sidecar_is_not_mistaken_for_a_run_file(tmp_path, clean_cases):
-    store = JsonCaseStore(tmp_path / "store")
+    store = JsonCaseStore(tmp_path / "store", upload_status=REVIEWED)
     store.upsert_cases("RSE-1", clean_cases)
     run = store.create_run("RSE-1", "b1", "staging")
     assert list((store.root / "runs").rglob("*.json.lock"))   # the sidecar exists

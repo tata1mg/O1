@@ -33,6 +33,7 @@ class FakeTable:
             # Kiwi's TestCase rows always carry the denormalised status name, which is what the read
             # side filters on. The writer only ever sets the numeric `case_status`.
             row["case_status__name"] = self.parent.status_name(fields.get("case_status"))
+            self.parent.saved_by(row["id"])
         self.rows.append(row)
         self.parent.log.append((self.name, "create", dict(fields)))
         return row
@@ -40,8 +41,21 @@ class FakeTable:
     def update(self, row_id, fields):
         row = next(r for r in self.rows if r["id"] == row_id)
         row.update(fields)
+        if self.name == "TestCase":
+            if "case_status" in fields:
+                row["case_status__name"] = self.parent.status_name(fields["case_status"])
+            self.parent.saved_by(row_id)
         self.parent.log.append((self.name, "update", row_id, dict(fields)))
         return row
+
+    # attachments: every Kiwi object that holds files exposes this pair
+    def list_attachments(self, obj_id):
+        return list(self.parent.attachments.get((self.name, obj_id), []))
+
+    def add_attachment(self, obj_id, filename, b64content):
+        rows = self.parent.attachments.setdefault((self.name, obj_id), [])
+        rows.append({"pk": self.parent.next_id(), "url": f"https://kiwi.test/uploads/{filename}",
+                     "content": b64content})
 
     def add_tag(self, case_id, tag):
         self.parent.tags.setdefault(case_id, []).append(tag)
@@ -59,12 +73,17 @@ class FakeTable:
 class FakeRPC:
     """Just enough Kiwi to exercise the store. Tag.filter({"case": id}) is served from `tags`."""
 
-    def __init__(self, products=(), statuses=("CONFIRMED",)):
+    def __init__(self, products=(), statuses=("PROPOSED", "CONFIRMED", "DISABLED", "NEED_UPDATE")):
         self._id = 100
         self.log: list = []
         self.plan_cases: dict[int, list[int]] = {}
         self.tags: dict[int, list[str]] = {}
         self.props: dict[int, dict] = {}
+        self.history: dict[int, list[dict]] = {}
+        self.comments: dict[int, list[str]] = {}
+        self.attachments: dict[tuple, list[dict]] = {}
+        #: who Kiwi records as saving the next change: 7 is the agent's account ("svc"), anything else a human
+        self.acting_user = 7
         for name in ("Classification", "Product", "Version", "PlanType", "TestCaseStatus", "TestPlan",
                      "Category", "Priority", "TestCase", "Build", "TestRun", "User",
                      "TestExecutionStatus", "TestExecution"):
@@ -72,10 +91,10 @@ class FakeRPC:
         self.Classification.rows = [{"id": 1, "name": "Diagno"}]
         self.Product.rows = [{"id": i + 10, "name": n} for i, n in enumerate(products)]
         self.PlanType.rows = [{"id": 2, "name": "Unit"}]
-        self.TestCaseStatus.rows = [{"id": 3, "name": s} for s in statuses]
+        self.TestCaseStatus.rows = [{"id": 30 + i, "name": s} for i, s in enumerate(statuses)]
         self.Priority.rows = [{"id": 4, "value": "P1"}, {"id": 5, "value": "P3"},
                               {"id": 6, "value": "P5"}]
-        self.User.rows = [{"id": 7, "username": "svc"}]
+        self.User.rows = [{"id": 7, "username": "svc"}, {"id": 8, "username": "qa.reviewer"}]
         self.TestExecutionStatus.rows = [{"id": 20 + i, "name": n} for i, n in enumerate(STATUS.values())]
         self.Tag = FakeTable(parent=self, name="Tag")
         self.Tag.filter = lambda q: [{"name": t} for t in self.tags.get(q.get("case"), [])]
@@ -91,6 +110,19 @@ class FakeRPC:
             return rows
 
         self.TestCase.filter = case_filter
+        self.TestCase.history = lambda case_id, query=None: list(self.history.get(case_id, []))
+        self.TestCase.comments = lambda case_id: [{"comment": c} for c in self.comments.get(case_id, [])]
+        self.TestCase.add_comment = lambda case_id, text: self.comments.setdefault(case_id, []).append(text)
+        self.Attachment = FakeTable(parent=self, name="Attachment")
+
+        def remove_attachment(pk):
+            for rows in self.attachments.values():
+                rows[:] = [a for a in rows if a["pk"] != pk]
+
+        self.Attachment.remove_attachment = remove_attachment
+
+    def saved_by(self, case_id):
+        self.history.setdefault(case_id, []).append({"history_user_id": self.acting_user})
 
     def next_id(self):
         self._id += 1
@@ -101,8 +133,33 @@ class FakeRPC:
 
 
 def store(rpc, **kw) -> KiwiCaseStore:
-    return KiwiCaseStore(url="https://kiwi.test/xml-rpc/", user="svc", password="s3cret",
+    kw.setdefault("user", "svc")
+    return KiwiCaseStore(url="https://kiwi.test/xml-rpc/", password="s3cret",
                          web="https://kiwi.test", rpc=rpc, **kw)
+
+
+def case_row(rpc, extid):
+    return next(r for r in rpc.TestCase.rows if f"extid:{extid}" in rpc.tags.get(r["id"], []))
+
+
+def review(rpc, extid=None, status="CONFIRMED", fields=None, user=8):
+    """A human in Kiwi: set `status` (and any `fields`) on one case, or on every case."""
+    status_id = next(s["id"] for s in rpc.TestCaseStatus.rows if s["name"] == status)
+    rpc.acting_user = user
+    rows = [case_row(rpc, extid)] if extid else list(rpc.TestCase.rows)
+    for row in rows:
+        rpc.TestCase.update(row["id"], {"case_status": status_id, **(fields or {})})
+    rpc.acting_user = 7
+
+
+def reindex(rpc):
+    """Let `TestCase.filter({"tag__name": ...})` find cases by tag, so a second upsert matches them."""
+    rpc.TestCase.filter = lambda q: (
+        [c for c in rpc.TestCase.rows if q.get("tag__name", "") in rpc.tags.get(c["id"], [])]
+        if "tag__name" in (q or {}) else
+        [c for c in rpc.TestCase.rows if c["id"] in rpc.plan_cases.get(q.get("plan"), [])]
+        if "plan" in (q or {}) else list(rpc.TestCase.rows)
+    )
 
 
 def test_it_satisfies_the_protocol():
@@ -176,26 +233,75 @@ def test_upsert_tags_every_case_with_exec_and_surface(clean_cases):
 def test_upsert_matches_an_existing_case_on_its_extid_within_the_feature(clean_cases):
     rpc = FakeRPC()
     store(rpc).upsert_cases("RSE-1", clean_cases)
-    # the fake keeps the tag index, so a second pass finds every case again
-    rpc.TestCase.filter = lambda q: (
-        [c for c in rpc.TestCase.rows
-         if q.get("tag__name", "").startswith("extid:")
-         and q["tag__name"] in rpc.tags.get(c["id"], [])]
-        or [c for c in rpc.TestCase.rows
-            if q.get("tag__name", "") in rpc.tags.get(c["id"], [])]
-    )
-    summary = store(rpc).upsert_cases("RSE-1", clean_cases)
-    assert summary["updated"] == len(clean_cases) and summary["created"] == 0
+    reindex(rpc)
+    again = store(rpc).upsert_cases("RSE-1", clean_cases)
+    assert (again["created"], again["unchanged"]) == (0, len(clean_cases))
+    changed = store(rpc).upsert_cases("RSE-1", [{**c, "title": c["title"] + "!"} for c in clean_cases])
+    assert (changed["created"], changed["updated"]) == (0, len(clean_cases))
 
 
-def test_every_case_is_re_confirmed_after_being_added_to_the_plan(clean_cases):
-    """`TestPlan.add_case` resets the status to NEED_UPDATE, so a final confirm pass is required or the
-    cases cannot be attached to a run."""
+# ---- review: PROPOSED on upload, and the human edit wins ----------------------------------------------
+def test_cases_are_uploaded_proposed_and_never_re_confirmed(clean_cases):
+    """test_agent created every case CONFIRMED and then re-CONFIRMED them all; only a reviewer approves."""
     rpc = FakeRPC()
-    store(rpc).upsert_cases("RSE-1", clean_cases[:1])
-    updates = [e for e in rpc.log if e[0] == "TestCase" and e[1] == "update"]
-    assert updates and updates[-1][3] == {"case_status": 3}
-    assert any(e[0] == "TestPlan" and e[1] == "add_case" for e in rpc.log)
+    summary = store(rpc).upsert_cases("RSE-1", clean_cases)
+    assert summary["status"] == "PROPOSED"
+    assert {r["case_status__name"] for r in rpc.TestCase.rows} == {"PROPOSED"}
+    assert not [e for e in rpc.log if e[0] == "TestCase" and e[1] == "update"]
+    assert sum(1 for e in rpc.log if e[0] == "TestPlan" and e[1] == "add_case") == len(clean_cases)
+
+
+def test_a_missing_proposed_status_is_named(clean_cases):
+    with pytest.raises(RuntimeError, match="no PROPOSED case status"):
+        store(FakeRPC(statuses=("CONFIRMED",))).upsert_cases("RSE-1", clean_cases)
+
+
+def test_a_reviewed_case_is_never_overwritten(clean_cases):
+    rpc = FakeRPC()
+    store(rpc).upsert_cases("RSE-1", clean_cases)
+    reindex(rpc)
+    first = clean_cases[0]["id"]
+    review(rpc, first, "CONFIRMED")
+    before = dict(case_row(rpc, first))
+    summary = store(rpc).upsert_cases("RSE-1", [{**c, "title": "Renamed"} for c in clean_cases])
+    assert summary["protected_ids"] == [first]
+    assert summary["updated"] == len(clean_cases) - 1
+    assert case_row(rpc, first) == before                   # status and every field as the reviewer left it
+    assert "Agent suggestion for " + first in rpc.comments[case_row(rpc, first)["id"]][0]
+    assert "status is CONFIRMED" in rpc.comments[case_row(rpc, first)["id"]][0]
+
+
+def test_a_proposed_case_a_human_edited_is_never_overwritten(clean_cases):
+    """Still PROPOSED, but `TestCase.history` shows a save by someone other than the agent."""
+    rpc = FakeRPC()
+    store(rpc).upsert_cases("RSE-1", clean_cases)
+    reindex(rpc)
+    first = clean_cases[0]["id"]
+    review(rpc, first, "PROPOSED", fields={"text": "rewritten by QA"})
+    summary = store(rpc).upsert_cases("RSE-1", [{**c, "title": "Renamed"} for c in clean_cases])
+    assert summary["protected_ids"] == [first]
+    assert case_row(rpc, first)["text"] == "rewritten by QA"
+    assert "edited by user 8" in rpc.comments[case_row(rpc, first)["id"]][0]
+
+
+def test_the_same_suggestion_is_commented_once(clean_cases):
+    rpc = FakeRPC()
+    store(rpc).upsert_cases("RSE-1", clean_cases)
+    reindex(rpc)
+    review(rpc, clean_cases[0]["id"], "DISABLED")
+    renamed = [{**c, "title": "Renamed"} for c in clean_cases]
+    store(rpc).upsert_cases("RSE-1", renamed)
+    store(rpc).upsert_cases("RSE-1", renamed)
+    assert len(rpc.comments[case_row(rpc, clean_cases[0]["id"])["id"]]) == 1
+
+
+def test_an_unknown_agent_account_protects_every_existing_case(clean_cases):
+    """Credentials from ~/.tcms.conf name no user here, so authorship cannot be told apart: keep, don't guess."""
+    rpc = FakeRPC()
+    store(rpc).upsert_cases("RSE-1", clean_cases)
+    reindex(rpc)
+    summary = store(rpc, user="").upsert_cases("RSE-1", [{**c, "title": "Renamed"} for c in clean_cases])
+    assert summary["protected"] == len(clean_cases) and summary["updated"] == 0
 
 
 def test_the_plan_and_run_templates_are_flags(clean_cases):
@@ -215,8 +321,10 @@ def test_an_empty_upsert_reports_an_error(clean_cases):
 
 # ---- reads and runs -----------------------------------------------------------------------------------
 def _seeded(clean_cases):
+    """The suite uploaded, then approved in Kiwi by a reviewer."""
     rpc = FakeRPC()
     store(rpc).upsert_cases("RSE-1", clean_cases)
+    review(rpc)
     return rpc
 
 
@@ -226,6 +334,8 @@ def test_list_cases_filters_on_status_and_tags(clean_cases):
     assert {c.extid for c in cases} == {"TC-RSE-SLOT-FUNC-01", "TC-RSE-SLOT-NEG-01",
                                         "TC-RSE-CAP-FUNC-01"}
     assert store(rpc).list_cases("RSE-1", status="PROPOSED") == []
+    review(rpc, "TC-RSE-SLOT-NEG-01", "PROPOSED")
+    assert [c.extid for c in store(rpc).list_cases("RSE-1", status="PROPOSED")] == ["TC-RSE-SLOT-NEG-01"]
 
 
 def test_list_cases_returns_the_case_text_the_deriver_reads(clean_cases):
@@ -281,6 +391,7 @@ def test_record_execution_sets_the_timestamps_rather_than_actual_duration(clean_
     row = next(r for r in rpc.TestExecution.rows if r["id"] == 900)
     assert "actual_duration" not in row               # read-only in Kiwi; derived from the two dates
     assert "." in row["start_date"] and "." in row["stop_date"]   # microsecond precision
+    assert row["stop_date"].endswith("+00:00")                     # an explicit offset, never naive
     assert row["status"] == next(s["id"] for s in rpc.TestExecutionStatus.rows if s["name"] == "FAILED")
     assert rpc.props[900]["actual"] == "body.remaining: got 2"
     assert rpc.props[900]["http_status"] == "200"
@@ -323,3 +434,71 @@ def test_health_reports_rather_than_raising():
     result = KiwiCaseStore(rpc=Broken()).health()
     assert result["ok"] is False and "ConnectionRefusedError" in result["error"]
     assert result["network"] is True
+
+
+def test_record_execution_uses_the_actual_finish_time(clean_cases):
+    """Naive UTC on a KIWI_USE_TZ=True / Asia/Kolkata instance was stored 5h30m off; the stop time is also
+    when the test ended, not when its row was written."""
+    from datetime import UTC, datetime, timedelta, timezone
+
+    rpc = _seeded(clean_cases)
+    rpc.Version.rows.append({"id": 50, "product": 101, "value": "unspecified"})
+    run = store(rpc).create_run("RSE-1", "b1", "staging")
+    rpc.TestExecution.rows.append({"id": 902, "run": int(run.run_id),
+                                   "case": case_row(rpc, "TC-RSE-SLOT-FUNC-01")["id"]})
+    ist = timezone(timedelta(hours=5, minutes=30))
+    store(rpc).record_execution(run.run_id, "TC-RSE-SLOT-FUNC-01", "PASS", duration_s=2.0,
+                                finished_at=datetime(2026, 10, 30, 15, 0, 0, tzinfo=ist))
+    row = next(r for r in rpc.TestExecution.rows if r["id"] == 902)
+    assert row["stop_date"] == "2026-10-30T15:00:00.000000+05:30"
+    assert row["start_date"] == "2026-10-30T14:59:58.000000+05:30"
+    store(rpc).record_execution(run.run_id, "TC-RSE-SLOT-FUNC-01", "PASS", duration_s=1.0,
+                                finished_at=datetime(2026, 10, 30, 9, 0, 0))   # naive -> read as UTC
+    assert row["stop_date"] == datetime(2026, 10, 30, 9, tzinfo=UTC).isoformat(timespec="microseconds")
+
+
+# ---- attachments (ported from test_agent kiwi_runner.add_attachment, 0188771) -------------------------
+def test_attach_is_idempotent_by_name_unless_replaced():
+    import base64
+
+    rpc = FakeRPC()
+    s = store(rpc)
+    assert s.attach("execution", "900", "response-TC-1.json", b"one")
+    assert s.attach("execution", "900", "response-TC-1.json", b"two")
+    rows = rpc.attachments[("TestExecution", 900)]
+    assert len(rows) == 1 and base64.b64decode(rows[0]["content"]) == b"one"
+    assert s.attach("execution", "900", "response-TC-1.json", b"two", replace=True)
+    rows = rpc.attachments[("TestExecution", 900)]
+    assert len(rows) == 1 and base64.b64decode(rows[0]["content"]) == b"two"
+
+
+def test_each_scope_reaches_its_own_kiwi_object():
+    rpc = FakeRPC()
+    s = store(rpc)
+    for scope, api in (("case", "TestCase"), ("run", "TestRun"), ("plan", "TestPlan")):
+        s.attach(scope, "5", "report.json", b"{}")
+        assert (api, 5) in rpc.attachments
+    with pytest.raises(ValueError, match="scope must be one of"):
+        s.attach("product", "5", "x", b"")
+
+
+def test_attachment_url_reads_back_by_name_with_a_suffixed_fallback():
+    rpc = FakeRPC()
+    rpc.attachments[("TestExecution", 900)] = [
+        {"pk": 1, "url": "https://kiwi.test/uploads/response_qWGCM4Y.json"},
+        {"pk": 2, "url": "https://kiwi.test/uploads/maestro.log"},
+    ]
+    s = store(rpc)
+    assert s.attachment_url("execution", "900", "maestro.log").endswith("/maestro.log")
+    assert s.attachment_url("execution", "900", "response.json").endswith("response_qWGCM4Y.json")
+    assert s.attachment_url("execution", "900", "absent.png") == ""
+
+
+def test_a_failing_attachment_is_reported_not_raised():
+    rpc = FakeRPC()
+
+    def boom(*a):
+        raise ConnectionResetError("gone")
+
+    rpc.TestExecution.add_attachment = boom
+    assert store(rpc).attach("execution", "900", "r.json", b"{}") is False

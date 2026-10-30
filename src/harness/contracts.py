@@ -228,6 +228,10 @@ class Workflow:
     decisions: tuple[str, ...] = ()
     # run-dir-relative files that seed the inputs digest for stage 1 (RFC: raw/*.md)
     input_roots: tuple[str, ...] = ()
+    # resolved flags -> ordered stage names. When set, it replaces `default_pipeline` for a run that does
+    # not pass --pipeline, so a workflow's own composition flags (testing.execute, ...) shape the run
+    # instead of being read by nothing. `--disable-stage` still applies on top.
+    compose_pipeline: Callable[[object], tuple[str, ...]] | None = None
     # Engine-neutral env a workflow exports to EVERY child it spawns, computed from the RunContext.
     #
     # WHY a workflow hook and not kernel code: the containment POLICY needs three things only a

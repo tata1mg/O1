@@ -114,8 +114,40 @@ def test_the_default_pipeline_runs_green_end_to_end(pipeline_ctx):
     # only the two persona stages went to the engine
     assert engine.calls == ["generate_cases", "evaluate"]
     for rel in ("qa/sources.json", "qa/cases.json", "qa/scenarios.json", "qa/eval.json",
-                "qa/eval.mechanical.json", "qa/store.json", "qa/spec.json"):
+                "qa/eval.mechanical.json", "qa/store.json"):
         assert ctx.path(rel).exists(), rel
+    # the default pipeline ends at the upload: nothing is derived until a reviewer approves the suite
+    assert not ctx.path("qa/spec.json").exists()
+    assert json.loads(ctx.path("qa/store.json").read_text())["status"] == "PROPOSED"
+
+
+def test_after_review_the_run_pipeline_derives_the_spec(pipeline_ctx, approve):
+    """Generate and upload, a reviewer approves, then derive_spec runs on the same run dir."""
+    ctx, _ = pipeline_ctx
+    run_pipeline(stages(), ctx)
+    approve(ctx.run_dir / "store")
+    run_pipeline(stages([*WORKFLOW.default_pipeline, "derive_spec"]), ctx, selected=["derive_spec"])
+    assert manifest(ctx)["derive_spec"]["status"] == "ok"
+    assert ctx.path("qa/spec.json").exists()
+
+
+def test_the_persona_stages_read_local_copies_of_the_sources(pipeline_ctx):
+    """A headless child cannot read outside its run dir without a prompt nobody answers."""
+    ctx, engine = pipeline_ctx
+    run_pipeline(stages(), ctx)
+    prompt = next(r for r in engine.requests if r.label == "generate_cases").prompt
+    local = ctx.path("qa/sources/prd.md")
+    assert local.exists() and f"PRD: {local}" in prompt
+
+
+def test_the_engine_request_carries_what_the_claude_adapter_needs(pipeline_ctx):
+    """The default engine refuses a request without native_ctx, and discovers skills from the run dir."""
+    ctx, engine = pipeline_ctx
+    run_pipeline(stages(), ctx)
+    for req in engine.requests:
+        assert req.native_ctx["ctx"] is ctx and req.native_ctx["stage"].name == req.label
+        staged = ctx.run_dir / ".claude" / "skills" / req.label / "SKILL.md"
+        assert staged.read_text() == req.skill_path.read_text()
 
 
 def test_the_python_stages_report_themselves_as_python(pipeline_ctx):
@@ -124,7 +156,6 @@ def test_the_python_stages_report_themselves_as_python(pipeline_ctx):
     m = manifest(ctx)
     assert m["sources"]["engine"] == "python"
     assert m["store_cases"]["engine"] == "python"
-    assert m["derive_spec"]["engine"] == "python"
     assert m["generate_cases"]["engine"] == "fake:test"
 
 
@@ -173,11 +204,11 @@ def test_a_second_invocation_skips_every_green_stage(pipeline_ctx):
 def test_a_stage_subset_reruns_exactly_that_stage(pipeline_ctx):
     ctx, engine = pipeline_ctx
     run_pipeline(stages(), ctx)
-    ctx.path("qa/spec.json").unlink()
+    ctx.path("qa/store.json").unlink()
     engine.calls.clear()
-    run_pipeline(stages(), ctx, selected=["derive_spec"])
-    assert engine.calls == []                      # derive_spec is python
-    assert ctx.path("qa/spec.json").exists()
+    run_pipeline(stages(), ctx, selected=["store_cases"])
+    assert engine.calls == []                      # store_cases is python
+    assert ctx.path("qa/store.json").exists()
 
 
 def test_the_chain_resumes_from_disk_one_stage_per_invocation(pipeline_ctx):
@@ -186,7 +217,7 @@ def test_the_chain_resumes_from_disk_one_stage_per_invocation(pipeline_ctx):
     for name in WORKFLOW.default_pipeline:
         run_pipeline(stages(), ctx, selected=[name])
     assert engine.calls == ["generate_cases", "evaluate"]
-    assert manifest(ctx)["derive_spec"]["status"] == "ok"
+    assert manifest(ctx)["store_cases"]["status"] == "ok"
 
 
 def test_a_changed_source_re_runs_the_stages_downstream_of_it(pipeline_ctx, tmp_path):
@@ -386,7 +417,7 @@ def test_from_cases_reads_a_workbook_with_its_execution_column(tmp_path, ctx_fac
 def test_every_stages_requires_are_produced_by_an_earlier_stage():
     """Slot compatibility: the pipeline cannot be composed with a hole in it."""
     produced: set[str] = set()
-    for name in (*WORKFLOW.default_pipeline, "execute_be"):
+    for name in (*WORKFLOW.default_pipeline, "derive_spec", "execute_be"):
         stage = WORKFLOW.stage(name)
         missing = [r for r in stage.requires if r not in produced]
         assert missing == [], f"{name} requires {missing}, which nothing earlier produces"
@@ -419,9 +450,9 @@ def test_compose_pipeline_defaults_to_the_declared_default(ctx):
 
 
 @pytest.mark.parametrize("flags,want", [
-    ({}, ("sources", "generate_cases", "render_xlsx", "evaluate", "store_cases", "derive_spec")),
+    ({}, ("sources", "generate_cases", "render_xlsx", "evaluate", "store_cases")),
     ({"testing.evaluate": False},
-     ("sources", "generate_cases", "render_xlsx", "store_cases", "derive_spec")),
+     ("sources", "generate_cases", "render_xlsx", "store_cases")),
     ({"testing.execute": True},
      ("sources", "generate_cases", "render_xlsx", "evaluate", "store_cases", "derive_spec",
       "execute_be")),
