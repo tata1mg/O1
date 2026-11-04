@@ -1438,7 +1438,7 @@ def detect_effective_window(run_dir: Path, model: str | None) -> int | None:
         # itself exports the official endpoint, which must not disqualify the window (observed
         # 2026-08-15: ANTHROPIC_BASE_URL=https://api.anthropic.com in the parent env dropped a
         # [1m] revision to the legacy 100K cap)
-        and (not base_url or "api.anthropic.com" in base_url)
+        and (not base_url or think_tap.is_official_endpoint(base_url))
     ):
         return _VERIFIED_WINDOW
     return None

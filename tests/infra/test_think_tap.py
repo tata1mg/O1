@@ -154,3 +154,47 @@ def test_tap_rejects_browser_shaped_requests_without_touching_feed(tmp_path, mon
         tap.stop()
     feed = activity.read_text() if activity.exists() else ""
     assert "💭" not in feed and "fake" not in feed, "rejected requests must leave no feed trace"
+
+
+def test_only_a_plain_path_is_forwarded_upstream():
+    from rfc_agent.think_tap import safe_request_target
+
+    for ok in ("/v1/messages", "/v1/messages?beta=true", "/api/oauth/claude_cli/roles", "/"):
+        assert safe_request_target(ok) == ok
+    for bad in (
+        "",
+        "v1/messages",  # no leading slash
+        "//evil.example/v1",  # a network-path reference
+        "https://evil.example/v1",  # an absolute URL
+        "/v1/messages HTTP/1.1\r\nHost: evil.example",  # a request line smuggled in
+        "/v1/mess\nages",
+        "/v1/mess ages",
+        "/v1\\messages",
+    ):
+        assert safe_request_target(bad) is None, bad
+
+
+def test_relayed_response_headers_carry_no_line_breaks():
+    from rfc_agent.think_tap import safe_response_header
+
+    assert safe_response_header("Content-Type", "text/event-stream") == ("Content-Type", "text/event-stream")
+    assert safe_response_header("X-Note", "a\r\nSet-Cookie: x=1") == ("X-Note", "a  Set-Cookie: x=1")
+    assert safe_response_header("Bad Name", "v") is None
+    assert safe_response_header("X-A\r\nB", "v") is None
+
+
+def test_official_endpoint_is_judged_by_its_host_not_a_substring():
+    from rfc_agent.think_tap import is_official_endpoint
+
+    for official in ("https://api.anthropic.com", "https://api.anthropic.com/", "https://API.anthropic.com:443/v1",
+                     "api.anthropic.com"):
+        assert is_official_endpoint(official), official
+    for other in ("https://gateway.corp", "https://evil.example/api.anthropic.com",
+                  "https://api.anthropic.com.evil.example", "https://evil.example?x=api.anthropic.com",
+                  "https://user@evil.example/#api.anthropic.com", ""):
+        assert not is_official_endpoint(other), other
+
+
+def test_a_lookalike_base_url_is_still_a_gateway_for_the_tap(monkeypatch, tmp_path):
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com.evil.example")
+    assert start_tap(tmp_path / "a.log", "x", tmp_path / "raw.txt") is None

@@ -29,18 +29,47 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 # absolute import, not relative: this file also runs as a bare script (start_tap spawns
 # `sys.executable __file__`), where a relative import has no package context
 from rfc_agent.localnet import local_request_ok
 
 _UPSTREAM = "api.anthropic.com"
+
+# One request target, as the child sends it: a single leading "/", then no whitespace or control characters. A
+# value outside this (an absolute URL, "//host", a CR/LF) is not forwarded: the upstream host is fixed, and only
+# the path is the caller's.
+_TARGET_OK = re.compile(r"/[^\s\x00-\x1f\x7f\\]*")
+_HEADER_NAME_OK = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+
+
+def safe_request_target(target: str) -> str | None:
+    """`target` when it is a plain path (and query) to forward upstream, else None."""
+    return target if _TARGET_OK.fullmatch(target) and not target.startswith("//") else None
+
+
+def safe_response_header(name: str, value: str) -> tuple[str, str] | None:
+    """The header to relay to the child, with any CR/LF taken out of the value, or None for a malformed name."""
+    if not _HEADER_NAME_OK.fullmatch(name):
+        return None
+    return name, value.replace("\r", " ").replace("\n", " ")
+
+
+def is_official_endpoint(url: str) -> bool:
+    """True when `url` points at the official API host. The parsed host is compared, not a substring: a URL such as
+    https://evil.example/api.anthropic.com or https://api.anthropic.com.evil.example is not the official one."""
+    try:
+        return (urlsplit(url if "://" in url else "//" + url).hostname or "").lower() == _UPSTREAM
+    except ValueError:
+        return False
 # flush a 💭 line per this many chars of thinking — cadence only, for liveness; the text is never
 # truncated (mirrors engine._MIND_STEP). Full reasoning also lands verbatim in <label>.thinking.txt.
 _STEP = 400
@@ -141,23 +170,34 @@ def _serve(port: int, activity_log: Path, label: str, raw_out: Path) -> None:  #
                 self.close_connection = True
             return ok
 
+        def _bad_target(self) -> None:
+            self.send_response(400)
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+
         def do_POST(self):
             if not self._boundary_ok():
                 return
+            target = safe_request_target(self.path)
+            if target is None:
+                return self._bad_target()
             body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-            if "/v1/messages" in self.path:
+            if "/v1/messages" in target:
                 body, _ = mutate_body(body)
             conn = http.client.HTTPSConnection(_UPSTREAM, timeout=600)
             hdrs = {k: v for k, v in self.headers.items()
                     if k.lower() not in ("host", "content-length", "accept-encoding", "connection")}
             hdrs["Host"] = _UPSTREAM
             hdrs["Content-Length"] = str(len(body))
-            conn.request("POST", self.path, body=body, headers=hdrs)
+            conn.request("POST", target, body=body, headers=hdrs)
             resp = conn.getresponse()
             self.send_response(resp.status)
             for k, v in resp.getheaders():
                 if k.lower() not in ("transfer-encoding", "content-encoding", "content-length", "connection"):
-                    self.send_header(k, v)
+                    header = safe_response_header(k, v)
+                    if header:
+                        self.send_header(*header)
             self.send_header("Connection", "close")
             self.end_headers()
             ex = ThinkExtractor()
@@ -181,16 +221,21 @@ def _serve(port: int, activity_log: Path, label: str, raw_out: Path) -> None:  #
         def do_GET(self):
             if not self._boundary_ok():
                 return
+            target = safe_request_target(self.path)
+            if target is None:
+                return self._bad_target()
             conn = http.client.HTTPSConnection(_UPSTREAM, timeout=60)
             hdrs = {k: v for k, v in self.headers.items() if k.lower() not in ("host", "connection")}
             hdrs["Host"] = _UPSTREAM
-            conn.request("GET", self.path, headers=hdrs)
+            conn.request("GET", target, headers=hdrs)
             resp = conn.getresponse()
             data = resp.read()
             self.send_response(resp.status)
             for k, v in resp.getheaders():
                 if k.lower() not in ("transfer-encoding", "content-encoding", "content-length", "connection"):
-                    self.send_header(k, v)
+                    header = safe_response_header(k, v)
+                    if header:
+                        self.send_header(*header)
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
@@ -222,7 +267,7 @@ def start_tap(activity_log: Path, label: str, raw_out: Path) -> Tap | None:
     # a value pointing at api.anthropic.com is just the default spelled out (harnesses set it;
     # measured 2026-08-07: treating it as a gateway silently disabled the tap on every run)
     base = os.environ.get("ANTHROPIC_BASE_URL", "")
-    if base and _UPSTREAM not in base:
+    if base and not is_official_endpoint(base):
         return None  # operator routes through a REAL gateway — don't get between them
     try:
         proc = subprocess.Popen(
