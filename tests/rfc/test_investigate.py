@@ -404,3 +404,39 @@ def test_kill_live_agents_stops_a_running_agent_and_the_run_can_go_on(tmp_path):
     assert not t.is_alive() and time.monotonic() - started < 10  # not the 60 seconds the agent would have slept
     assert got["res"].ok is False and not agent._LIVE  # recorded as failed, and nothing is left registered
     assert agent.kill_live_agents() == 0
+
+
+def test_an_interrupt_while_handing_the_agent_its_prompt_still_ends_and_forgets_it(tmp_path, monkeypatch):
+    import pytest
+
+    from rfc_agent.investigate import agent
+
+    killed = []
+
+    class Pipe:
+        def write(self, text):
+            raise KeyboardInterrupt
+
+        def close(self):
+            pass
+
+    class Proc:
+        pid = 4242
+        stdin, stdout = Pipe(), Pipe()
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(agent.subprocess, "Popen", lambda *a, **k: Proc())
+    monkeypatch.setattr(agent, "_kill_group", lambda proc: killed.append(proc.pid))
+    spec = agent.AgentSpec(
+        label="lead", model="m", effort=None, builtin_tools=("Read",), write_allow=(), use_context=False
+    )
+    res = agent.AgentResult(label="lead", ok=False)
+    stream = tmp_path / "lead.stream.jsonl"
+    with pytest.raises(KeyboardInterrupt):
+        agent._run_proc(["claude"], "hi", tmp_path, {}, spec, stream, res, None, None)
+    assert killed == [4242] and not agent._LIVE

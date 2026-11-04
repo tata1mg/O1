@@ -1,6 +1,6 @@
 ---
 description: Generate a tech RFC from a PRD — the whole pipeline (Scope → Summarize) in one command; progress and every pause shown here
-argument-hint: --prd <confluence-url | page-id | file> [--jira KEY] [--repos a,b] [--no-figma] [--preset balanced|fast] [--ask] [--ask-review] [--langfuse true|false] [--langfuse-verbose true|false]  |  --run-dir <run folder> (continue a stopped run)
+argument-hint: --prd <confluence-url | page-id | file> [--jira KEY] [--repos a,b] [--no-figma] [--preset balanced|fast] [--ask] [--ask-review] [--langfuse-verbose true|false]  |  --run-dir <run folder> (continue a stopped run)
 ---
 
 Run the whole rfc-agent pipeline for: `$ARGUMENTS`
@@ -29,10 +29,9 @@ Run the last line with `run_in_background`. The terminal's task list (`/tasks`) 
 Preflight first (seconds): `claude mcp list | grep -iE "claude\.ai Atlassian|^atlassian"` —
 either line (the claude.ai Atlassian connector, or a user-scope server named `atlassian`) showing ✔ Connected
 is enough. If neither is connected, stop and tell the user to connect one (`/mcp`). VPN is needed for the
-context layer and Bitbucket. Then Langfuse (skip when `$ARGUMENTS` has
-`--langfuse false`): `uv run --project "$PROJ" python -c "from rfc_agent import observe; raise SystemExit(observe.preflight())"`
-— exit 2 means tracing is on (the default) but the keys are missing: stop and relay its message (add the keys to
-the config, or rerun with `--langfuse false`). Never pick `false` for the user.
+context layer and Bitbucket. Then Langfuse: `uv run --project "$PROJ" python -c "from rfc_agent import observe; raise SystemExit(observe.preflight())"`
+— exit 2 means the keys are missing (tracing is required): stop and relay its message (add the keys to the config;
+`/rfc-agent:setup` fills them in). There is no way to run untraced.
 
 ## 2. Relay progress
 
@@ -96,7 +95,7 @@ one."* It is drawn in the terminal; nothing is served or opened in a browser.
 | `WAITING FOR SELECTION` (Scope) | Scope's selection: follow sections 3–4 of `${CLAUDE_PLUGIN_ROOT}/commands/scope.md` (proposal `$RUN/confirm/proposal.json` → answers `$RUN/confirm/answers.json`) |
 | `WAITING FOR PAUSE 1` / `WAITING FOR PAUSE 2` (Investigate) | Follow section 3 of `${CLAUDE_PLUGIN_ROOT}/commands/investigate.md` (`$RUN/confirm/investigate-pause<n>.proposal.json` → `.answers.json`) |
 | `WAITING FOR PAUSE 3` (Review, only with `--ask-review`) | Follow section 3 of `${CLAUDE_PLUGIN_ROOT}/commands/review.md` (triage) |
-| `Langfuse observability is ON but the Langfuse keys are missing` (exit 2) | Nothing ran. Relay the message: add `LANGFUSE.PUBLIC_KEY`/`SECRET_KEY` to the config, or rerun with `--langfuse false` |
+| `Langfuse tracing is required but the Langfuse keys are missing` (exit 2) | Nothing ran. Relay the message: add `LANGFUSE.PUBLIC_KEY`/`SECRET_KEY` to the config (`/rfc-agent:setup` does it) |
 | `[rfc] STOPPED at …` | Report the stage and the lines just before it (the cause), and that `/rfc-agent:rfc --run-dir <that folder>` continues it |
 
 Read the referenced section only when that pause arrives.

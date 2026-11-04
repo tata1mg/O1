@@ -76,7 +76,11 @@ def test_existing_inputs_skip_scope_and_from_starts_later(tmp_path, monkeypatch)
     assert run.main(["--run-dir", str(rd), "--from", "3"]) == 0
     assert [c[0] for c in calls] == ["review", "revise"]
     calls.clear()
-    assert run.main(["--run-dir", str(rd), "--prd", "1", "--redo-scope"]) == 0
+    assert run.main(["--run-dir", str(rd), "--prd", "1", "--redo-scope"]) == 1  # a new PRD never goes into a run
+    assert calls == []
+    (rd / "logs").mkdir(exist_ok=True)
+    (rd / "logs" / "run_args.json").write_text('{"prd": "1"}')
+    assert run.main(["--run-dir", str(rd), "--redo-scope"]) == 0  # Scope again, on the PRD the run started with
     assert calls[0][0] == "scope"
 
 
@@ -249,3 +253,15 @@ def test_a_plain_stop_is_handled_like_ctrl_c():
             pass
     finally:
         signal.signal(signal.SIGTERM, old)
+
+
+def test_a_resume_also_gets_yes_and_confirm_file_back(tmp_path, monkeypatch):
+    calls = _stubs(monkeypatch, fail="draft")
+    rd = tmp_path / "r"
+    assert run.main(["--prd", "55", "--run-dir", str(rd), "--yes", "--confirm-file"]) == 1
+    saved = json.loads((rd / "logs" / "run_args.json").read_text())
+    assert saved["yes"] is True and saved["confirm_file"] is True
+    calls.clear()
+    monkeypatch.setattr(run, "_mains", lambda: {n: _recorder(calls, n) for n in run.STAGES})
+    assert run.main(["--run-dir", str(rd)]) == 0
+    assert "--yes" in dict(calls)["investigate"] and "--confirm-file" in dict(calls)["investigate"]

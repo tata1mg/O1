@@ -15,6 +15,7 @@ Lean on purpose — not rfc_agent.engine.run_claude, which carries the old stage
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
@@ -248,14 +249,14 @@ def _run_proc(cmd, prompt, run_dir, env, spec, stream_path, res, on_event, trace
     )
     with _LIVE_LOCK:
         _LIVE.add(proc)
-    try:
-        proc.stdin.write(prompt)
-        proc.stdin.close()
-    except BrokenPipeError:
-        pass
-    deadline = t0 + spec.timeout_s
-    timed_out = False
-    try:
+    try:  # registered from Popen until the agent is dead and reaped, whatever interrupts in between
+        try:
+            proc.stdin.write(prompt)
+            proc.stdin.close()
+        except BrokenPipeError:
+            pass
+        deadline = t0 + spec.timeout_s
+        timed_out = False
         with open(stream_path, "w", encoding="utf-8") as out:
             import selectors
 
@@ -279,20 +280,19 @@ def _run_proc(cmd, prompt, run_dir, env, spec, stream_path, res, on_event, trace
                 out.flush()
                 buf = chunk.strip()
                 _consume(buf, res, on_event, trace, run_dir)
+        if timed_out:
+            _kill_group(proc)
+            res.error = f"timed out after {spec.timeout_s}s"
+        proc.wait(timeout=30)
     except BaseException:  # an interrupt reached this thread: take the agent down with it
         _kill_group(proc)
+        with contextlib.suppress(Exception):
+            proc.wait(timeout=5)
         raise
     finally:
         with _LIVE_LOCK:
             _LIVE.discard(proc)
-    if timed_out:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            proc.kill()
-        res.error = f"timed out after {spec.timeout_s}s"
-    proc.wait(timeout=30)
-    err_f.close()
+        err_f.close()
     if not timed_out and proc.returncode not in (0, None) and not res.error:
         err = err_path.read_text(encoding="utf-8", errors="replace").strip().splitlines()
         res.error = f"exit {proc.returncode}: {err[-1][:300] if err else 'no stderr'}"

@@ -18,13 +18,16 @@ Trace shape (one trace per CLI invocation; a resumed run lands in the same Langf
     │   └─ operator:investigate-pause1
     └─ …
 
+Tracing is required: a run with no Langfuse keys FAILS before anything is spent. The one way to run without it is
+the internal switch RFC_AGENT_LANGFUSE=false (tests and development; the test suite sets it), which is not
+documented for users. Once a run is going, tracing never fails it: an SDK or network error is one stderr warning
+and the run carries on.
+
 Config (config.json, env wins, a CLI flag wins over both):
 
-    LANGFUSE.ENABLED  true   RFC_AGENT_LANGFUSE          --langfuse true|false
     LANGFUSE.VERBOSE  false  RFC_AGENT_LANGFUSE_VERBOSE  --langfuse-verbose true|false
 
-ENABLED with no keys FAILS the run before anything is spent, and says how to turn tracing off. Once a run is
-going, tracing never fails it: an SDK or network error is one stderr warning and the run carries on.
+`--langfuse-verbose` applies to the call that gives it; a resumed run does not inherit it.
 
 One run per process: the state below is module-global, like obs.py's.
 """
@@ -40,7 +43,7 @@ import threading
 import time
 from pathlib import Path
 
-FLAG = "--langfuse"
+FLAG = "--langfuse"  # removed: refused with a message, see take_flags
 VERBOSE_FLAG = "--langfuse-verbose"
 ENV = "RFC_AGENT_LANGFUSE"
 VERBOSE_ENV = "RFC_AGENT_LANGFUSE_VERBOSE"
@@ -49,7 +52,7 @@ EXIT_NO_KEYS = 2
 _MAX_TOOL_SPANS = 3000  # per invocation — a runaway agent must not flood the trace
 _GEN_INPUT_LIMIT = 20_000
 
-_overrides: dict[str, bool] = {}  # set by the CLI flags
+_overrides: dict[str, bool] = {}  # set by the CLI flag (--langfuse-verbose)
 _lock = threading.Lock()
 _client = None
 _verbose = False
@@ -93,26 +96,34 @@ def _load_cfg():
     return get_config()
 
 
+def _tracing_on() -> bool:
+    """Tracing is required. Only RFC_AGENT_LANGFUSE=false (the internal switch for tests and development) turns it
+    off; there is no flag and no config setting for users."""
+    import os
+
+    return _as_bool(os.environ.get(ENV)) is not False
+
+
 def settings(cfg=None) -> dict:
-    """{"enabled", "verbose"} after flags > env > config > defaults (true, false). The config is only loaded
-    when the flags and env don't already decide `enabled` (tests run with tracing off and no config)."""
+    """{"enabled", "verbose"}: tracing is on unless the internal env switch says otherwise; verbose is the flag >
+    env > config > false. The config is only loaded when tracing is on (tests run with it off and no config)."""
+    if not _tracing_on():
+        return {"enabled": False, "verbose": False}
     if cfg is None:
-        if _setting("ENABLED", ENV, True, None) is False:  # off by flag or env: no config needed
-            return {"enabled": False, "verbose": False}
         cfg = _load_cfg()
-    return {
-        "enabled": _setting("ENABLED", ENV, True, cfg),
-        "verbose": _setting("VERBOSE", VERBOSE_ENV, False, cfg),
-    }
+    return {"enabled": True, "verbose": _setting("VERBOSE", VERBOSE_ENV, False, cfg)}
 
 
 def take_flags(argv: list[str]) -> list[str]:
-    """Strip --langfuse / --langfuse-verbose (`--x val` or `--x=val`) from argv into the overrides."""
+    """Strip --langfuse-verbose (`--x val` or `--x=val`) from argv into the overrides. The old `--langfuse` flag is
+    refused: tracing is required."""
     out: list[str] = []
     i = 0
     while i < len(argv):
         a = argv[i]
-        for flag, key in ((FLAG, "ENABLED"), (VERBOSE_FLAG, "VERBOSE")):
+        if a == FLAG or a.startswith(FLAG + "="):
+            raise SystemExit(f"{FLAG} was removed: Langfuse tracing is required. Add the keys with /rfc-agent:setup.")
+        for flag, key in ((VERBOSE_FLAG, "VERBOSE"),):
             val = None
             if a == flag and i + 1 < len(argv):
                 val, i = argv[i + 1], i + 1
@@ -140,10 +151,9 @@ def missing_keys_message(cfg) -> str:
 
     where = getattr(cfg, "_local", None) or _LOCAL
     return (
-        "Langfuse observability is ON but the Langfuse keys are missing.\n"
-        f"  Either add LANGFUSE.PUBLIC_KEY and LANGFUSE.SECRET_KEY to {where}\n"
-        "  (or export LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY),\n"
-        f"  or run without tracing: add `{FLAG} false` to the command, or set LANGFUSE.ENABLED to false in the config."
+        "Langfuse tracing is required but the Langfuse keys are missing.\n"
+        f"  Add LANGFUSE.PUBLIC_KEY and LANGFUSE.SECRET_KEY to {where}\n"
+        "  (or export LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY). /rfc-agent:setup fills them in."
     )
 
 
@@ -301,9 +311,13 @@ def _record_trace_id(run_dir: Path, entry: str, trace_id: str | None, prd: str |
         f.write(json.dumps(rec) + "\n")
 
 
+_EXPORT_LOGGERS = ("opentelemetry.exporter", "opentelemetry.sdk._shared_internal", "opentelemetry.sdk.trace.export")
+
+
 class _ExportWatch(logging.Handler):
-    """Writes a line to the run's activity.log each time the OpenTelemetry exporter fails or drops a batch
-    (timeouts, full queue), so a run shows how many times its spans may not have reached Langfuse."""
+    """Writes a line to the run's activity.log each time the OpenTelemetry span exporter fails or drops a batch
+    (timeouts, full queue), so a run shows how many times its spans may not have reached Langfuse. Errors from
+    anywhere else in OpenTelemetry are not upload failures and are ignored."""
 
     def __init__(self, run_dir: Path):
         super().__init__(level=logging.WARNING)
@@ -311,6 +325,8 @@ class _ExportWatch(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         with contextlib.suppress(Exception):
+            if not record.name.startswith(_EXPORT_LOGGERS):
+                return
             msg = record.getMessage()
             if record.levelno < logging.ERROR and "dropping" not in msg.lower():
                 return
@@ -342,13 +358,13 @@ def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
     from .obs import _user_id
 
     _client = _make_client(cfg)
-    _watch_exports(run_dir)
     cm = _client.start_as_current_observation(as_type="chain", name="rfc-run")
     try:
         _root = cm.__enter__()
     except Exception:
         _client = None
         raise
+    _watch_exports(run_dir)  # only once the root is open, so a failed start leaves no watcher behind
     prop = None
     with contextlib.suppress(Exception):
         jira = _arg(argv, "--jira")
@@ -453,6 +469,8 @@ def _close_root(cm, prop, code) -> None:
         _root.update(output=out, level="ERROR" if code else "DEFAULT")
         _root.set_trace_io(output=out)
     if _facts_src is not None:  # which PRD / repos / how big the RFC / how the review ended — filterable later
+        with contextlib.suppress(Exception):
+            _client.flush()  # send the spans first, so a failed upload is in the activity log before it is counted
         with contextlib.suppress(Exception):
             from . import run_facts
 

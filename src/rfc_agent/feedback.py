@@ -226,6 +226,7 @@ def build_scores(
     brief: str | None = None,
     cleared_notes: tuple[str, ...] = (),
     had_comment: bool = False,
+    had_stage: bool = False,
 ) -> list[dict]:
     """The `create_score` kwargs for one piece of feedback (pure — tests assert on this).
 
@@ -293,6 +294,8 @@ def build_scores(
     scores.append(score("rfc_start_ready", start_ready or "not_rated", "start_ready"))
     if stage:
         scores.append(score("rfc_feedback_stage", stage, "stage"))
+    elif had_stage:  # an earlier rating of this trace named a stage and this one does not
+        scores.append(score("rfc_feedback_stage", "none", "stage"))
     return scores
 
 
@@ -305,11 +308,12 @@ def _plugin_version() -> str | None:
 
 def _previous(run_dir: Path, trace_id: str | None, session_id: str):
     """What earlier ratings of this same target (the trace, else the session) left behind: the gaps picked, the stages
-    they pointed at, the questions that had a typed note, and whether the thumb had a comment."""
+    they pointed at, the questions that had a typed note, whether the thumb had a comment, and whether a stage was
+    named."""
     issues: set[tuple[str, str]] = set()
     stages: set[str] = set()
     notes: set[str] = set()
-    had_comment = False
+    had_comment = had_stage = False
     with contextlib.suppress(OSError):
         for line in (run_dir / "logs" / FEEDBACK_FILE).read_text(encoding="utf-8").splitlines():
             with contextlib.suppress(json.JSONDecodeError, AttributeError, TypeError):
@@ -323,7 +327,8 @@ def _previous(run_dir: Path, trace_id: str | None, session_id: str):
                 stages |= set(e.get("stages") or suspect_stages(e.get("issues") or {}))
                 notes |= set(e.get("notes") or {})
                 had_comment = had_comment or bool(e.get("comment"))
-    return issues, stages, notes, had_comment
+                had_stage = had_stage or bool(e.get("stage"))
+    return issues, stages, notes, had_comment, had_stage
 
 
 def record(
@@ -350,7 +355,7 @@ def record(
     verdicts, issues = _norm_form(verdicts, issues, notes)
     trace_id = pick_trace(run_dir, stage)
     session_id = _session_id(run_dir)
-    prev_issues, prev_stages, prev_notes, had_comment = _previous(run_dir, trace_id, session_id)
+    prev_issues, prev_stages, prev_notes, had_comment, had_stage = _previous(run_dir, trace_id, session_id)
     facts = run_facts.collect(run_dir, _prd_ref(run_dir))
     brief = run_brief(
         run_dir, facts, rating=rating, verdicts=verdicts, issues=issues, notes=notes, comment=comment,
@@ -379,6 +384,7 @@ def record(
         cleared_stages=tuple(sorted(prev_stages)),
         cleared_notes=tuple(sorted(prev_notes)),
         had_comment=had_comment,
+        had_stage=had_stage,
     )
     entry = {
         "ts": time.time(),

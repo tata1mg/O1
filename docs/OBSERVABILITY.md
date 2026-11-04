@@ -9,13 +9,17 @@ runs and build datasets that improve the pipeline).
 
 ## Switches
 
+Tracing is required: every run is traced, and there is no flag or setting to turn it off. (Tests and development
+use the environment variable `RFC_AGENT_LANGFUSE=false`; it is an internal switch, not part of the user-facing
+setup.)
+
 | Setting | Default | Env | Flag (wins) | What it does |
 |---|---|---|---|---|
-| `LANGFUSE.ENABLED` | `true` | `RFC_AGENT_LANGFUSE` | `--langfuse true\|false` | trace the run |
 | `LANGFUSE.VERBOSE` | `false` | `RFC_AGENT_LANGFUSE_VERBOSE` | `--langfuse-verbose true\|false` | also one span per tool call |
 
-Precedence: CLI flag > env var > `config.json`. The flags work on `rfc` and on every stage
-(`python -m rfc_agent.draft --run-dir … --langfuse false`).
+Precedence: CLI flag > env var > `config.json`. The flag works on `rfc` and on every stage
+(`python -m rfc_agent.draft --run-dir … --langfuse-verbose true`) and applies to that call only: a resumed run
+does not inherit it. The old `--langfuse` flag is refused.
 
 Other keys, all in the `LANGFUSE` section of `config.json`:
 
@@ -26,8 +30,8 @@ Other keys, all in the `LANGFUSE` section of `config.json`:
 | `ENVIRONMENT` | Langfuse environment for this machine's runs, to separate benchmark traffic from operator runs. The `LANGFUSE_TRACING_ENVIRONMENT` env var wins |
 | `MASK_SECRETS` | Scrub secrets from every exported span (default `true`; turn off only for local debugging) |
 
-**On with no keys: the run stops before it starts** (exit 2), with a message naming the config file and the
-two ways out: add `LANGFUSE.PUBLIC_KEY` / `SECRET_KEY`, or run with `--langfuse false`. Nothing is spent.
+**With no keys the run stops before it starts** (exit 2), with a message naming the config file: add
+`LANGFUSE.PUBLIC_KEY` / `SECRET_KEY` (or run `/rfc-agent:setup`). Nothing is spent.
 Check without running:
 
 ```bash
@@ -83,8 +87,14 @@ whole-run rating uses the latest `rfc` trace, `--stage S` that stage's trace.
 | Score | Type | Meaning |
 |---|---|---|
 | `rfc_feedback` | BOOLEAN | 1 = 👍, 0 = 👎; the user's comment is the score's comment |
-| `rfc_feedback_reason` | CATEGORICAL | 👎 only, one score per reason: `wrong_repos`, `missed_flows`, `inaccurate`, `too_shallow`, `too_long`, `too_slow`, `too_costly`, `other` |
+| `rfc_<area>`, `rfc_<area>_issue` | CATEGORICAL | a verdict for each area, and one score per gap picked (coverage, buildability, approach, context layer use; readable summary and rollout and risk when asked) |
+| `rfc_suspect_stage` | CATEGORICAL | the stages the picked gaps point at |
+| `rfc_run_speed`, `rfc_run_cost`, `rfc_start_ready` | CATEGORICAL | asked only on request; `not_rated` otherwise |
 | `rfc_feedback_stage` | CATEGORICAL | only with `--stage` |
+| `rfc_feedback_reason` | CATEGORICAL | legacy: the removed 👎 reason list. Old ratings keep it as history; nothing writes it now |
+
+The area scores, their values and the gaps are defined in [FEEDBACK.md](FEEDBACK.md), which is the reference for the
+feedback schema.
 
 Score metadata carries `run`, `session_id`, `stage`, `plugin_version` and the run's facts (`run_facts.py`):
 `prd`, `jira`, `repos`, `figma_count`, `context_layer_ok`, `rfc_chars`, `review_findings`, `review_unresolved`,
@@ -93,7 +103,7 @@ traced run closes. Each is read from a file the run already wrote; a missing fil
 
 Rating again replaces the earlier rating (deterministic score id). A run with no recorded trace is scored at
 its Langfuse session. Comments go through the same secret scrubber as traces. Feedback goes to whichever
-Langfuse project the config's keys and `LANGFUSE.HOST` point at, and respects `LANGFUSE.ENABLED=false`; every
+Langfuse project the config's keys and `LANGFUSE.HOST` point at; every
 rating is also appended to `<run>/logs/feedback.jsonl`, and a Langfuse failure never loses it or fails the
 command.
 
@@ -159,7 +169,10 @@ dataset" on any observation.
   run: Draft's stage span, its agent and its model call (405 s, $3.72) were missing from the trace, while its tool
   spans and gate were there; the run's own files still had them. The run folder is the complete record, and the
   `fact_*` scores are computed from it. If spans go missing, run with `LANGFUSE_TIMEOUT=30` in the environment.
-  Each failed or dropped export is written to `logs/activity.log` as `[langfuse] export failed: …` and counted as
-  `fact_langfuse_export_failures`; if that stays above zero across runs, a retry or a rebuild-from-files step is due.
+  Each failed or dropped span export (the exporter's own errors only) is written to `logs/activity.log` as
+  `[langfuse] export failed: …` and counted as `fact_langfuse_export_failures`; if that stays above zero across
+  runs, a retry or a rebuild-from-files step is due. The count covers failures up to the flush that runs just before
+  the run's numbers are collected. The last send, which carries the numbers and the run summary, cannot report its
+  own failure, so a failure of that final send is not counted.
 - **Tool span start times** are approximate (the drain read, up to 0.5 s late); durations come from the CLI
   events' own timestamps.

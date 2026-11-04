@@ -28,7 +28,8 @@ def collect(run_dir: Path, prd_ref: str | None = None) -> dict:
     """`prd_ref` is the original --prd argument (scope.json only keeps the local copy's path)."""
     out: dict = {}
     with contextlib.suppress(Exception):
-        scope = _json(run_dir / "scope.json") or {}
+        scope = _json(run_dir / "scope.json")
+        scope = scope if isinstance(scope, dict) else {}  # valid JSON that is not an object is no scope
         out["prd"] = prd_ref or scope.get("prd")
         out["jira"] = scope.get("jira")
         out["repos"] = _names(scope.get("repos"), "repo") or None
@@ -49,5 +50,6 @@ def collect(run_dir: Path, prd_ref: str | None = None) -> dict:
             sum(s.get("seconds") or 0 for s in run.get("stages") or [] if isinstance(s, dict)) or None
         )
         out["attempts"], out["resumes"], out["status"] = run.get("attempts"), run.get("resumes"), run.get("status")
+    with contextlib.suppress(Exception):  # its own failure boundary: one unreadable file above must not drop these
         out |= run_metrics.collect(run_dir)  # input size, tokens, coverage counts, context layer, waits
     return {k: v for k, v in out.items() if v is not None}

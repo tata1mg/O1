@@ -17,9 +17,10 @@ with (logs/run_args.json), and the stages already done are skipped. Every attemp
 and run.json says how many attempts (and resumes) the run has taken. Every stage resumes on its own, so a resume
 continues where the run stopped. Scope is skipped when the run already has its inputs (scope.json + raw/prd.md),
 unless --redo-scope or --from scope.
-Tracing: Langfuse is on by default (config LANGFUSE.ENABLED); without keys the run stops before it starts —
-add `--langfuse false` to run untraced. `--langfuse-verbose true` adds one span per tool call.
-Exit code: 0 done · 1 a stage stopped (the summary names it; resume with --run-dir) · 2 tracing on but no Langfuse keys.
+Tracing: Langfuse tracing is required; without keys the run stops before it starts (exit 2). `--langfuse-verbose
+true` adds one span per tool call, for that call only. A resume inherits --yes and --confirm-file with the other
+options the run started with.
+Exit code: 0 done · 1 a stage stopped (the summary names it; resume with --run-dir) · 2 no Langfuse keys.
 """
 
 from __future__ import annotations
@@ -102,7 +103,6 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--redo-prep", dest="redo_scope", action="store_true", help=argparse.SUPPRESS)  # old name
     g.add_argument("--yes", action="store_true", help="accept every pause's default (no questions)")
     g = p.add_argument_group("observability (Langfuse)")
-    g.add_argument(observe.FLAG, metavar="true|false", help="trace this run (default: config LANGFUSE.ENABLED, true)")
     g.add_argument(
         observe.VERBOSE_FLAG,
         metavar="true|false",
@@ -154,7 +154,7 @@ def stage_args(args, stage: str, run_dir: Path) -> list[str]:
 
 # the options a run starts with; a resume restores any the new call leaves out
 RUN_ARGS = ("prd", "jira", "repos", "repos_root", "no_figma", "reuse_figma", "fresh_clone", "preset",
-            "req_granularity", "ask", "ask_review")  # fmt: skip
+            "req_granularity", "ask", "ask_review", "yes", "confirm_file")  # fmt: skip
 
 
 def _stop_on_sigterm() -> None:
@@ -204,10 +204,11 @@ def main(argv: list[str] | None = None) -> int:
         if not args.prd and not _has_run(run_dir):
             print(f"rfc: nothing to resume in {run_dir} — start a run with --prd", file=sys.stderr)
             return 1
-        if args.prd and _has_run(run_dir) and not args.redo_scope:
+        if args.prd and _has_run(run_dir):
             print(
-                f"rfc: {run_dir} already holds a run. Continue it with --run-dir alone; for a new run of this PRD "
-                "pass --prd without --run-dir and it gets its own folder.",
+                f"rfc: {run_dir} already holds a run. Continue it with --run-dir alone (add --redo-scope to run Scope "
+                "again on its saved PRD); for a new run of this PRD pass --prd without --run-dir and it gets its own "
+                "folder.",
                 file=sys.stderr,
             )
             return 1

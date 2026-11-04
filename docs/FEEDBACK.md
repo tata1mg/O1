@@ -190,8 +190,9 @@ closes, so they describe the run as it finished).
 ## Where the data goes
 
 - Langfuse project: whichever the config's keys and `LANGFUSE.HOST` point at. Feedback is not sent anywhere else.
-- `LANGFUSE.ENABLED=false` (or `--langfuse false`) turns feedback sending off too. The rating is still saved
-  locally and the command says so.
+- Tracing is required, so feedback is sent whenever the keys are there. The internal switch
+  `RFC_AGENT_LANGFUSE=false` (tests and development) turns sending off; the rating is still saved locally and the
+  command says so.
 - Missing keys or a network error: saved locally, one line explains why, exit code 0. Feedback never fails the caller.
 - The score metadata carries `run`, `session_id`, `stage`, `plugin_version` and the run facts. The trace
   already carries the user id, so approval can be charted per person and per plugin version.
@@ -224,7 +225,8 @@ them beside the run facts (`cost_usd`, `tokens_total`, `prd_words`, `operator_wa
 - **The end-of-run question is an instruction to Claude** in `commands/rfc.md`, not code. It can be skipped
   by a model that doesn't follow it; `/rfc-agent:feedback` always works.
 - **Facts are not versioned.** `rfc_chars` and the review counts change if the RFC is edited after the run, and
-  `duration_s` comes from `logs/run.json`, which covers only the stages the last invocation ran.
+  `duration_s` comes from `logs/run.json`: `seconds_all_attempts` (the time of every attempt of the run) when it is
+  there, and only the stages the last invocation ran for a run folder written before that field existed.
 - **Token totals are a sum over agent stream files**; an agent that wrote no stream file is not counted.
 - **Notes and comments are free text**, scrubbed for secret-shaped strings only. They depend on Claude passing them
   through as `commands/feedback.md` says; the command cannot tell a typed answer that was dropped. Anything else a person types lands in

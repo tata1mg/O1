@@ -279,7 +279,8 @@ def collect(run_dir: Path) -> dict:
     out: dict = {}
     scope: dict = {}
     with contextlib.suppress(Exception):
-        scope = _json(run_dir / "scope.json") or {}
+        scope = _json(run_dir / "scope.json")
+        scope = scope if isinstance(scope, dict) else {}  # valid JSON that is not an object is no scope
     for part in (
         lambda: _inputs(run_dir, scope),
         lambda: _scope_choices(run_dir, scope),

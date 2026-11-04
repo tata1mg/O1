@@ -598,3 +598,14 @@ def test_run_summary_for_a_run_nobody_rated(tmp_path):
     assert "Reviewer: not rated yet" in text and "Typed" not in text and "👍" not in text and "👎" not in text
     assert "$12.50" in text and "4 findings" in text and "2 failed Langfuse uploads" in text
     assert "failed Langfuse" not in feedback.run_summary(tmp_path / "prd-1", {"status": "done"})
+
+
+def test_rating_again_without_a_stage_clears_the_stage_of_the_earlier_rating(tmp_path, monkeypatch):
+    _finished_run(tmp_path)  # only a whole-run trace: a stage rating lands on it too
+    sink = Sink()
+    monkeypatch.setattr(observe, "_make_client", lambda cfg: sink)
+    feedback.record(tmp_path, "down", stage="review", cfg=KEYS)
+    assert sink.by_name("rfc_feedback_stage") == {"fb:T1:stage": "review"}
+    sink.sent.clear()
+    feedback.record(tmp_path, "down", cfg=KEYS)
+    assert sink.by_name("rfc_feedback_stage") == {"fb:T1:stage": "none"}

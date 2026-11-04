@@ -44,6 +44,11 @@ versions match `.claude-plugin/plugin.json`.
 - **Failed uploads to Langfuse are counted.** Each failed or dropped upload is written to `logs/activity.log` as
   `[langfuse] export failed: …` and counted per run as `fact_langfuse_export_failures`. See
   [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) for `LANGFUSE_TIMEOUT`.
+- **Langfuse tracing is required.** The `--langfuse` flag and the `LANGFUSE.ENABLED` setting are gone, and
+  `--langfuse false` is refused. A run with no Langfuse keys stops before it starts (exit 2), and `/rfc-agent:setup`
+  ends BLOCKED without them. Only the environment variable `RFC_AGENT_LANGFUSE=false` still turns tracing off, as an
+  internal switch for tests and development. `--langfuse-verbose` stays and applies to the call that gives it.
+- **A resumed run gets `--yes` and `--confirm-file` back** with the other options it started with.
 - **The run brief says "no Figma exported"** when the PRD had no Figma, so a "missing Figma flow" gap can be read
   against it.
 
@@ -51,6 +56,14 @@ versions match `.claude-plugin/plugin.json`.
 
 - **Draft's cost and time stay in the run totals.** Revise's re-checks used to overwrite them with zero, so a run
   reported less than it cost.
+- **A new PRD can no longer go into an existing run folder.** `--prd` with the folder of an existing run is refused,
+  with or without `--redo-scope`; `--run-dir <folder> --redo-scope` runs Scope again on the run's saved PRD.
+- **Re-rating without `--stage` clears the stage an earlier rating of the same trace named.**
+- **Only span-exporter errors count as failed uploads**, and a trace that fails to open no longer leaves the
+  watcher installed; the spans are flushed before the run's numbers are counted.
+- **A Ctrl-C while an agent is starting no longer leaks it:** the agent stays registered until it is ended.
+- **One malformed `scope.json` no longer drops the run's numbers.**
+- **`make smoke` uses a new folder each time.**
 - **Verbose tracing no longer crashes** on a `permission_denied` event whose message is plain text.
 - **The fleetlens tools `get_source`, `get_engineering_guidance` and `discover_libraries` are allowed.** Agents were
   refused them before.

@@ -106,17 +106,26 @@ def traced(monkeypatch):
 # ---- settings -----------------------------------------------------------------------------------------------
 
 
-def test_take_flags_strips_both_forms(monkeypatch):
+def test_take_flags_strips_the_verbose_flag_in_both_forms(monkeypatch):
     monkeypatch.setattr(observe, "_overrides", {})
-    rest = observe.take_flags(["--run-dir", "x", "--langfuse", "false", "--langfuse-verbose=true", "--yes"])
-    assert rest == ["--run-dir", "x", "--yes"]
-    assert observe._overrides == {"ENABLED": False, "VERBOSE": True}
+    assert observe.take_flags(["--run-dir", "x", "--langfuse-verbose=true", "--yes"]) == ["--run-dir", "x", "--yes"]
+    assert observe._overrides == {"VERBOSE": True}
+    assert observe.take_flags(["--langfuse-verbose", "false"]) == []
+    assert observe._overrides == {"VERBOSE": False}
 
 
 def test_take_flags_rejects_a_non_boolean(monkeypatch):
     monkeypatch.setattr(observe, "_overrides", {})
     with pytest.raises(SystemExit, match="true or false"):
-        observe.take_flags(["--langfuse", "maybe"])
+        observe.take_flags(["--langfuse-verbose", "maybe"])
+
+
+@pytest.mark.parametrize("flag", [["--langfuse", "false"], ["--langfuse=false"]])
+def test_the_langfuse_off_flag_is_refused_because_tracing_is_required(monkeypatch, flag):
+    monkeypatch.setattr(observe, "_overrides", {})
+    with pytest.raises(SystemExit, match="Langfuse tracing is required"):
+        observe.take_flags(["--run-dir", "x", *flag])
+    assert observe._overrides == {}
 
 
 def test_defaults_are_on_and_not_verbose(monkeypatch):
@@ -126,21 +135,26 @@ def test_defaults_are_on_and_not_verbose(monkeypatch):
     assert observe.settings(Cfg()) == {"enabled": True, "verbose": False}
 
 
-def test_precedence_flag_over_env_over_config(monkeypatch):
+def test_verbose_precedence_is_flag_over_env_over_config(monkeypatch):
     monkeypatch.setattr(observe, "_overrides", {})
-    cfg = Cfg(**{"LANGFUSE.ENABLED": False, "LANGFUSE.VERBOSE": True})
+    cfg = Cfg(**{"LANGFUSE.VERBOSE": True})
     monkeypatch.delenv(observe.ENV, raising=False)
     monkeypatch.delenv(observe.VERBOSE_ENV, raising=False)
-    assert observe.settings(cfg) == {"enabled": False, "verbose": True}
-    monkeypatch.setenv(observe.ENV, "true")
+    assert observe.settings(cfg) == {"enabled": True, "verbose": True}
     monkeypatch.setenv(observe.VERBOSE_ENV, "0")
     assert observe.settings(cfg) == {"enabled": True, "verbose": False}
-    observe.take_flags(["--langfuse", "false"])
-    assert observe.settings(cfg)["enabled"] is False
+    observe.take_flags(["--langfuse-verbose", "true"])
+    assert observe.settings(cfg)["verbose"] is True
 
 
-def test_off_by_flag_never_loads_the_config(monkeypatch):
-    monkeypatch.setattr(observe, "_overrides", {"ENABLED": False})
+def test_the_config_cannot_turn_tracing_off(monkeypatch):
+    monkeypatch.delenv(observe.ENV, raising=False)
+    monkeypatch.setattr(observe, "_overrides", {})
+    assert observe.settings(Cfg(**{"LANGFUSE.ENABLED": False}))["enabled"] is True
+
+
+def test_the_internal_env_switch_turns_tracing_off_without_loading_the_config(monkeypatch):
+    monkeypatch.setenv(observe.ENV, "false")
 
     def boom():
         raise AssertionError("config loaded")
@@ -155,12 +169,12 @@ def test_new_keys_are_optional_in_an_older_config(tmp_path, monkeypatch):
     monkeypatch.delenv(observe.ENV, raising=False)
 
     harness = json.loads(HARNESS.read_text())
-    del harness["LANGFUSE"]["ENABLED"], harness["LANGFUSE"]["VERBOSE"]
+    del harness["LANGFUSE"]["VERBOSE"]
     h = tmp_path / "config.harness.json"
     h.write_text(json.dumps(harness))
     p = tmp_path / "config.json"
     p.write_text("{}")
-    assert Config(local=p, harness=h).get("LANGFUSE.ENABLED") is None  # loads; observe falls back to its defaults
+    assert Config(local=p, harness=h).get("LANGFUSE.VERBOSE") is None  # loads; observe falls back to its defaults
 
 
 # ---- the run entry ------------------------------------------------------------------------------------------
@@ -178,10 +192,12 @@ def test_on_without_keys_stops_before_the_stage_runs(traced, capsys):
     assert main(["--run-dir", "/tmp/x"]) == observe.EXIT_NO_KEYS
     assert ran == [] and traced["client"] is None
     err = capsys.readouterr().err
-    assert "keys are missing" in err and "--langfuse false" in err and "LANGFUSE.ENABLED" in err
+    assert "keys are missing" in err and "/rfc-agent:setup" in err
+    assert "--langfuse false" not in err and "LANGFUSE.ENABLED" not in err  # no way out is offered
 
 
-def test_off_runs_untraced_with_the_flag_stripped(traced):
+def test_the_internal_env_switch_runs_untraced_without_keys(traced, monkeypatch):
+    monkeypatch.setenv(observe.ENV, "false")
     traced["cfg"] = Cfg(**{"LANGFUSE.PUBLIC_KEY": "", "LANGFUSE.SECRET_KEY": ""})
     seen = []
 
@@ -191,7 +207,7 @@ def test_off_runs_untraced_with_the_flag_stripped(traced):
         observe.gate("draft", ["x"], kind="draft")  # no-op: no trace open
         return 0
 
-    assert main(["--run-dir", "/tmp/x", "--langfuse", "false"]) == 0
+    assert main(["--run-dir", "/tmp/x"]) == 0
     assert seen == [["--run-dir", "/tmp/x"]] and traced["client"] is None
 
 
@@ -216,7 +232,7 @@ def test_standalone_stage_gets_its_own_trace(traced, tmp_path):
     root, stage = c.one("rfc-run"), c.one("stage:review")
     assert stage.parent is root and stage.type == "chain" and stage.ended
     assert stage.updates["output"] == {"exit": 0} and c.trace_io["output"] == {"exit": 0}
-    assert c.flushed == 1
+    assert c.flushed == 2  # the spans before the run's numbers are counted, then everything at the end
     assert (tmp_path / "identity.json").exists()  # the session id outlives this invocation
 
 
@@ -600,3 +616,37 @@ def test_no_activity_log_means_no_export_count(tmp_path):
     from rfc_agent import run_metrics
 
     assert "langfuse_export_failures" not in run_metrics.collect(tmp_path)
+
+
+def test_only_the_span_exporter_counts_as_a_failed_upload(tmp_path):
+    import logging
+
+    from rfc_agent import run_metrics
+
+    observe._watch_exports(tmp_path)
+    try:
+        logging.getLogger("opentelemetry.sdk.metrics._internal").error("a metrics reader failed")
+        logging.getLogger("opentelemetry.instrumentation.requests").error("an instrumentation error")
+        exporter = logging.getLogger("opentelemetry.exporter.otlp.proto.http.trace_exporter")
+        exporter.error("Failed to export traces batch")
+        batch = logging.getLogger("opentelemetry.sdk._shared_internal")
+        batch.exception("Exception while exporting Span batch.")
+    finally:
+        observe._unwatch_exports()
+    assert run_metrics.collect(tmp_path)["langfuse_export_failures"] == 2
+
+
+def test_a_failed_start_leaves_no_export_watcher_behind(traced, tmp_path, monkeypatch):
+    class Boom(FakeClient):
+        def start_as_current_observation(self, **kw):
+            raise RuntimeError("langfuse down")
+
+    monkeypatch.setattr(observe, "_make_client", lambda cfg: Boom())
+    traced["cfg"] = Cfg(**{"LANGFUSE.PUBLIC_KEY": "pk", "LANGFUSE.SECRET_KEY": "sk"})
+
+    @observe.entry("draft")
+    def main(argv=None):
+        return 0
+
+    assert main(["--run-dir", str(tmp_path)]) == 0  # the run goes on untraced
+    assert observe._export_watch is None

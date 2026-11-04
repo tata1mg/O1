@@ -245,3 +245,13 @@ def test_review_and_revise_from_the_findings_final_state(tmp_path):
     assert (m["review_blockers"], m["review_majors"], m["review_minors"]) == (1, 2, 1)
     assert (m["review_fixed"], m["review_ignored"], m["revise_rounds"]) == (2, 1, 2)
     assert m["revise_lines_changed"] == 4  # -old +new +more -gone; headers and context are not changes
+
+
+def test_a_scope_json_that_is_not_an_object_does_not_drop_the_run_numbers(tmp_path):
+    from rfc_agent import run_facts
+
+    (tmp_path / "scope.json").write_text("[1, 2]")  # valid JSON, but no scope
+    (tmp_path / "raw").mkdir()
+    (tmp_path / "raw" / "prd.md").write_text("one two three")
+    facts = run_facts.collect(tmp_path)
+    assert facts["prd_words"] == 3
