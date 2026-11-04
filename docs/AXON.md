@@ -43,6 +43,8 @@ and Langfuse traces. What changes is which agent runtime and which models do the
 
 ## 2. Run from inside Axon (`/rfc`)
 
+Setting up a new machine from scratch, with no Claude Code? Follow [AXON_INSTALL.md](AXON_INSTALL.md).
+
 Install the command once, one of two ways:
 
 - **As a Pi package (to share it).** No checkout needed. Pi clones the repo, and the clone is also where the
