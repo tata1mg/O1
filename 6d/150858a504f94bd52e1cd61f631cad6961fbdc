@@ -1,0 +1,19 @@
+docs/FEEDBACK.md
+  s_5beb35ed61f5ac::t_cefab02e979082 23-24,68-70,73-77,88-89,100-110,175,199-201,203-208,210-214,219-220,233-235
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6d150858a504f94bd52e1cd61f631cad6961fbdc",
+  "prompts": {},
+  "sessions": {
+    "s_5beb35ed61f5ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fcebd562-94aa-4095-abfb-31502086db5a",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}
