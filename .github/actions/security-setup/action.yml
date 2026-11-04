@@ -5,8 +5,9 @@ description: Install pinned scanners for scripts/security/scan.py
 runs:
   using: composite
   steps:
-    - uses: astral-sh/setup-uv@v5
-    - uses: actions/setup-python@v5
+    # pinned to the commit the v5 tag pointed at (a tag can be moved; a commit cannot)
+    - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+    - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
       with:
         python-version: "3.12"
     - name: Install semgrep and trufflehog and trivy
