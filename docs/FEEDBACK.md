@@ -20,8 +20,8 @@ Code: `src/rfc_agent/feedback.py` (the command), `src/rfc_agent/run_facts.py` an
                      rfc-run observation gets metadata.run_facts (see "Run facts")
 
 2  WHEN SOMEONE RATES  (end of /rfc-agent:rfc, or /rfc-agent:feedback later)
-   rating in         up | down, what is wrong in each area (none, or the gaps), run speed / cost, optional
-                     comment, optional --stage
+   rating in         up | down, what is wrong in each area asked (none, or the gaps), run speed / cost only if asked,
+                     optional comment, optional --stage
    pick the trace    from logs/traces.jsonl                         (see "Trace selection")
    read run facts    from the files above, at rating time
    scrub comment     secret-shaped strings redacted, capped at 2000 characters
@@ -65,13 +65,16 @@ question is single-choice, so there is nothing to contradict there. A 👎 with 
 kept as given: it shows up as an unexplained 👎.
 
 `not_rated` means the question was not answered. A gap given for an area marked `usable` makes it
-`usable_with_gaps` (the gap wins), and so does a gap given with no verdict. An unknown area or value is dropped. Stopped runs are not
-rated yet: that waits on how run folders are managed for stop and resume.
+`usable_with_gaps` (the gap wins), and so does a gap given with no verdict. An unknown area or value is dropped. The end-of-run question skips a
+stopped run (`commands/rfc.md`), but `/rfc-agent:feedback --run-dir <folder>` rates any run folder, and areas the run
+never reached stay `not_rated`.
 
 How the person is asked (`commands/feedback.md`): a thumb with four choices (`👍 Good`, `👍 Good, with notes`,
-`👎 Needs work`, `Later`), then, for the two that continue, each area once with its gaps in the same question
-(`Nothing wrong` plus three gaps), over two screens (four questions, then three). The thumb is asked alone first,
-so `👍 Good` and `Later` never show the area questions. `👍 Good` is one tap and records the headline only, so
+`👎 Needs work`, `Later`), then, for the two that continue, four areas once each with their gaps in the same question
+(`Nothing wrong` plus three gaps): coverage, buildability, approach and context layer use, all on one screen. The
+readable summary, rollout and risk, and the run questions are not asked by default; they are asked only on request,
+and otherwise stay `not_rated`. The thumb is asked alone first, so `👍 Good` and `Later` never show the area
+questions. `👍 Good` is one tap and records the headline only, so
 every area is `not_rated`. The chat tool allows four options per question, so the gaps not
 shown (`unneeded_flow_included`, `citation_does_not_support_claim`, `missing_alternative`, `generic_industry_choice_over_local_fit`,
 `ignored_existing_pattern`, `wrong_emphasis`, `missing_performance_or_scale`, `missing_monitoring`) are set when the person types
@@ -82,7 +85,8 @@ option (`--comment`), and the thumb is asked again on its own. A note on an area
 never `usable`. Each note is scrubbed for secret-shaped strings and capped at 2000 characters, and all of them are
 also saved in `logs/feedback.jsonl`. The prompt records `usable` or `usable_with_gaps`;
 `not_usable` is still accepted by the command but is not asked. The run question sets speed and cost together;
-`rfc_start_ready` is `yes` when buildability has no gaps and is otherwise not asked.
+`rfc_start_ready` is `yes` when buildability has no gaps and is otherwise not asked. A re-rate is a fresh look: it
+replaces the earlier rating in full, so an answer the new prompt does not ask is reset to `not_rated`.
 
 Score names and values are the dashboard's schema. Add values freely; renaming one splits its history.
 
@@ -93,8 +97,17 @@ together from files (no model). It is on the headline score's metadata, and the 
 `<run>/logs/run_brief.md`. It names the run, attempts, time, cost and tokens; the input (PRD size, repos kept of those
 proposed, Figma frames); the RFC (flows, requirement statuses, open questions, options); the review (findings by
 severity, how many fixed, unresolved, revise rounds and lines changed); the reviewer's thumb, gaps, fine areas, the
-stages to look at, run speed and cost, and whatever they typed. So a rating read in Langfuse is understandable
-without opening the run folder.
+stages to look at, run speed and cost, and whatever they typed. It says "no Figma exported" when the PRD had no
+Figma, so a "missing Figma flow" gap can be read against it. So a rating read in Langfuse is understandable without
+opening the run folder.
+
+## The summary at the end of a run
+
+Every run, rated or not, ends with the same lines as the brief, built from the run folder by
+`feedback.run_summary` and ending in `Reviewer: not rated yet`. It is printed in the terminal, saved as
+`<run>/logs/run_summary.md` and set as the Output of the run's `rfc-run` trace in Langfuse (a stage run on its own
+does not write one). It is written when the run ends and is not updated when someone rates later; the rating
+carries its own brief.
 
 The review comments of every round stay in the run folder and are never overwritten: `review/R-*.md` (each
 reviewer's findings), `review/R-*.confirm.md` and `confirm2.md` (the round-by-round confirmations),
@@ -159,6 +172,7 @@ Flat fields, each read from a file the run already wrote; a missing file drops t
 | `readable_chars`, `readable_ratio` | `out/rfc.readable.md` against `out/rfc.md` (Summarize) |
 | `review_blockers`, `review_majors`, `review_minors`, `review_fixed`, `review_ignored` | `review/status.json`, the findings' final state. `ignored` = the person chose not to fix it |
 | `revise_rounds`, `revise_lines_changed` | the rounds recorded in `review/status.json`, and the changed lines of `review/rfc.round*.diff` |
+| `langfuse_export_failures` | `[langfuse] export failed` lines in `logs/activity.log`, one for each failed or dropped upload to Langfuse (spans in such a batch are missing from the trace) |
 | `attempts`, `resumes` | `logs/run.json`: how many tries the run took (a resume is one more try, not a new run) |
 | `operator_wait_s`, `triage_wait_s` | `scope.json` confirm wait, Investigate's pauses, Review's triage (`logs/review.json`) |
 | `rate_limit_rejections` | `rate_limit_event`s in the agent streams whose status is a refusal. The stage logs' `rate_limit_events` is not used: it counts every line that mentions a rate limit, and the CLI emits an "allowed" one on every check |
@@ -182,22 +196,28 @@ closes, so they describe the run as it finished).
 - The score metadata carries `run`, `session_id`, `stage`, `plugin_version` and the run facts. The trace
   already carries the user id, so approval can be charted per person and per plugin version.
 
-## Dashboard
+## Dashboards
 
-A ready-made one, "RFC Agent: Human and Run Feedback", is built from these scores: approval, a verdict per area,
-gaps by area, top gaps, the suspected stage, run speed and cost, then per run and per stage cost, time and tokens,
-gate pass rate and the `fact_*` numbers. Machine widgets are limited to the current pipeline's release; the
-old pipeline's data is all from before October 2026.
+Two dashboards are built in Langfuse from these scores. They are not in this repository.
 
-Chart `rfc_feedback` (average = approval rate) by `plugin_version`, user, or repo. Break each `rfc_<area>` down by
-value to see where RFCs fall short, and `rfc_<area>_issue` (filter out `none`) for the specific gaps; group the
-gaps by `metadata.likely_stages` to see which stage to fix. Set them beside the run facts (`cost_usd`,
-`tokens_total`, `prd_words`, `operator_wait_s`, `review_unresolved`) and the `gate_*` scores on the same trace.
+- **RFC Agent Feedback**, the overview: runs ended, completed and rated, thumbs-up share, typical cost and time; lines
+  by release for approval, cost, time, review findings, open requirements and unresolved findings; areas and gaps
+  that reviewers flagged; the suspected stage and where runs stopped; time per stage, cost per agent and the job's
+  size; and failed uploads and failed context-layer calls.
+- **RFC Agent: Deep Dive**, reason by reason: every gap picked by area, how each area was rated, areas with
+  problems, gaps in each of the four asked areas, top gaps, the suspected stage and approval.
+
+The rating scores sit on the run's trace, not its session, so no dashboard table can list one row per run for them;
+open the run's trace in Langfuse to see its scores next to its cost. Chart `rfc_feedback` (average = approval rate) by
+release, user or repo. Break each `rfc_<area>` down by value to see where RFCs fall short, and `rfc_<area>_issue`
+(filter out `none`) for the specific gaps; group the gaps by `metadata.likely_stages` to see which stage to fix. Set
+them beside the run facts (`cost_usd`, `tokens_total`, `prd_words`, `operator_wait_s`, `review_unresolved`).
 
 ## Known limits
 
 - **Re-rating** rewrites every area, and clears the gaps picked on an earlier rating of the same trace by
-  overwriting them with `none`. Scores written before the area form (`rfc_feedback_reason`) stay in Langfuse as
+  overwriting them with `none`. Typed notes and the overall comment it does not repeat are cleared too (sent as an
+  empty comment; Langfuse keeps the old comment if none is sent). Scores written before the area form (`rfc_feedback_reason`) stay in Langfuse as
   history and are not touched. The clearing reads `logs/feedback.jsonl`, so a rating made from another
   machine, or after that file was deleted, cannot clear what it cannot see.
 - **A resumed run is a new trace** in the same session; the rating goes to the latest `rfc` trace, as above.
@@ -210,4 +230,6 @@ gaps by `metadata.likely_stages` to see which stage to fix. Set them beside the 
   through as `commands/feedback.md` says; the command cannot tell a typed answer that was dropped. Anything else a person types lands in
   your Langfuse project.
 - **Only whole-run and stage traces are scorable**; there is no per-finding or per-section rating.
-- The send path has been unit-tested with a fake client. Verify it once against the real Langfuse project.
+- The unit tests use a fake Langfuse client. The send path has been checked against the real project on a full run
+  (46 of the 55 run numbers then in use matched the run folder) and with one test span after the OpenTelemetry
+  upgrade, but no automated test covers delivery.
