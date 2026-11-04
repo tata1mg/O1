@@ -359,3 +359,84 @@ def test_hook_checks_citations_at_write_time(tmp_path):
     assert _hook("post", {"tool_name": "Read", "tool_input": {"file_path": str(facts)}}, env).stdout == ""
     other = {"tool_name": "Write", "tool_input": {"file_path": str(tmp_path / "work" / "x.md")}}
     assert _hook("post", other, env).stdout == ""  # not a checked file
+
+
+# ---- stopping a run: the agents go down with it ----------------------------------------------------------------------
+
+SLEEPING_CLAUDE = """#!/usr/bin/env python3
+import json, sys, time
+sys.stdin.read()
+print(json.dumps({"type": "system", "subtype": "init", "session_id": "s1"}), flush=True)
+time.sleep(60)
+"""
+
+
+def test_kill_live_agents_stops_a_running_agent_and_the_run_can_go_on(tmp_path):
+    import threading
+    import time
+
+    from rfc_agent.investigate import agent
+
+    fake = tmp_path / "claude"
+    fake.write_text(SLEEPING_CLAUDE)
+    fake.chmod(0o755)
+
+    class Cfg:
+        def get(self, k, d=None):
+            return {"AGENT.CLAUDE_BIN": str(fake)}.get(k, d)
+
+    run = tmp_path / "run"
+    run.mkdir()
+    spec = agent.AgentSpec(
+        label="lead", model="m", effort=None, builtin_tools=("Read",), write_allow=(), use_context=False
+    )
+    got = {}
+    t = threading.Thread(target=lambda: got.setdefault("res", agent.run(spec, "hi", run, Cfg())))
+    t.start()
+    for _ in range(100):  # wait for the agent to be up
+        with agent._LIVE_LOCK:
+            if agent._LIVE:
+                break
+        time.sleep(0.05)
+    started = time.monotonic()
+    assert agent.kill_live_agents() == 1
+    t.join(timeout=15)
+    assert not t.is_alive() and time.monotonic() - started < 10  # not the 60 seconds the agent would have slept
+    assert got["res"].ok is False and not agent._LIVE  # recorded as failed, and nothing is left registered
+    assert agent.kill_live_agents() == 0
+
+
+def test_an_interrupt_while_handing_the_agent_its_prompt_still_ends_and_forgets_it(tmp_path, monkeypatch):
+    import pytest
+
+    from rfc_agent.investigate import agent
+
+    killed = []
+
+    class Pipe:
+        def write(self, text):
+            raise KeyboardInterrupt
+
+        def close(self):
+            pass
+
+    class Proc:
+        pid = 4242
+        stdin, stdout = Pipe(), Pipe()
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(agent.subprocess, "Popen", lambda *a, **k: Proc())
+    monkeypatch.setattr(agent, "_kill_group", lambda proc: killed.append(proc.pid))
+    spec = agent.AgentSpec(
+        label="lead", model="m", effort=None, builtin_tools=("Read",), write_allow=(), use_context=False
+    )
+    res = agent.AgentResult(label="lead", ok=False)
+    stream = tmp_path / "lead.stream.jsonl"
+    with pytest.raises(KeyboardInterrupt):
+        agent._run_proc(["claude"], "hi", tmp_path, {}, spec, stream, res, None, None)
+    assert killed == [4242] and not agent._LIVE

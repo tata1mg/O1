@@ -18,13 +18,16 @@ Trace shape (one trace per CLI invocation; a resumed run lands in the same Langf
     │   └─ operator:investigate-pause1
     └─ …
 
+Tracing is required: a run with no Langfuse keys FAILS before anything is spent. The one way to run without it is
+the internal switch RFC_AGENT_LANGFUSE=false (tests and development; the test suite sets it), which is not
+documented for users. Once a run is going, tracing never fails it: an SDK or network error is one stderr warning
+and the run carries on.
+
 Config (config.json, env wins, a CLI flag wins over both):
 
-    LANGFUSE.ENABLED  true   RFC_AGENT_LANGFUSE          --langfuse true|false
     LANGFUSE.VERBOSE  false  RFC_AGENT_LANGFUSE_VERBOSE  --langfuse-verbose true|false
 
-ENABLED with no keys FAILS the run before anything is spent, and says how to turn tracing off. Once a run is
-going, tracing never fails it: an SDK or network error is one stderr warning and the run carries on.
+`--langfuse-verbose` applies to the call that gives it; a resumed run does not inherit it.
 
 One run per process: the state below is module-global, like obs.py's.
 """
@@ -33,12 +36,14 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import logging
 import re
 import sys
 import threading
+import time
 from pathlib import Path
 
-FLAG = "--langfuse"
+FLAG = "--langfuse"  # removed: refused with a message, see take_flags
 VERBOSE_FLAG = "--langfuse-verbose"
 ENV = "RFC_AGENT_LANGFUSE"
 VERBOSE_ENV = "RFC_AGENT_LANGFUSE_VERBOSE"
@@ -47,7 +52,7 @@ EXIT_NO_KEYS = 2
 _MAX_TOOL_SPANS = 3000  # per invocation — a runaway agent must not flood the trace
 _GEN_INPUT_LIMIT = 20_000
 
-_overrides: dict[str, bool] = {}  # set by the CLI flags
+_overrides: dict[str, bool] = {}  # set by the CLI flag (--langfuse-verbose)
 _lock = threading.Lock()
 _client = None
 _verbose = False
@@ -91,26 +96,34 @@ def _load_cfg():
     return get_config()
 
 
+def _tracing_on() -> bool:
+    """Tracing is required. Only RFC_AGENT_LANGFUSE=false (the internal switch for tests and development) turns it
+    off; there is no flag and no config setting for users."""
+    import os
+
+    return _as_bool(os.environ.get(ENV)) is not False
+
+
 def settings(cfg=None) -> dict:
-    """{"enabled", "verbose"} after flags > env > config > defaults (true, false). The config is only loaded
-    when the flags and env don't already decide `enabled` (tests run with tracing off and no config)."""
+    """{"enabled", "verbose"}: tracing is on unless the internal env switch says otherwise; verbose is the flag >
+    env > config > false. The config is only loaded when tracing is on (tests run with it off and no config)."""
+    if not _tracing_on():
+        return {"enabled": False, "verbose": False}
     if cfg is None:
-        if _setting("ENABLED", ENV, True, None) is False:  # off by flag or env: no config needed
-            return {"enabled": False, "verbose": False}
         cfg = _load_cfg()
-    return {
-        "enabled": _setting("ENABLED", ENV, True, cfg),
-        "verbose": _setting("VERBOSE", VERBOSE_ENV, False, cfg),
-    }
+    return {"enabled": True, "verbose": _setting("VERBOSE", VERBOSE_ENV, False, cfg)}
 
 
 def take_flags(argv: list[str]) -> list[str]:
-    """Strip --langfuse / --langfuse-verbose (`--x val` or `--x=val`) from argv into the overrides."""
+    """Strip --langfuse-verbose (`--x val` or `--x=val`) from argv into the overrides. The old `--langfuse` flag is
+    refused: tracing is required."""
     out: list[str] = []
     i = 0
     while i < len(argv):
         a = argv[i]
-        for flag, key in ((FLAG, "ENABLED"), (VERBOSE_FLAG, "VERBOSE")):
+        if a == FLAG or a.startswith(FLAG + "="):
+            raise SystemExit(f"{FLAG} was removed: Langfuse tracing is required. Add the keys with /rfc-agent:setup.")
+        for flag, key in ((VERBOSE_FLAG, "VERBOSE"),):
             val = None
             if a == flag and i + 1 < len(argv):
                 val, i = argv[i + 1], i + 1
@@ -138,10 +151,9 @@ def missing_keys_message(cfg) -> str:
 
     where = getattr(cfg, "_local", None) or _LOCAL
     return (
-        "Langfuse observability is ON but the Langfuse keys are missing.\n"
-        f"  Either add LANGFUSE.PUBLIC_KEY and LANGFUSE.SECRET_KEY to {where}\n"
-        "  (or export LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY),\n"
-        f"  or run without tracing: add `{FLAG} false` to the command, or set LANGFUSE.ENABLED to false in the config."
+        "Langfuse tracing is required but the Langfuse keys are missing.\n"
+        f"  Add LANGFUSE.PUBLIC_KEY and LANGFUSE.SECRET_KEY to {where}\n"
+        "  (or export LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY). /rfc-agent:setup fills them in."
     )
 
 
@@ -282,6 +294,7 @@ def _run_dir_of(argv: list[str], cfg) -> Path | None:
 
 TRACES_FILE = "traces.jsonl"
 _facts_src: tuple[Path, str | None] | None = None  # (run dir, original --prd) for run_facts at close
+_entry_name: str | None = None  # `rfc` for a whole run, else the stage name
 
 
 def _record_trace_id(run_dir: Path, entry: str, trace_id: str | None, prd: str | None = None) -> None:
@@ -298,9 +311,47 @@ def _record_trace_id(run_dir: Path, entry: str, trace_id: str | None, prd: str |
         f.write(json.dumps(rec) + "\n")
 
 
+_EXPORT_LOGGERS = ("opentelemetry.exporter", "opentelemetry.sdk._shared_internal", "opentelemetry.sdk.trace.export")
+
+
+class _ExportWatch(logging.Handler):
+    """Writes a line to the run's activity.log each time the OpenTelemetry span exporter fails or drops a batch
+    (timeouts, full queue), so a run shows how many times its spans may not have reached Langfuse. Errors from
+    anywhere else in OpenTelemetry are not upload failures and are ignored."""
+
+    def __init__(self, run_dir: Path):
+        super().__init__(level=logging.WARNING)
+        self.path = run_dir / "logs" / "activity.log"
+
+    def emit(self, record: logging.LogRecord) -> None:
+        with contextlib.suppress(Exception):
+            if not record.name.startswith(_EXPORT_LOGGERS):
+                return
+            msg = record.getMessage()
+            if record.levelno < logging.ERROR and "dropping" not in msg.lower():
+                return
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8") as f:
+                f.write(f"[{time.strftime('%H:%M:%S')}] [langfuse] {EXPORT_FAILED}: {' '.join(msg.split())[:160]}\n")
+
+
+def _watch_exports(run_dir: Path | None) -> None:
+    global _export_watch
+    if run_dir is not None and _export_watch is None:
+        _export_watch = _ExportWatch(run_dir)
+        logging.getLogger("opentelemetry").addHandler(_export_watch)
+
+
+def _unwatch_exports() -> None:
+    global _export_watch
+    if _export_watch is not None:
+        logging.getLogger("opentelemetry").removeHandler(_export_watch)
+        _export_watch = None
+
+
 def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
     """Open the root observation + trace attributes. Returns the start-as-current context manager."""
-    global _client, _root, _root_otel_ctx, _facts_src
+    global _client, _root, _root_otel_ctx, _facts_src, _entry_name
     from langfuse import propagate_attributes
 
     from . import identity
@@ -313,6 +364,7 @@ def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
     except Exception:
         _client = None
         raise
+    _watch_exports(run_dir)  # only once the root is open, so a failed start leaves no watcher behind
     prop = None
     with contextlib.suppress(Exception):
         jira = _arg(argv, "--jira")
@@ -343,6 +395,7 @@ def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
         _root.set_trace_io(input={"entry": entry, "argv": argv})
     if run_dir is not None:  # feedback (rfc_agent.feedback) scores the trace this run produced
         _facts_src = (run_dir, _arg(argv, "--prd"))
+        _entry_name = entry
         with contextlib.suppress(Exception):
             _record_trace_id(run_dir, entry, _client.get_current_trace_id(), _arg(argv, "--prd"))
     with contextlib.suppress(Exception):
@@ -352,18 +405,88 @@ def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
     return cm, prop
 
 
+# Run facts that are numbers. Metadata cannot be summed or averaged on a dashboard, a score can, so each of these is
+# also written as a NUMERIC score named `fact_<key>` on the run's root observation when the trace closes.
+_export_watch: _ExportWatch | None = None
+EXPORT_FAILED = "export failed"  # the activity.log wording run_metrics counts
+
+FACT_SCORES = (
+    "prd_words", "prd_tokens_est", "figma_sections", "figma_frames", "figma_frames_in_scope", "figma_sections_skipped",
+    "snapshot_age_days", "flows", "flows_without_screens", "reqs", "open_questions",
+    "req_covered", "req_assumes", "req_deferred", "req_open", "alternatives", "review_findings", "review_unresolved",
+    "rfc_chars", "tokens_total", "tokens_input", "tokens_output", "tokens_cache_read", "tokens_cache_write",
+    "cache_hit_ratio", "agent_runs", "agent_turns", "compactions", "peak_context_tokens",
+    "context_calls", "context_errors", "context_empty", "rate_limit_rejections",
+    "operator_wait_s", "triage_wait_s", "cost_usd", "duration_s", "attempts", "resumes",
+    "repos_proposed", "repos_preticked", "repos_kept", "pages_proposed", "pages_preticked", "pages_kept",
+    "figma_sections_kept", "readable_chars", "readable_ratio", "review_blockers", "review_majors", "review_minors",
+    "review_fixed", "review_ignored", "revise_rounds", "revise_lines_changed", "langfuse_export_failures",
+)  # fmt: skip
+
+
+def _score_facts(root, facts: dict) -> None:
+    """One numeric score per fact that is a number; a fact the run does not have is simply absent."""
+    for key in FACT_SCORES:
+        value = facts.get(key)
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            with contextlib.suppress(Exception):
+                root.score(name=f"fact_{key}", value=float(value), data_type="NUMERIC")
+
+
+def _outcome(status: str | None) -> str | None:
+    """How a whole run stands, from run.json's status: `completed`, or `stopped_at_<stage>`."""
+    if not status:
+        return None
+    return "completed" if status == "done" else status.replace("stopped at ", "stopped_at_").replace(" ", "_")
+
+
+def _score_outcome(root, client, facts: dict, run_dir: Path) -> None:
+    """Two scores per whole-run attempt. `rfc_run_outcome` sits on this attempt's trace and never changes, so it counts
+    every stop. `rfc_run_outcome_final` sits on the run's session with a fixed id, so each attempt replaces the last:
+    a run that stopped at draft and was then resumed ends as `completed`."""
+    import json
+
+    outcome = _outcome(facts.get("status"))
+    if not outcome:
+        return
+    with contextlib.suppress(Exception):
+        root.score(name="rfc_run_outcome", value=outcome, data_type="CATEGORICAL")
+    with contextlib.suppress(Exception):
+        session = json.loads((run_dir / "identity.json").read_text(encoding="utf-8")).get("session_id") or run_dir.name
+        client.create_score(
+            name="rfc_run_outcome_final",
+            value=outcome,
+            data_type="CATEGORICAL",
+            session_id=str(session),
+            score_id=f"outcome:{session}",
+        )
+
+
 def _close_root(cm, prop, code) -> None:
-    global _client, _root, _root_otel_ctx, _tool_spans_left, _warned, _facts_src
+    global _client, _root, _root_otel_ctx, _tool_spans_left, _warned, _facts_src, _entry_name
     with contextlib.suppress(Exception):
         out = {"exit": code}
         _root.update(output=out, level="ERROR" if code else "DEFAULT")
         _root.set_trace_io(output=out)
     if _facts_src is not None:  # which PRD / repos / how big the RFC / how the review ended — filterable later
         with contextlib.suppress(Exception):
+            _client.flush()  # send the spans first, so a failed upload is in the activity log before it is counted
+        with contextlib.suppress(Exception):
             from . import run_facts
 
-            _root.update(metadata={"run_facts": run_facts.collect(*_facts_src)})
+            facts = run_facts.collect(*_facts_src)
+            _root.update(metadata={"run_facts": facts})
+            _score_facts(_root, facts)
+            if _entry_name == "rfc":  # a stage run on its own does not rewrite the whole run's run.json
+                _score_outcome(_root, _client, facts, _facts_src[0])
+                with contextlib.suppress(Exception):  # the trace's Output pane reads as the run's summary
+                    from . import feedback
+
+                    text = feedback.run_summary(_facts_src[0], facts)
+                    _root.update(output=text)
+                    _root.set_trace_io(output=text)
         _facts_src = None
+    _entry_name = None
     if prop is not None:
         with contextlib.suppress(Exception):
             prop.__exit__(None, None, None)
@@ -371,6 +494,7 @@ def _close_root(cm, prop, code) -> None:
         cm.__exit__(None, None, None)
     with contextlib.suppress(Exception):
         _client.flush()
+    _unwatch_exports()
     _client = _root = _root_otel_ctx = None
     _stages.clear()
     _tool_spans_left = _MAX_TOOL_SPANS
@@ -464,7 +588,8 @@ class AgentTrace:
         global _tool_spans_left
         if not _verbose or self.agent is None:
             return
-        msg = ev.get("message") or {}
+        # system events (e.g. permission_denied) carry a plain string as `message`
+        msg = ev.get("message") if isinstance(ev.get("message"), dict) else {}
         blocks = msg.get("content") if isinstance(msg.get("content"), list) else []
         for b in blocks:
             if not isinstance(b, dict):

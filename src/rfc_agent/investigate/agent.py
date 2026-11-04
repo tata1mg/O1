@@ -15,11 +15,13 @@ Lean on purpose — not rfc_agent.engine.run_claude, which carries the old stage
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -61,6 +63,28 @@ class AgentResult:
     stream: str = ""
     rate_limited: int = 0
     extra: dict = field(default_factory=dict)
+
+
+# Every agent that is running right now. Each runs in its own process group, so the terminal's Ctrl-C never reaches it:
+# when a run is interrupted these are stopped on purpose, or they carry on (and keep spending) after the run is gone.
+_LIVE: set[subprocess.Popen] = set()
+_LIVE_LOCK = threading.Lock()
+
+
+def _kill_group(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        proc.kill()
+
+
+def kill_live_agents() -> int:
+    """Stop every agent that is still running; returns how many there were. Safe to call from any thread."""
+    with _LIVE_LOCK:
+        procs = list(_LIVE)
+    for proc in procs:
+        _kill_group(proc)
+    return len(procs)
 
 
 def _mcp_config(run_dir: Path, cfg) -> Path | None:
@@ -223,44 +247,52 @@ def _run_proc(cmd, prompt, run_dir, env, spec, stream_path, res, on_event, trace
         env=env,
         start_new_session=True,
     )
-    try:
-        proc.stdin.write(prompt)
-        proc.stdin.close()
-    except BrokenPipeError:
-        pass
-    deadline = t0 + spec.timeout_s
-    timed_out = False
-    with open(stream_path, "w", encoding="utf-8") as out:
-        import selectors
-
-        sel = selectors.DefaultSelector()
-        sel.register(proc.stdout, selectors.EVENT_READ)
-        buf = ""
-        while True:
-            if time.monotonic() > deadline:
-                timed_out = True
-                break
-            if not sel.select(timeout=1.0):
-                if proc.poll() is not None:
-                    break
-                continue
-            chunk = proc.stdout.readline()
-            if not chunk:
-                if proc.poll() is not None:
-                    break
-                continue
-            out.write(chunk)
-            out.flush()
-            buf = chunk.strip()
-            _consume(buf, res, on_event, trace, run_dir)
-    if timed_out:
+    with _LIVE_LOCK:
+        _LIVE.add(proc)
+    try:  # registered from Popen until the agent is dead and reaped, whatever interrupts in between
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            proc.kill()
-        res.error = f"timed out after {spec.timeout_s}s"
-    proc.wait(timeout=30)
-    err_f.close()
+            proc.stdin.write(prompt)
+            proc.stdin.close()
+        except BrokenPipeError:
+            pass
+        deadline = t0 + spec.timeout_s
+        timed_out = False
+        with open(stream_path, "w", encoding="utf-8") as out:
+            import selectors
+
+            sel = selectors.DefaultSelector()
+            sel.register(proc.stdout, selectors.EVENT_READ)
+            buf = ""
+            while True:
+                if time.monotonic() > deadline:
+                    timed_out = True
+                    break
+                if not sel.select(timeout=1.0):
+                    if proc.poll() is not None:
+                        break
+                    continue
+                chunk = proc.stdout.readline()
+                if not chunk:
+                    if proc.poll() is not None:
+                        break
+                    continue
+                out.write(chunk)
+                out.flush()
+                buf = chunk.strip()
+                _consume(buf, res, on_event, trace, run_dir)
+        if timed_out:
+            _kill_group(proc)
+            res.error = f"timed out after {spec.timeout_s}s"
+        proc.wait(timeout=30)
+    except BaseException:  # an interrupt reached this thread: take the agent down with it
+        _kill_group(proc)
+        with contextlib.suppress(Exception):
+            proc.wait(timeout=5)
+        raise
+    finally:
+        with _LIVE_LOCK:
+            _LIVE.discard(proc)
+        err_f.close()
     if not timed_out and proc.returncode not in (0, None) and not res.error:
         err = err_path.read_text(encoding="utf-8", errors="replace").strip().splitlines()
         res.error = f"exit {proc.returncode}: {err[-1][:300] if err else 'no stderr'}"

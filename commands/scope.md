@@ -32,7 +32,7 @@ The terminal's task list (`/tasks`) names a background shell by the **start of i
 one command that begins with the `TASK="…"` label: write `$PROJ` and `$RUN` out as literal paths, and put
 no `cd`, `PROJ=` or other assignment in front of it.
 
-If it exits 2 with `Langfuse observability is ON but the Langfuse keys are missing`, nothing ran: relay the message (add the keys to the config, or rerun with `--langfuse false`). Never pick `false` for the user.
+If it exits 2 with `Langfuse tracing is required but the Langfuse keys are missing`, nothing ran: relay the message (add the keys to the config; `/rfc-agent:setup` fills them in).
 
 Run it with `run_in_background`. Don't poll its output — the background shell only notifies you when scope
 exits, and the selection happens mid-run. Right after the launch (same turn), start a **Monitor**
