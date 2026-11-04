@@ -106,3 +106,10 @@ def test_session_file_roundtrip_with_compactions(tmp_path):
     f = tmp_path / "x.session"
     engine_mod.save_session(f, StreamResult(session_id="s", context_tokens=42, compactions=1))
     assert engine_mod.load_session(f) == ("s", 42, 1)
+
+
+def test_detect_static_lookalike_base_url_is_a_gateway(tmp_path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_DISABLE_1M_CONTEXT", raising=False)
+    for url in ("https://evil.example/api.anthropic.com", "https://api.anthropic.com.evil.example"):
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", url)
+        assert detect_effective_window(tmp_path, "claude-sonnet-5[1m]") is None, url

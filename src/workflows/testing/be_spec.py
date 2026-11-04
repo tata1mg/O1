@@ -51,7 +51,7 @@ RE_STATUS = re.compile(
 
 # response.json()["a"]["b"]  /  response.json().get("a", <default>)  /  body.a.b
 RE_PYPATH = re.compile(r"response\.json\(\)\s*((?:\[\s*[\"'][^\"']+[\"']\s*\]|\.get\(\s*[\"'][^\"']+[\"'][^)]*\))+)")
-RE_BODYPATH = re.compile(r"\bbody\.([A-Za-z_][\w.\[\]0-9]*)")
+RE_BODYPATH = re.compile(r"\bbody\.([A-Za-z_][\w.\[\]]*)")  # \w already covers the digits
 RE_BAREPATH = re.compile(r"\bAssert\s+(?:that\s+)?([A-Za-z_][\w]*(?:\[\d+\])*(?:\.[\w]+(?:\[\d+\])*)*)", re.I)
 # English that can start an assertion but is never a field name. Without this, "Assert the headline field
 # == ..." would derive a field called `the`.
