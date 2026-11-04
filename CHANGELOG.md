@@ -7,12 +7,13 @@ versions match `.claude-plugin/plugin.json`.
 
 ### Changed
 
-- **Feedback asks what was wrong in each area, not a list of reasons.** A plain 👍 is one tap. 👍 with notes or 👎
-  opens two more short screens: coverage, buildability, approach and context layer use, then readable summary,
-  rollout and risk, and how the run went. Each area is asked once with its gaps in the same question, and each gap
-  carries the stages to check first. What a person types under Other is kept against the question it was typed
-  on, next to what they ticked there. Re-rating replaces the whole earlier rating. The old list of reasons
-  (`--reason`) is gone. See [docs/FEEDBACK.md](docs/FEEDBACK.md).
+- **Feedback asks what was wrong in each area, not a list of reasons.** The thumb is asked first. A plain 👍 is one
+  tap. 👍 with notes or 👎 opens one more screen with four areas: coverage, buildability, approach and context layer
+  use. Readable summary, rollout and risk, and the run questions are asked only on request. Each area is asked once
+  with its gaps in the same question, and each gap carries the stages to check first. What a person types under
+  Other is kept against the question it was typed on, next to what they ticked there. Re-rating replaces the whole
+  earlier rating, including typed notes it does not repeat. The old list of reasons (`--reason`) is gone. See
+  [docs/FEEDBACK.md](docs/FEEDBACK.md).
 - **Gaps have self-explanatory names** (`marked_covered_but_not_addressed`, `ignores_engineering_standards`, ...) and
   each rating also records which stages its gaps point at (`rfc_suspect_stage`), so "which stage to fix" is a chart.
 - **Run facts are numbers on the trace too.** When a run closes, the numeric facts (PRD size, requirement coverage,
@@ -37,6 +38,27 @@ versions match `.claude-plugin/plugin.json`.
   peak context, context layer calls and errors, and how long a person kept the run waiting.
 - **Review records how long the triage prompt waited** (`triage_wait_s` in `logs/review.json`), apart from the
   stage's own time.
+- **Every run ends with a short summary.** Outcome, time and cost, input size, requirements, review findings and any
+  failed uploads to Langfuse. It is printed in the terminal, saved as `logs/run_summary.md` and shown in the trace's
+  Output pane. It says "Reviewer: not rated yet" until someone rates.
+- **Failed uploads to Langfuse are counted.** Each failed or dropped upload is written to `logs/activity.log` as
+  `[langfuse] export failed: …` and counted per run as `fact_langfuse_export_failures`. See
+  [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) for `LANGFUSE_TIMEOUT`.
+- **The run brief says "no Figma exported"** when the PRD had no Figma, so a "missing Figma flow" gap can be read
+  against it.
+
+### Fixed
+
+- **Draft's cost and time stay in the run totals.** Revise's re-checks used to overwrite them with zero, so a run
+  reported less than it cost.
+- **Verbose tracing no longer crashes** on a `permission_denied` event whose message is plain text.
+- **The fleetlens tools `get_source`, `get_engineering_guidance` and `discover_libraries` are allowed.** Agents were
+  refused them before.
+
+### Security
+
+- `certifi` 2026.7.22 → 2026.10.23 (PYSEC-2026-4320) and the OpenTelemetry packages 1.44.0 → 1.45.2
+  (CVE-2026-114603).
 
 ## 0.1.0 (pilot)
 
