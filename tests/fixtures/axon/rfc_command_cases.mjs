@@ -37,8 +37,27 @@ check("parseNotes", JSON.stringify(m.parseNotes("R-F1.2: disagree; bad; R-X.1: o
   JSON.stringify({ "R-F1.2": "disagree", "R-X.1": "ok" }));
 
 // ---- the whole command against the fake pipeline
+check("withReadOnlyTools adds only registered, missing ones",
+  JSON.stringify(m.withReadOnlyTools(["read", "bash"], ["read", "bash", "grep", "ls"])) ===
+  JSON.stringify(["read", "bash", "grep", "ls"]) && m.withReadOnlyTools(["read"], ["read"]) === null);
+
+// ---- the Pi-package entry (axon pi install git:…): project = the clone, uv found without a login PATH
+const entry = await import(pathToFileURL(path.join(path.dirname(cmdJs), "package-entry.js")).href);
+check("package entry's project is the repo root", fs.existsSync(path.join(entry.PROJECT, "pyproject.toml")) &&
+  fs.existsSync(path.join(entry.PROJECT, "package.json")), entry.PROJECT);
+check("findUv: env, then PATH, then installer dirs, then bare",
+  entry.findUv({ RFC_AGENT_UV: "/x/uv" }) === "/x/uv" &&
+  entry.findUv({ PATH: "/a:/b" }, (p) => p === "/b/uv") === "/b/uv" &&
+  entry.findUv({ PATH: "" }, (p) => p === "/h/.local/bin/uv", "/h") === "/h/.local/bin/uv" &&
+  entry.findUv({ PATH: "" }, () => false) === "uv");
+const manifest = JSON.parse(fs.readFileSync(path.join(entry.PROJECT, "package.json"), "utf8"));
+check("root package.json points Pi at the entry", manifest.keywords.includes("pi-package") &&
+  fs.existsSync(path.join(entry.PROJECT, manifest.pi.extensions[0])), manifest.pi);
+
 const handlers = {};
 const commands = {};
+const tools = {};
+let active = ["read", "bash", "edit", "write"];
 const messages = [];
 const notes = [];
 const asked = [];
@@ -70,10 +89,19 @@ const pi = {
   on: (name, fn) => { handlers[name] = fn; },
   registerCommand: (name, opts) => { commands[name] = opts; },
   sendMessage: (msg) => messages.push(msg),
+  registerTool: (def) => { tools[def.name] = def; },
+  getAllTools: () => ["read", "bash", "edit", "write", "grep", "find", "ls", ...Object.keys(tools)].map((name) => ({ name })),
+  getActiveTools: () => active,
+  setActiveTools: (names) => { active = names; },
 };
 m.default(pi, { project, uv: fakeUv });
 check("registers /rfc", !!commands.rfc);
+check("registers a read-only rfc_status tool", tools.rfc_status?.annotations?.readOnlyHint === true);
 handlers.session_start({}, ctx);
+check("turns on Pi's read-only tools", ["grep", "find", "ls"].every((t) => active.includes(t)) && active.includes("bash"), active);
+let noRun = null;
+try { await tools.rfc_status.execute("t", {}, undefined, undefined, ctx); } catch (e) { noRun = e.message; }
+check("rfc_status without a run asks for run_dir", /pass run_dir/.test(noRun || ""), noRun);
 
 // preflight failure: nothing starts
 process.env.FAKE_UV_DOCTOR_FAIL = "1";
@@ -110,6 +138,21 @@ check("finish posts the closing lines", done && /read: .*rfc\.readable\.md/.test
 check("widget cleared at the end", widget === undefined, widget);
 check("pid file written", fs.existsSync(path.join(runDir, "logs", "axon-rfc.pid")));
 check("milestones reached the widget or log", fs.readFileSync(path.join(runDir, "logs", "run.out"), "utf8").includes("── Review"));
+const snap = await tools.rfc_status.execute("t", {}, undefined, undefined, ctx);
+const snapText = snap.content[0].text;
+check("rfc_status reports the followed run", snapText.startsWith(`run: ${runDir}`) && /run\.out \(last/.test(snapText) &&
+  /process: not running/.test(snapText) && !/waiting:/.test(snapText), snapText);
+check("rfc_status takes a run_dir", (await tools.rfc_status.execute("t", { run_dir: runDir }, undefined, undefined, ctx))
+  .content[0].text === snapText);
+const live = path.join(cwd, "live-run");
+fs.mkdirSync(path.join(live, "logs"), { recursive: true });
+fs.writeFileSync(path.join(live, "logs", "axon-rfc.pid"), String(process.pid));
+fs.writeFileSync(path.join(live, "logs", "run.out"), `  [investigate] WAITING FOR PAUSE 1: proposal at ${live}/p1.json — answers expected at ${live}/a1.json\n`);
+const liveText = m.runSnapshot(live);
+check("runSnapshot shows a live run's waiting pause", /process: running/.test(liveText) && /waiting: pause 1/.test(liveText), liveText);
+let notRun = null;
+try { m.runSnapshot(cwd); } catch (e) { notRun = e.message; }
+check("runSnapshot refuses a non-run folder", /no logs/.test(notRun || ""), notRun);
 
 console.log(JSON.stringify({ ok: failures.length === 0, failures }));
 process.exit(0);

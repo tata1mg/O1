@@ -15,6 +15,10 @@
  * The child is detached and writes to files, so it outlives the Axon session; `/rfc attach <run dir>` picks a
  * running (or finished) run up again, including a pause that is still waiting.
  *
+ * Asking the model about a run ("status?") should not need bash: Axon's terminal policy asks the user about
+ * any command with `$`, redirects or globs. So this also registers `rfc_status` (a run's state, read-only) and
+ * turns on Pi's read/grep/find/ls — what Read/Grep/Glob are in Claude Code. Bash approval stays Axon's.
+ *
  * Installed by `python -m rfc_agent.axon_agent install`, which writes a two-line stub into Axon's extensions
  * dir that imports this file and passes the project root. No dependencies: Pi loads it with jiti, and the pure
  * helpers below are exported so plain node can test them (tests/fixtures/axon/rfc_command_cases.mjs).
@@ -248,7 +252,13 @@ async function askScope(ui, prop) {
       figma.forEach((f, i) => (on[i] ? keep.add(f.n) : keep.delete(f.n)));
     }
   }
-  return { selected: [...keep].sort((a, b) => a - b), ...extras };
+  const answers = { selected: [...keep].sort((a, b) => a - b), ...extras };
+  if (prop.no_design) {
+    const GO = "Proceed without design";
+    const c = await ui.select(`No design is available (${prop.no_design}). Do you want to proceed as it is?`, [GO, "Stop"]);
+    answers.proceed_without_design = c === GO;
+  }
+  return answers;
 }
 
 async function askInvestigate(ui, prop, n) {
@@ -289,6 +299,67 @@ async function askTriage(ui, prop) {
     items.map((f) => ({ label: f.key, note: f.label, on: f.include })));
   const notes = parseNotes(await ui.input("Notes on findings (optional): R-F1.2: why; R-X.1: why", ""));
   return { selected: items.filter((_, i) => on[i]).map((f) => f.n), notes, feedback: "" };
+}
+
+// ---- rfc_status: a run's state as a read-only tool -------------------------------------------------------
+
+function tail(file, n) {
+  try {
+    return fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).slice(-n);
+  } catch {
+    return null;
+  }
+}
+
+function pidAlive(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** What `rfc_status` reports for one run folder: process, pending pause, status.json, log tails, outputs. */
+export function runSnapshot(dir, { outLines = 30, activityLines = 15 } = {}) {
+  const logs = path.join(dir, "logs");
+  if (!fs.existsSync(logs)) throw new Error(`${dir} is not an rfc-agent run folder (no logs/)`);
+  const parts = [`run: ${dir}`];
+  let pid = 0;
+  try {
+    pid = Number(fs.readFileSync(path.join(logs, "axon-rfc.pid"), "utf8"));
+  } catch {}
+  const alive = pidAlive(pid);
+  parts.push(`process: ${pid ? (alive ? `running (pid ${pid})` : `not running (pid ${pid} ended)`) : "no pid file"}`);
+  let out = [];
+  try {
+    out = fs.readFileSync(path.join(logs, "run.out"), "utf8").split("\n");
+  } catch {}
+  const waiting = out.map(parseWaiting).filter((w) => w && !fs.existsSync(w.answers));
+  if (waiting.length && alive) {
+    const w = waiting[waiting.length - 1];
+    parts.push(`waiting: ${w.kind === "scope" ? "Scope selection" : `pause ${w.n}`} — the /rfc dialog asks it; proposal at ${w.proposal}`);
+  }
+  try {
+    parts.push(`status.json:\n${fs.readFileSync(path.join(logs, "status.json"), "utf8").trim()}`);
+  } catch {}
+  const runOut = out.filter((l) => l.trim()).slice(-outLines);
+  if (runOut.length) parts.push(`run.out (last ${runOut.length} lines):\n${runOut.join("\n")}`);
+  const act = tail(path.join(logs, "activity.log"), activityLines);
+  if (act?.length) parts.push(`activity.log (last ${act.length} lines):\n${act.join("\n")}`);
+  const outputs = ["out/rfc.readable.md", "out/rfc.md", "review/review.md"].filter((f) => fs.existsSync(path.join(dir, f)));
+  if (outputs.length) parts.push(`outputs: ${outputs.map((f) => path.join(dir, f)).join(", ")}`);
+  return parts.join("\n\n");
+}
+
+/** Pi's built-in tools that only read. Not bash, so Axon's terminal policy never asks about them — the same
+ *  footing Read/Grep/Glob have in Claude Code. */
+export const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
+
+export function withReadOnlyTools(active, registered) {
+  const add = READ_ONLY_TOOLS.filter((t) => registered.includes(t) && !active.includes(t));
+  return add.length ? [...active, ...add] : null;
 }
 
 // ---- one watched run ----------------------------------------------------------------------------------
@@ -482,13 +553,47 @@ export default function make(pi, { project, uv = "uv" } = {}) {
   };
   const watch = (run) => {
     runs.set(run.dir, run);
+    lastDir = run.dir;
     run.render();
     if (!timer) timer = setInterval(tick, POLL_MS);
   };
   const uvRun = (args, cwd) => runCapture(uv, ["run", "--project", project, ...args], { cwd, env: childEnv() });
 
+  let lastDir = null; // the run rfc_status reports when it is given none
+  const watchedDir = () => [...runs.keys()].pop() || lastDir;
+
   pi.on("session_start", (_e, ctx) => {
     latest = ctx;
+    if (typeof pi.getActiveTools !== "function" || typeof pi.setActiveTools !== "function") return;
+    const registered = (pi.getAllTools?.() || []).map((t) => t.name);
+    const next = withReadOnlyTools(pi.getActiveTools(), registered);
+    if (next) pi.setActiveTools(next);
+  });
+
+  pi.registerTool({
+    name: "rfc_status",
+    label: "rfc status",
+    description:
+      "State of an rfc-agent run: whether its process is alive, a pause waiting for the user, logs/status.json, " +
+      "the tail of logs/run.out and logs/activity.log, and which outputs exist. Read-only.",
+    promptGuidelines: [
+      "For questions about an rfc-agent run (status, progress, what it is doing, cost so far), call rfc_status " +
+        "instead of running shell commands; use read, grep, find and ls for anything else in the run folder.",
+      "Never write a pause's answers file yourself: the /rfc dialog asks the user.",
+    ],
+    parameters: {
+      type: "object",
+      properties: {
+        run_dir: { type: "string", description: "The run folder. Omit for the run /rfc is following in this session." },
+      },
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const given = params?.run_dir;
+      const dir = given ? path.resolve(ctx?.cwd || process.cwd(), given) : watchedDir();
+      if (!dir) throw new Error("no rfc run is being followed in this session; pass run_dir");
+      return { content: [{ type: "text", text: runSnapshot(dir) }], details: undefined };
+    },
   });
   pi.on("session_shutdown", () => {
     if (timer) clearInterval(timer);

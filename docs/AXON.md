@@ -43,11 +43,27 @@ and Langfuse traces. What changes is which agent runtime and which models do the
 
 ## 2. Run from inside Axon (`/rfc`)
 
-Install the command once (from the rfc-agent checkout):
+Install the command once, one of two ways:
 
-```bash
-uv run python -m rfc_agent.axon_agent install
-```
+- **As a Pi package (to share it).** No checkout needed. Pi clones the repo, and the clone is also where the
+  pipeline runs from:
+
+  ```bash
+  axon pi install git:github.com/tata1mg/O1@<tag>
+  ```
+
+  Pin a tag (or a commit) so everyone runs the same version. Move to a new one with `axon pi remove` and an
+  install at the new tag. You need GitHub access to the repo, `uv` installed, and `~/.config/rfc-agent/config.json`
+  ([INSTALL.md](../INSTALL.md)). Steps 1–2 above still apply. Check with `/rfc doctor` inside Axon. If Axon can't
+  find `uv`, set `RFC_AGENT_UV` to its path.
+- **From your own checkout (for development).** Edits to the checkout show up after `/reload`:
+
+  ```bash
+  uv run python -m rfc_agent.axon_agent install
+  ```
+
+Use one or the other: both register `/rfc`. `axon pi remove git:github.com/tata1mg/O1` drops the package, and
+`… axon_agent uninstall` drops the checkout stub.
 
 Then, in any `axon` session (`/reload` an open one first):
 
@@ -66,9 +82,14 @@ Then, in any `axon` session (`/reload` an open one first):
   agents run on Axon unless you pass `--engine` or `--stage-engine` yourself.
 - The run keeps going if you quit Axon. `/rfc attach <run folder>` follows it again and asks any pause that is
   still waiting.
+- Ask Axon about the run ("status?", "what is it doing?") without approval prompts. The command also gives Axon an
+  `rfc_status` tool (process, waiting pause, `status.json`, log tails, outputs) and turns on Pi's read-only
+  `read`/`grep`/`find`/`ls`, so the agent doesn't need bash for this. Bash itself stays under Axon's terminal
+  policy: a command with `$`, a redirect or a glob still asks, unless your org allows `/yolo`
+  (`/terminal-permissions` shows what it allows).
 
-`python -m rfc_agent.axon_agent uninstall` removes the command. The installed file points at this checkout, so
-pulling new code updates `/rfc` and you don't need to reinstall.
+With the checkout install, the stub points at your checkout, so pulling new code updates `/rfc` without a
+reinstall.
 
 ## 3. Run from a terminal or Claude Code
 

@@ -259,6 +259,47 @@ token). `AGENT.AXON.ATLASSIAN_SERVER` names it if it's called something else. Wi
 Claude's connector fetched. The 25 KB page came back whole. Unit tests stub `axon` for the turn parsing, the
 truncation file, the missing / signed-out / silent server and the retry.
 
+## D-23 Read-only tools in the interactive Axon session, not a bash allow-list
+
+**Problem.** Asking an Axon session about a run ("status?") made the agent run commands like
+`cat logs/status.json && tail … 2>/dev/null` or `ps -p $(cat …pid)`. Axon's managed `terminal-permissions`
+extension asks the user about any bash command with `$`, a redirect, a glob or a wrapper, and about whatever the
+org's backend lists. One session timed out an approval.
+
+**Decision.** The `/rfc` extension registers `rfc_status`, a read-only tool that reports a run's process, any
+waiting pause, `status.json`, the tails of `run.out` and `activity.log`, and which outputs exist. On
+`session_start` it also adds Pi's built-in `read`, `grep`, `find` and `ls` to the active tools, using
+`pi.setActiveTools`. None of these is bash, so the terminal policy never sees them. That's the footing
+Read/Grep/Glob have in Claude Code. The stages need nothing new: their logs show no bash calls on Axon, and the
+harness guard already mirrors Claude's allow/deny lists there (D-19).
+
+**Ruled out: auto-approving read-only bash, as `approve_readonly.py` does for Claude stages.** In Axon that
+decision belongs to the org's terminal policy (its required-approval list, and whether `/yolo` is allowed), set
+by Axon's backend. An rfc-agent extension that approved commands on its behalf would override the org's control.
+Bash prompts stay Axon's.
+
+**Verified (2026-11-02).** Loaded into Axon's Pi 1.4.0 runtime (RPC mode, private agent dir): `rfc_status` is
+registered and active with `readOnlyHint`, and `grep`/`find`/`ls` join the active set next to `bash`. A live
+session in Axon wasn't run because the Axon login had expired. The node tests cover the snapshot (finished run,
+live run with a waiting pause, non-run folder) and the active-set change.
+
+## D-24 Sharing `/rfc`: the repo is a Pi package
+
+**Decision.** A root `package.json` with a `pi` manifest makes the repo a Pi package, so anyone installs `/rfc`
+with `axon pi install git:github.com/tata1mg/O1@<tag>`. Its entry, `axon_ext/package-entry.js`, takes the
+project from its own location (the clone is a full checkout, so `uv run --project <clone>` runs the pipeline
+from it). It finds `uv` from `RFC_AGENT_UV`, then PATH, then the installers' usual folders. The checkout stub
+(`axon_agent install`) stays for development. Both register `/rfc`, so a machine uses one of them.
+
+**Why a package and not the stub for everyone.** The stub needs a checkout and hard-codes its path. A package
+is versioned by the ref it pins, installs in one command, and is what Pi and Axon manage. Axon removes only
+the packages it installed itself and keeps a user's own (seen in the launcher's reconcile code, Axon 1.0.0).
+
+**Verified (2026-11-02).** Axon's Pi 1.4.0 runtime, private agent dir, `-e <repo dir>`: Pi read the manifest,
+registered `/rfc` from `package-entry.js`, and `/rfc help` answered, so the project path resolved. `rfc_status`
+and the read-only tools came up as in D-23. Not yet tried: an `axon pi install git:…` from GitHub, because the
+branch with this isn't pushed.
+
 ## Live verification (2026-10-28, Axon 0.2.6 / Pi 1.4.0)
 
 All runs used copies of the finished Claude run `prd-5672665111` (Upload Report optimisation), with Langfuse off.
