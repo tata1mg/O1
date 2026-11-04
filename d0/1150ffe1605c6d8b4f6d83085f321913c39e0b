@@ -1,0 +1,19 @@
+.github/actions/security-setup/action.yml
+  s_461c157c616dc4::t_75bff8334a1ba6 8-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d01150ffe1605c6d8b4f6d83085f321913c39e0b",
+  "prompts": {},
+  "sessions": {
+    "s_461c157c616dc4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "faed9c0f-737d-4a1e-9864-b080199796c8",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}
