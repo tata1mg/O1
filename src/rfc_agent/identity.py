@@ -46,6 +46,20 @@ if TYPE_CHECKING:
 _NS = uuid.UUID("ed7598c3-9c81-5255-8050-0ee02d25cab6")
 
 STAGE = "plan"  # rfc_agent is the PLAN stage; build/test set their own when they land
+#: The lifecycle stage of each other harness workflow. Without it a `testing` run was stamped
+#: `harness_stage: plan` on its trace (2026-11-02), indistinguishable from an RFC run.
+STAGE_BY_WORKFLOW = {"testing": "test"}
+
+
+def stage_of(ctx) -> str:
+    """The lifecycle stage this run belongs to: its workflow's, else rfc_agent's own (plan)."""
+    return STAGE_BY_WORKFLOW.get(getattr(ctx, "workflow", "") or "", STAGE)
+
+
+def trace_name(ctx) -> str:
+    """`rfc-run` for the RFC pipeline (dashboards and saved filters key on it), `<workflow>-run` otherwise."""
+    wf = getattr(ctx, "workflow", "") or ""
+    return "rfc-run" if wf in ("", "rfc") else f"{wf}-run"
 FILENAME = "identity.json"
 
 _cache: dict[str, dict] = {}  # every field is stable, but load() still must not re-count resumes
@@ -74,7 +88,7 @@ def _fallback(ctx: RunContext) -> dict:
         "session_id": ctx.run_dir.name,
         "session_uuid": None,
         "run_id": None,
-        "stage": STAGE,
+        "stage": stage_of(ctx),
         "run_count": 0,
         "degraded": True,
     }
@@ -119,7 +133,7 @@ def _mint(ctx: RunContext) -> dict:
             # pre-0.22.63 files have no run_id key; their root_run_id WAS the stage-run anchor, so
             # adopting it keeps in-flight lineages continuous with their already-exported traces
             "run_id": stored.get("run_id") or stored.get("root_run_id") or _uuid7(),
-            "stage": stored.get("stage") or STAGE,
+            "stage": stored.get("stage") or stage_of(ctx),
             "run_count": (stored.get("run_count") or 0) + 1,
             "created_at": stored.get("created_at") or datetime.now(UTC).isoformat(timespec="seconds"),
         }

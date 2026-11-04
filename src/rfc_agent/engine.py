@@ -46,6 +46,8 @@ _APPROVE_RO = Path(__file__).parent / "hooks" / "approve_readonly.py"
 _REPO_HISTORY = Path(__file__).parent / "hooks" / "repo_history.py"
 _STAGE_TOOLS = Path(__file__).parent / "hooks" / "stage_tools.py"
 _BYTE_BUDGET = Path(__file__).parent / "hooks" / "byte_budget.py"
+#: env var naming the current stage's Stage.allow_commands to the approve_readonly hook
+ALLOWED_COMMANDS_ENV = "RFC_AGENT_ALLOWED_COMMANDS"
 _CANARY_PROBED = False  # hooks_canary runs at most once per process (it caches per CLI version on disk)
 
 
@@ -182,7 +184,8 @@ def _hook_settings(disabled: set[str]) -> dict:
 
 
 def _write_guard_settings(run_dir: Path, dest: Path, *, hooks_enabled: bool = True,
-                          disabled_hooks: tuple[str, ...] | list[str] = ()) -> Path:
+                          disabled_hooks: tuple[str, ...] | list[str] = (),
+                          allow_commands: tuple[str, ...] | list[str] = ()) -> Path:
     """Settings JSON for one headless child: the PreToolUse write-guard (containment) + the curated
     read-only Bash allowlist (throughput). The guard is the enforcement layer; the allowlist only stops
     text-reading commands from dying in headless auto-deny.
@@ -195,7 +198,7 @@ def _write_guard_settings(run_dir: Path, dest: Path, *, hooks_enabled: bool = Tr
     if not _GUARD.exists():  # fail loudly: a missing guard must not silently downgrade to "no containment"
         raise EngineFailure(f"write-guard hook missing at {_GUARD} — refusing to run with repo write access")
     off = set(disabled_hooks or ())
-    allow = list(_READONLY_BASH_ALLOW)
+    allow = list(_READONLY_BASH_ALLOW) + [f"Bash({c}:*)" for c in allow_commands]  # Stage.allow_commands
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(
         json.dumps(
@@ -1020,6 +1023,7 @@ def run_claude(
         ctx.run_dir, logs / f"{label}.settings.json",
         hooks_enabled=bool(ctx.flag("hooks", True)),
         disabled_hooks=tuple(ctx.flag("hooks_off", []) or ()),
+        allow_commands=tuple(getattr(stage, "allow_commands", ()) or ()),
     )
     cmd += ["--settings", str(settings_path)]
     # feedback-channel canary (2026-09-03): once per process, once per CLI version per machine — a
@@ -1076,6 +1080,10 @@ def run_claude(
     env = {**child_env_base, "RFC_AGENT_RUN_DIR": str(ctx.run_dir.resolve()),
            # the guard hook reads RFC_AGENT_RUN_DIR to know the one writable tree
            "RFC_AGENT_REPOS_ROOT": str(Path(ctx.inputs.get("repos_root") or "").expanduser()),
+           # Stage.allow_commands, for approve_readonly: the allow rule in --settings only skips the CLI's
+           # ask, and that hook would still deny the interpreter as "ad-hoc" (2026-11-02: check_suite.py
+           # denied 3 times, the model fell back to hand-rolled jq). Newline-separated exact prefixes.
+           ALLOWED_COMMANDS_ENV: "\n".join(getattr(stage, "allow_commands", ()) or ()),
            **(extra_env or {})}
     if tap:
         env["ANTHROPIC_BASE_URL"] = tap.base_url

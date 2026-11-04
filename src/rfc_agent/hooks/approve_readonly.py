@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 
 try:
@@ -63,6 +64,24 @@ def _emit(decision: str, reason: str) -> None:
         "permissionDecisionReason": reason}}))
 
 
+#: shell syntax that could chain, substitute or redirect — a stage command never carries any of it
+_SHELL_META = re.compile(r"[;&|<>`$()\n\\]")
+
+
+def _stage_allowed(cmd: str) -> bool:
+    """True for exactly one of the current stage's declared commands (env RFC_AGENT_ALLOWED_COMMANDS,
+    newline-separated, set per child by the engine), optionally followed by plain arguments. Prefix plus
+    a space, never a bare substring, and no shell metacharacters anywhere, so the command cannot be
+    extended into a second one."""
+    cmd = cmd.strip()
+    if not cmd or _SHELL_META.search(cmd):
+        return False
+    for allowed in filter(None, os.environ.get("RFC_AGENT_ALLOWED_COMMANDS", "").split("\n")):
+        if cmd == allowed or cmd.startswith(allowed + " "):
+            return True
+    return False
+
+
 def main() -> None:
     try:
         ev = json.loads(sys.stdin.read() or "{}")
@@ -71,6 +90,9 @@ def main() -> None:
     if (ev.get("tool_name") or "") != "Bash":
         sys.exit(0)
     cmd = (ev.get("tool_input") or {}).get("command") or ""
+    if _stage_allowed(cmd):
+        _emit("allow", "a command this stage declares (Stage.allow_commands)")
+        sys.exit(0)
     # the never-approvable classes are a SANDBOX rule, not a universal one: outside the pipeline
     # (RFC_AGENT_RUN_DIR unset) this hook has no business editorialising about a user's own awk.
     sandboxed = bool(os.environ.get("RFC_AGENT_RUN_DIR"))

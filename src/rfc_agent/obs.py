@@ -312,6 +312,11 @@ def _run_tags(ctx: RunContext, ident: dict) -> list[str]:
     sources tagged a 200K `--model` run as 1M whenever the ignored default carried `[1m]`
     (found in the 2026-08-16 audit)."""
     tags: list[str] = []
+    # `workflow:<name>` for every workflow but the RFC pipeline, whose traces predate the tag: a testing
+    # run was otherwise only tellable from an RFC run by opening it (2026-11-02)
+    wf = getattr(ctx, "workflow", "") or ""
+    if wf and wf != "rfc":
+        tags.append(f"workflow:{wf}")
     if ident.get("workstream_source") == "jira" and ident.get("workstream_id"):
         tags.append(f"ticket:{ident['workstream_id']}")
     cli = (ctx.inputs or {}).get("model")
@@ -414,7 +419,8 @@ def _observed_span(ctx: RunContext, name: str, *, as_type: str = "span", is_run_
                     # two same-named dirs under different roots used to merge into one.
                     ident = identity.load(ctx)
                     prop_cm = propagate_attributes(
-                        session_id=ident["session_id"], user_id=_user_id(ctx), trace_name="rfc-run",
+                        session_id=ident["session_id"], user_id=_user_id(ctx),
+                        trace_name=identity.trace_name(ctx),
                         tags=_run_tags(ctx, ident) or None,
                         metadata={"run_dir": str(ctx.run_dir), "claude_account": _claude_account(ctx),
                                   **identity.trace_metadata(ident), **_provenance(ctx)},
@@ -456,7 +462,9 @@ def run_trace(ctx: RunContext):
     # backend (observed live, 0.22.64: `stage: "run"` appeared as a trace-level key on every run) —
     # the same promotion hazard subprocess decisions dodge. Root/operator are run-scoped by
     # definition; only operator events (children, never promoted) carry the explicit `stage: "run"`.
-    return _observed_span(ctx, "rfc-run", as_type="chain", is_run_root=True)
+    from . import identity
+
+    return _observed_span(ctx, identity.trace_name(ctx), as_type="chain", is_run_root=True)
 
 
 @contextlib.contextmanager
@@ -1320,6 +1328,15 @@ def finish_run(ctx: RunContext, manifest: dict, ran: set | None = None) -> None:
             p = ctx.run_dir / rel
             if p.exists():
                 client.score_current_trace(name=f"{p.stem}_bytes", value=float(p.stat().st_size))
+        # the workflow's own outcome scores (Workflow.run_scores): a testing run's gates all pass on any
+        # well-formed suite, so without these its trace held nothing that tells a 4/5 suite from a 2/5 one
+        with contextlib.suppress(Exception):
+            from harness import workflows as _workflows
+
+            wf = _workflows.get(ctx.workflow) if getattr(ctx, "workflow", "") else None
+            for sname, sc in ((wf.run_scores(ctx, ran) or {}) if wf and wf.run_scores else {}).items():
+                with contextlib.suppress(Exception):
+                    client.score_current_trace(name=sname, **sc)
         # the coverage DENOMINATOR (2026-08-19 audit): every "did the RFC cover the requirements"
         # question needs the REQ count, which previously never left extract/requirements.json
         with contextlib.suppress(Exception):

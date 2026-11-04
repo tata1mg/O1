@@ -30,9 +30,10 @@ from .constants import Decision
 from .contracts import RunContext
 
 _CACHE = Path.home() / ".cache" / "rfc-agent" / "hooks_alive"
-# byte_budget's pacing report opens with this — the phrase the model can only know if the hook's
-# additionalContext actually reached it (hook stdout is never echoed into the stream)
-_MARK = "BYTE BUDGET pacing"
+# every byte_budget report opens with this — the phrase the model can only know if the hook's
+# additionalContext actually reached it (hook stdout is never echoed into the stream). Not "BYTE BUDGET
+# pacing" alone: a model that overshoots the 800 lines crosses the ceiling and gets the "PAST" report.
+_MARK = "BYTE BUDGET"
 _MODEL = "claude-haiku-4-5-20251001"  # cheapest capable model; the channel under test is CLI-side
 
 
@@ -68,12 +69,18 @@ def ensure_hooks_alive(ctx: RunContext, settings_path: Path, claude_bin: str = "
            "--permission-mode", "acceptEdits", "--setting-sources", "project",
            "--settings", str(settings_path), "--strict-mcp-config", "--mcp-config", str(mcp),
            "--model", model or _MODEL, prompt]
-    env = {**os.environ, "RFC_AGENT_RUN_DIR": str(scratch)}
+    # byte_budget stays silent unless RFC_AGENT_GENERATE_BYTE_BUDGET is on (off by default since 2026-09-07),
+    # and a silent hook can never put the mark in the model's mouth: without this the canary failed on
+    # every CLI, was never cached, and re-ran (and re-warned) on every run.
+    env = {**os.environ, "RFC_AGENT_RUN_DIR": str(scratch), "RFC_AGENT_GENERATE_BYTE_BUDGET": "1"}
     t0 = time.monotonic()
     error = ""
     out = ""
     try:
-        proc = subprocess.run(cmd, cwd=scratch, env=env, capture_output=True, text=True, timeout=240)
+        # stdin=DEVNULL: `claude -p` otherwise waits on whatever stdin it inherits — the operator's terminal
+        # when the run is interactive (2026-11-02: hit the 240s timeout before the Write, hook never ran)
+        proc = subprocess.run(cmd, cwd=scratch, env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                              text=True, timeout=240)
         out = proc.stdout or ""
         if proc.returncode:
             error = (proc.stderr or "")[-300:]

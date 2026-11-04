@@ -53,3 +53,35 @@ def test_dead_channel_warns_records_and_is_not_cached(tmp_path, monkeypatch, cap
     # a re-probe happens (not cached)
     hooks_canary.ensure_hooks_alive(_ctx(tmp_path), settings)
     assert len([c for c in calls if "-p" in c]) == 2
+
+
+def test_the_probe_turns_the_budget_hook_on_and_closes_stdin(tmp_path, monkeypatch):
+    """byte_budget is silent unless RFC_AGENT_GENERATE_BYTE_BUDGET is on (off by default since 2026-09-07),
+    so without it the canary could never pass. And `claude -p` waits on an inherited stdin — the operator's
+    terminal in an interactive run, which ran the probe into its 240s timeout (2026-11-02)."""
+    monkeypatch.setattr(hooks_canary, "_CACHE", tmp_path / "cache")
+    monkeypatch.delenv("RFC_AGENT_GENERATE_BYTE_BUDGET", raising=False)
+    seen: dict = {}
+
+    def run(cmd, **kw):
+        if cmd[1:2] == ["--version"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="9.9.9 (Claude Code)\n", stderr="")
+        seen.update(kw)
+        return subprocess.CompletedProcess(cmd, 0, stdout="NONE\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    settings = tmp_path / "s.json"
+    settings.write_text("{}")
+    hooks_canary.ensure_hooks_alive(_ctx(tmp_path), settings)
+    assert seen["env"]["RFC_AGENT_GENERATE_BYTE_BUDGET"] == "1"
+    assert seen["stdin"] is subprocess.DEVNULL
+
+
+def test_the_past_ceiling_report_also_counts_as_alive(tmp_path, monkeypatch):
+    """A model that writes more than the 800 lines crosses the ceiling, and that report opens "BYTE BUDGET —"."""
+    monkeypatch.setattr(hooks_canary, "_CACHE", tmp_path / "cache")
+    stream = '{"type":"result","result":"BYTE BUDGET — out/contract.md is 12,534 bytes, 2,294 bytes PAST"}\n'
+    monkeypatch.setattr(subprocess, "run", _fake_run(stream, []))
+    settings = tmp_path / "s.json"
+    settings.write_text("{}")
+    assert hooks_canary.ensure_hooks_alive(_ctx(tmp_path), settings) is True
