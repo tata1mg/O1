@@ -2,13 +2,14 @@
 
 Two kinds of stage live here:
 
-  * **python stages** (`sources`, `render_xlsx`, `store_cases`, `derive_spec`, `execute_be`) — the whole
-    step is deterministic code. Their `Stage.engine` is the function that does the work and returns
-    `StageResult(engine_desc="python")`; no model is invoked, so there is nothing to prompt and nothing
-    to retry.
-  * **engine stages** (`generate_cases`, `evaluate`) — a headless agent runs with the stage's SKILL.md
-    staged as its persona (D14). They call `ctx.engine.run(EngineRequest(...))` rather than binding a
-    Claude primitive, so `--engine pi` works for this workflow the day the adapter lands (D4).
+  * **python stages** (`sources`, `render_xlsx`, `store_cases`, `derive_spec`, `execute_be`,
+    `execute_web`, `publish_app`) — the whole step is deterministic code. Their `Stage.engine` is the
+    function that does the work and returns `StageResult(engine_desc="python")`; no model is invoked, so
+    there is nothing to prompt and nothing to retry.
+  * **engine stages** (`generate_cases`, `evaluate`, `prerequisites`, `derive_ui`) — a headless agent runs
+    with the stage's SKILL.md staged as its persona (D14). They call `ctx.engine.run(EngineRequest(...))`
+    rather than binding a Claude primitive, so `--engine pi` works for this workflow the day the adapter
+    lands (D4).
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from .._io import atomic_write_json, parse_json
 #: Decision names this workflow records. Declared on `Workflow.decisions` (D12).
 DECISIONS: tuple[str, ...] = (
     "source_missing",            # a Step-0 inventory row came back missing/blocked
+    "source_extracted",          # a contract/plan taken from the RFC's own section (no file of its own)
     "xlsx_skipped",              # openpyxl absent -> render skipped rather than failing the run
     "case_dropped_by_deriver",   # an exec:http case whose steps could not be transcribed
     "case_status_only",          # derived but weak: no body assertion
@@ -34,6 +36,11 @@ DECISIONS: tuple[str, ...] = (
     "case_kept_for_human",       # a reviewed/edited case the upload left alone (suggestion offered)
     "response_attached",         # the full response body was attached to the execution as evidence
     "presence_check_mismatch",   # model's presence verdict != the mechanical one
+    "prerequisites_listed",      # prerequisites.md rendered: counts per section
+    "ui_cases_selected",         # derive_ui: the CONFIRMED web UI cases it was given, and the snapshots
+    "ui_case_not_automated",     # derive_ui: a case skipped with a reason (stays in the run for a person)
+    "ui_evidence_attached",      # execute_web / publish_app: a screenshot, trace or timeline on an execution
+    "app_case_unattributed",     # publish_app: a CONFIRMED app case no flow in the report covers
 )
 
 
@@ -72,6 +79,11 @@ def feature_of(ctx: RunContext) -> str:
     return str(ctx.inputs.get("feature") or ctx.flag("testing.feature", "") or "")
 
 
+def only_cases(ctx: RunContext) -> set[str]:
+    """`testing.cases` as a set; empty = no restriction."""
+    return {c.strip() for c in str(ctx.flag("testing.cases", "") or "").split(",") if c.strip()}
+
+
 def python_stage(fn):
     """Wrap a `(stage, ctx) -> None | str` worker as a Stage.engine callable with timing + engine_desc."""
 
@@ -83,7 +95,8 @@ def python_stage(fn):
     return _engine
 
 
-def run_engine_stage(stage: Stage, ctx: RunContext, skill_path: Path) -> StageResult:
+def run_engine_stage(stage: Stage, ctx: RunContext, skill_path: Path,
+                     extra_roots: tuple[Path, ...] = ()) -> StageResult:
     """Invoke the resolved engine adapter for a persona stage.
 
     The adapter itself is wired by the runner (`ctx.engine`); this function only builds the request. That
@@ -112,7 +125,7 @@ def run_engine_stage(stage: Stage, ctx: RunContext, skill_path: Path) -> StageRe
         # into the run dir. Extra readable roots are the source files' parents.
         containment=Containment(
             writable_roots=(ctx.run_dir,),
-            readable_roots=tuple(_source_roots(ctx)),
+            readable_roots=tuple(_source_roots(ctx)) + tuple(extra_roots),
         ),
         # The claude-code adapter (the default engine) still delegates to `run_claude`, which reads the
         # stage and the run context for MCP materialisation, effort and session bookkeeping. Without

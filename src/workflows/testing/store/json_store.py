@@ -191,6 +191,22 @@ class JsonCaseStore:
         path = self._attachment_path(scope, target_id, name)
         return path.as_uri() if path.exists() else ""
 
+    def comment_execution(self, execution_id: str, text: str) -> bool:
+        run_id, _, extid = execution_id.rpartition(":")
+        path = self._find_run(run_id)
+        if path is None:
+            return False
+        with locked(path):
+            data = self._read(path)
+            row = (data.get("executions") or {}).get(extid)
+            if row is None:
+                return False
+            comments = row.setdefault("comments", [])
+            if text not in comments:
+                comments.append(text)
+                self._write(path, data)
+        return True
+
     def health(self) -> dict:
         return {"ok": True, "backend": self.name, "root": str(self.root), "network": False}
 

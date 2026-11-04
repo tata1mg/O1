@@ -100,6 +100,16 @@ class CaseStore(Protocol):
         """Where the attachment stored under `name` can be fetched, or "" when it is not there."""
         ...
 
+    def comment_execution(self, execution_id: str, text: str) -> bool:
+        """Post `text` (Markdown) on an execution. Idempotent: the same text already there is not posted
+        again. -> whether it is there now. Never raises — a lost comment is lost evidence, not a failed run.
+
+        WHY a comment and not only an attachment: Kiwi's run page renders an execution's comments, and
+        never its attachments (probed by test_agent's Maestro publisher, 2026-09-02). The step timeline
+        and the links to the attached screenshot have to be in a comment to be seen.
+        """
+        ...
+
     def health(self) -> dict:
         """{ok: bool, ...} — reachability preflight."""
         ...

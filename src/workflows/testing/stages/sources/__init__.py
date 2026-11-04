@@ -16,10 +16,18 @@ Every present source is also COPIED into `qa/sources/` and the copy's path recor
 persona stages run with the run dir as cwd, and a headless Claude child cannot read outside it without a
 permission prompt nobody is there to answer — so prompts name the copy, not the original. The copy is also
 the exact text this suite was generated from, which the original stops being the moment the RFC is revised.
+
+The rfc-agent run layout moved under this stage. Its draft now writes the API contract and the implementation
+plan as sections 5 and 6 of `out/rfc.md` (rfc_agent/draft/prompts/write.md), not as `out/contract.md` and
+`out/detail/plan.md`, and scope writes `raw/figma_index.md` where `raw/figma.md` used to be. Reading only the
+old paths reported the contract "blocked" while the RFC the generator read carried it verbatim, so every
+backend case was tagged `manual` (2026-11-02, NR-DIGICHEM: 54 backend cases, 0 `http`). So a contract or
+plan the run dir lacks is cut out of the RFC by its section heading, and Figma accepts either file.
 """
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
@@ -39,6 +47,11 @@ SOURCE_SPECS: tuple[tuple[str, str, str | None, bool], ...] = (
     ("Figma", "figma", "raw/figma.md", False),
     ("Test Data", "test_data", None, True),
 )
+#: Further run-dir-relative locations tried, in order, when SOURCE_SPECS' own is absent.
+RFC_RUN_ALTERNATES: dict[str, tuple[str, ...]] = {"figma": ("raw/figma_index.md",)}
+#: inputs key -> the RFC section that carries that source when the run dir has no file for it. Matched on the
+#: heading's title, not its number, so a renumbered RFC still resolves.
+RFC_SECTIONS: dict[str, str] = {"contract": "API contract", "plan": "Implementation plan"}
 #: A source that must be present for generation to be worth attempting.
 REQUIRED_LABELS: tuple[str, ...] = ("PRD", "RFC")
 #: Run-dir-relative folder holding the copies the persona stages read.
@@ -54,12 +67,38 @@ def _resolve(ctx: RunContext, key: str, rfc_rel: str | None) -> Path | None:
             return p
     rfc_run = ctx.inputs.get("rfc_run_dir")
     if rfc_run and rfc_rel:
-        p = Path(str(rfc_run)).expanduser() / rfc_rel
-        if p.exists():
-            return p
+        for rel in (rfc_rel, *RFC_RUN_ALTERNATES.get(key, ())):
+            p = Path(str(rfc_run)).expanduser() / rel
+            if p.exists():
+                return p
     # An explicit path that does not exist is still reported (as missing, with the path) rather than
     # silently becoming "no source given" — the operator needs to see the typo.
     return Path(str(explicit)).expanduser() if explicit else None
+
+
+def rfc_section(text: str, title: str) -> str:
+    """The `## <n>. <title>` section of an RFC, heading included, up to the next `## ` heading. "" if absent."""
+    m = re.search(rf"^##\s+(?:\d+\.\s*)?{re.escape(title)}\b.*$", text, re.MULTILINE | re.IGNORECASE)
+    if not m:
+        return ""
+    end = re.search(r"^##\s", text[m.end():], re.MULTILINE)
+    return text[m.start():m.end() + end.start() if end else len(text)].rstrip() + "\n"
+
+
+def _from_rfc(ctx: RunContext, label: str, key: str, rfc_row: dict) -> dict | None:
+    """A row for `key` cut out of the RFC's own section, or None when the RFC has no such section."""
+    title = RFC_SECTIONS.get(key)
+    if not title or rfc_row.get("status") != "present":
+        return None
+    section = rfc_section(Path(rfc_row["local"]).read_text(encoding="utf-8", errors="replace"), title)
+    if not section.strip():
+        return None
+    local = ctx.path(f"{SOURCES_DIR}/{key}.md")
+    local.write_text(section, encoding="utf-8")
+    size = len(section.encode("utf-8"))
+    return {"label": label, "key": key, "path": f"{rfc_row['path']}#{title}", "status": "present",
+            "bytes": size, "local": str(local), "extracted_from": "RFC",
+            "note": f"extracted from the RFC's '{section.splitlines()[0].lstrip('# ').strip()}' section"}
 
 
 def _inventory(ctx: RunContext) -> dict:
@@ -67,6 +106,11 @@ def _inventory(ctx: RunContext) -> dict:
     for label, key, rfc_rel, always in SOURCE_SPECS:
         path = _resolve(ctx, key, rfc_rel)
         if path is None:
+            rfc_row = next((r for r in rows if r["key"] == "rfc"), {})
+            extracted = _from_rfc(ctx, label, key, rfc_row)
+            if extracted:
+                rows.append(extracted)
+                continue
             status = "blocked" if always else "missing"
             rows.append({"label": label, "key": key, "path": "", "status": status, "bytes": 0,
                          "note": "not supplied" + (" — always reported, its absence weakens the suite"
@@ -97,6 +141,11 @@ def _run(stage: Stage, ctx: RunContext) -> str:
     inv = _inventory(ctx)
     write_json(ctx.path("qa/sources.json"), inv)
     for row in inv["sources"]:
+        if row.get("extracted_from"):
+            decisions.record(ctx, stage.name, "source_extracted",
+                             why=f"{row['label']} had no file in the RFC run, so it was taken from the "
+                                 f"{row['extracted_from']}'s own section",
+                             label=row["label"], path=row["path"], bytes=row["bytes"])
         if row["status"] != "present":
             decisions.record(ctx, stage.name, "source_missing",
                              why=f"{row['label']} is {row['status']} — recorded so the suite's coverage "

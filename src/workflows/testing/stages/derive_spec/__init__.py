@@ -12,7 +12,7 @@ from harness.contracts import RunContext, Stage
 
 from ... import be_spec
 from ...store import get_store
-from .. import feature_of, python_stage, read_json, read_json_gated, write_json
+from .. import feature_of, only_cases, python_stage, read_json, read_json_gated, write_json
 
 SPEC_OUT = "qa/spec.json"
 
@@ -25,6 +25,11 @@ def _run(stage: Stage, ctx: RunContext) -> str:
     exec_tag = str(ctx.flag("testing.exec_tag", "exec:http"))
     store = get_store(ctx)
     spec, dropped, weak, total = be_spec.derive(store, feature, exec_tag=exec_tag)
+    only = only_cases(ctx)
+    if only:
+        spec = [e for e in spec if e["extid"] in only]
+        dropped = [(e, why) for e, why in dropped if e in only]
+        weak = [e for e in weak if e in only]
     write_json(ctx.path(SPEC_OUT), spec)
     write_json(ctx.path("qa/spec.report.json"),
                {"derived": len(spec), "total_http_cases": total,

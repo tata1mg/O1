@@ -184,6 +184,12 @@ config.json survives updates; a git-installed plugin cache is wiped on update):
 /plugin install rfc-agent@rfc-agent-marketplace
 ```
 
+The same marketplace also lists **test-agent** (`plugins/test-agent/`): `/plugin install
+test-agent@rfc-agent-marketplace`, then `/test-agent:test` turns a finished RFC run into a QA suite in
+Kiwi, tells you what prestag needs, and once you have confirmed the cases runs them: backend cases over
+HTTP, web UI cases in Playwright, app UI cases from a Maestro run (src/workflows/testing/README.md, "From
+chat").
+
 Then `/rfc-agent:setup` once, and `/rfc-agent:rfc --prd <url>` per RFC (deliverables land in
 `$RUNS_ROOT/<jira-key-or-slug>/`, default `~/rfc-runs/`). `/rfc-agent:doctor` preflights
 config/binaries/MCP/repos. Installed from a **directory** source, the plugin serves the checkout live — but

@@ -100,6 +100,92 @@ def test_a_missing_source_is_recorded_as_a_decision(ctx, tmp_path):
     assert {"API Contract", "Test Data", "Figma", "Implementation Plan"} == labels
 
 
+RFC_WITH_SECTIONS = """# RFC
+## 4. Design
+design text
+## 5. API contract
+### 5.1 svc `POST /v1/x`
+request and response
+## 6. Implementation plan
+### CHANGE-1 svc: add x
+- verify: call POST /v1/x
+## 7. Rollout
+not part of the plan
+"""
+
+
+def _rfc_run(tmp_path, rfc_text):
+    rfc_run = tmp_path / "rfc-run"
+    (rfc_run / "raw").mkdir(parents=True)
+    (rfc_run / "out").mkdir(parents=True)
+    (rfc_run / "raw" / "prd.md").write_text("# PRD\n")
+    (rfc_run / "out" / "rfc.md").write_text(rfc_text)
+    return rfc_run
+
+
+def test_the_contract_and_plan_come_from_the_rfc_when_the_run_has_no_files_for_them(ctx, tmp_path):
+    """rfc-agent now writes them as RFC sections 5 and 6, not out/contract.md and out/detail/plan.md. Reading
+    only the old paths left the contract "blocked" and every backend case `manual` (2026-11-02)."""
+    ctx.inputs["rfc_run_dir"] = str(_rfc_run(tmp_path, RFC_WITH_SECTIONS))
+    _, failures = run_stage(sources.STAGE, ctx)
+    assert failures == []
+    by_label = {r["label"]: r for r in json.loads(ctx.path("qa/sources.json").read_text())["sources"]}
+    contract, plan = by_label["API Contract"], by_label["Implementation Plan"]
+    assert contract["status"] == plan["status"] == "present"
+    assert contract["extracted_from"] == "RFC" and contract["path"].endswith("rfc.md#API contract")
+    copied = open(contract["local"]).read()
+    assert copied.startswith("## 5. API contract") and "POST /v1/x" in copied and "CHANGE-1" not in copied
+    assert "## 7. Rollout" not in open(plan["local"]).read()
+    lines = [json.loads(x) for x in ctx.path("logs/decisions.jsonl").read_text().splitlines()]
+    assert {x["label"] for x in lines if x["decision"] == "source_extracted"} == {
+        "API Contract", "Implementation Plan"}
+
+
+def test_a_contract_file_still_wins_over_the_rfc_section(ctx, tmp_path):
+    rfc_run = _rfc_run(tmp_path, RFC_WITH_SECTIONS)
+    (rfc_run / "out" / "contract.md").write_text("# The real contract\n")
+    ctx.inputs["rfc_run_dir"] = str(rfc_run)
+    run_stage(sources.STAGE, ctx)
+    row = next(r for r in json.loads(ctx.path("qa/sources.json").read_text())["sources"]
+               if r["label"] == "API Contract")
+    assert row["path"] == str(rfc_run / "out" / "contract.md") and "extracted_from" not in row
+
+
+def test_a_mistyped_contract_path_is_not_papered_over_by_the_rfc(ctx, tmp_path):
+    """An explicit --contract that does not exist is the operator's typo to see, not a cue to extract."""
+    ctx.inputs.update({"rfc_run_dir": str(_rfc_run(tmp_path, RFC_WITH_SECTIONS)),
+                       "contract": str(tmp_path / "typo.md")})
+    run_stage(sources.STAGE, ctx)
+    row = next(r for r in json.loads(ctx.path("qa/sources.json").read_text())["sources"]
+               if r["label"] == "API Contract")
+    assert row["status"] == "missing" and row["path"].endswith("typo.md")
+
+
+def test_an_rfc_without_the_section_leaves_the_contract_blocked(ctx, tmp_path):
+    ctx.inputs["rfc_run_dir"] = str(_rfc_run(tmp_path, "# RFC\n## 4. Design\ntext\n"))
+    run_stage(sources.STAGE, ctx)
+    row = next(r for r in json.loads(ctx.path("qa/sources.json").read_text())["sources"]
+               if r["label"] == "API Contract")
+    assert row["status"] == "blocked"
+
+
+def test_figma_accepts_the_index_rfc_agent_writes_now(ctx, tmp_path):
+    rfc_run = _rfc_run(tmp_path, "# RFC\n")
+    (rfc_run / "raw" / "figma_index.md").write_text("frame 1: Checkout\n")
+    ctx.inputs["rfc_run_dir"] = str(rfc_run)
+    run_stage(sources.STAGE, ctx)
+    row = next(r for r in json.loads(ctx.path("qa/sources.json").read_text())["sources"]
+               if r["label"] == "Figma")
+    assert row["status"] == "present" and row["path"].endswith("raw/figma_index.md")
+
+
+def test_the_testing_workflow_does_not_run_the_hook_canary_by_default():
+    """The canary proves rfc-agent's byte_budget pacing, which no testing stage is subject to."""
+    from workflows.testing import WORKFLOW
+
+    assert WORKFLOW.flag_defaults.get("hook_canary") is False
+
+
 # ---- store_cases -------------------------------------------------------------------------------------
 def test_store_cases_upserts_and_summarises(sourced_ctx, clean_cases):
     result, failures = run_stage(store_cases.STAGE, sourced_ctx)

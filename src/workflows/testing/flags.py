@@ -73,9 +73,19 @@ NAMES = (
     _f("evaluate", bool, True,
        "Run the evaluator stage (presence checks in Python, rubric checked by the model); ON by default."),
     _f("store", bool, True, "Run the store_cases stage (upsert the suite into the case store)."),
+    _f("prerequisites", bool, True,
+       "Run the prerequisites stage: qa/prerequisites.md (services, deploy order, config, secrets, test "
+       "data fixtures prestag needs) and qa/test_data.template.yaml for the team to fill."),
     _f("execute", bool, False,
        "Run the execute_be stage. OFF by default because it issues real requests against a live "
        "service and records results; opt in with --enable testing.execute."),
+    _f("execute_web", bool, False,
+       "Run derive_ui and execute_web: Playwright tests for the CONFIRMED web UI cases, run against "
+       "--base-url with the tester's recorded session. OFF by default: it drives a browser against a live "
+       "environment as a real user and records results."),
+    _f("publish_app", bool, False,
+       "Run publish_app: record a Maestro run's JUnit report as one execution per CONFIRMED app UI case. "
+       "OFF by default: it writes results into the shared store."),
     _f("xlsx", bool, True,
        "Render the derived two-sheet workbook. Needs the optional extra `testing` (openpyxl); when that "
        "is absent the stage records a decision and skips instead of failing the run."),
@@ -117,13 +127,57 @@ NAMES = (
        "Dotted response path recorded as the `cohort_observed` execution property. Empty = do not record "
        "it. In test_agent this was hardcoded to `data.mix_panel_data.labs_careplan_variant` "
        "(be_execute.py:330) — one feature's experiment field baked into the generic executor."),
+    # ---- UI execution ---------------------------------------------------------------------------------
+    _f("base_url", str, "", "execute_web: the web app's origin on the target environment (--base-url)."),
+    _f("ui_auth", str, "",
+       "execute_web: a Playwright storage-state file holding a logged-in session (--ui-auth), recorded "
+       "with `npx playwright codegen --save-storage=<file> <base url>`. Passed to Playwright, never read."),
+    _f("cases", str, "",
+       "Only these case ids (comma-separated) are derived and run by derive_spec and derive_ui — to run one "
+       "case end to end. Empty = every CONFIRMED case of the kind."),
+    _f("environments", str, "",
+       "The environments a run can target, comma-separated (e.g. dione,earth,jupiter,…). The command offers "
+       "them as choices; the chosen one is --env and, with base_url_template, gives the web base URL."),
+    _f("base_url_template", str, "",
+       "execute_web: the web base URL for an environment, with {env} (e.g. https://{env}.1mg.com). Used when "
+       "--base-url is not given."),
+    _f("ui_headed", bool, False,
+       "execute_web: run the browser visibly, one test at a time, so a person can watch the suite. Off for "
+       "unattended runs."),
+    _f("ui_login", str, "",
+       "execute_web: a JSON file {\"phone\", \"otp\"} for a test account whose number and OTP stay fixed "
+       "on the environment (--ui-login). derive_ui writes a login step that runs before every test run, so "
+       "no session expires; the values reach the Playwright process's environment and nothing else."),
+    _f("ui_device", str, "Pixel 7",
+       "execute_web: the Playwright device to emulate. Default a phone, because the web cases are mweb; "
+       "empty = a desktop browser."),
+    _f("ui_timeout_s", int, 60, "execute_web: per-test timeout, in seconds."),
+    _f("ui_source_roots", str, "",
+       "derive_ui: comma-separated source trees to take locators from. Empty = every repo snapshot of the "
+       "RFC run (<rfc run>/_snap/*)."),
+    _f("maestro_report", str, "", "publish_app: the JUnit report of a Maestro run (--maestro-report)."),
+    _f("maestro_flows", str, "",
+       "publish_app: the flows folder the run used, <druid>/.maestro/flows (--maestro-flows). Its headers' "
+       "`# Covers:` blocks and step labels say which case each result belongs to."),
+    _f("maestro_map", str, "", "publish_app: JSON {flow: [case ids]} overriding the derived mapping."),
+    _f("maestro_blocked", str, "",
+       "publish_app: curated exclusions, `TC-…  reason` per line; those cases are recorded BLOCKED."),
+    _f("maestro_only_folder", str, "",
+       "publish_app: publish only testcases whose flow sits under .maestro/flows/<this>/ (a whole-suite "
+       "report spans suites that belong to different features)."),
+    _f("app_exec_tag", str, "exec:ui",
+       "publish_app: the tag a case needs to be recorded. Empty = any CONFIRMED case a flow covers "
+       "(cases test_agent imported may carry no exec: tag)."),
     # ---- Kiwi connection ------------------------------------------------------------------------------
     _f("kiwi_url", str, "", "Kiwi XML-RPC endpoint. Empty = fall back to ~/.tcms.conf (tcms-api's default).",
        env="TCMS_API_URL"),
     # secret=True: never serialised into flags.json, `flags --json` or `--explain` (harness.flags).
     # Marked by the kernel builder as part of review BLOCKER 1.1 — a credential in every run dir is not
     # something to leave to builder sequencing. Ownership of this file otherwise unchanged.
-    _f("kiwi_user", str, "", "Kiwi username. Empty = ~/.tcms.conf.", env="TCMS_USERNAME"),
+    _f("kiwi_user", str, "",
+       "Kiwi username, used with kiwi_url + kiwi_password. Empty = ~/.tcms.conf, and when the connection "
+       "falls back to that file its username is the agent's account (README 'Kiwi account').",
+       env="TCMS_USERNAME"),
     _f("kiwi_password", str, "",
        "Kiwi password. Empty = ~/.tcms.conf. There is deliberately NO default: test_agent shipped the "
        "admin password as a literal in two modules and wrote it into ~/.tcms.conf from the Makefile.",

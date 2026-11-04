@@ -59,6 +59,11 @@ class FakeTable:
 
     def add_tag(self, case_id, tag):
         self.parent.tags.setdefault(case_id, []).append(tag)
+        self.parent.log.append((self.name, "add_tag", case_id, tag))
+
+    def remove_tag(self, case_id, tag):
+        self.parent.tags[case_id] = [t for t in self.parent.tags.get(case_id, []) if t != tag]
+        self.parent.log.append((self.name, "remove_tag", case_id, tag))
 
     def add_case(self, container_id, case_id):
         self.parent.log.append((self.name, "add_case", container_id, case_id))
@@ -238,6 +243,37 @@ def test_upsert_matches_an_existing_case_on_its_extid_within_the_feature(clean_c
     assert (again["created"], again["unchanged"]) == (0, len(clean_cases))
     changed = store(rpc).upsert_cases("RSE-1", [{**c, "title": c["title"] + "!"} for c in clean_cases])
     assert (changed["created"], changed["updated"]) == (0, len(clean_cases))
+
+
+def test_a_retagged_case_loses_its_old_exec_tag(clean_cases):
+    """The store used to only add tags, so an http case retagged manual kept `exec:http` and still ran."""
+    rpc = FakeRPC()
+    store(rpc).upsert_cases("RSE-1", clean_cases)
+    reindex(rpc)
+    first = clean_cases[0]
+    case_id = case_row(rpc, first["id"])["id"]
+    rpc.tags[case_id].append("needs-device")                 # a person's own tag
+    retagged = [{**first, "execution": "manual"}, *clean_cases[1:]]
+    summary = store(rpc).upsert_cases("RSE-1", retagged)
+    assert summary["updated"] == 1 and summary["unchanged"] == len(clean_cases) - 1
+    tags = rpc.tags[case_id]
+    assert "exec:manual" in tags and "exec:http" not in tags
+    assert "needs-device" in tags and f"extid:{first['id']}" in tags
+    assert not [e for e in rpc.log if e[:2] == ("TestCase", "update") and e[2] == case_id]  # fields untouched
+    assert store(rpc).upsert_cases("RSE-1", retagged)["unchanged"] == len(clean_cases)
+
+
+def test_a_reviewed_case_gets_a_tag_suggestion_not_a_retag(clean_cases):
+    rpc = FakeRPC()
+    store(rpc).upsert_cases("RSE-1", clean_cases)
+    reindex(rpc)
+    first = clean_cases[0]
+    review(rpc, first["id"], "CONFIRMED")
+    case_id = case_row(rpc, first["id"])["id"]
+    summary = store(rpc).upsert_cases("RSE-1", [{**first, "execution": "manual"}, *clean_cases[1:]])
+    assert summary["protected_ids"] == [first["id"]]
+    assert "exec:http" in rpc.tags[case_id] and "exec:manual" not in rpc.tags[case_id]
+    assert "tags: -exec:http +exec:manual" in rpc.comments[case_id][0]
 
 
 # ---- review: PROPOSED on upload, and the human edit wins ----------------------------------------------
@@ -502,3 +538,23 @@ def test_a_failing_attachment_is_reported_not_raised():
 
     rpc.TestExecution.add_attachment = boom
     assert store(rpc).attach("execution", "900", "r.json", b"{}") is False
+
+
+def test_an_execution_comment_is_posted_once():
+    rpc = FakeRPC()
+    posted: list = []
+    rpc.TestExecution.get_comments = lambda ex_id: [{"comment": t} for i, t in posted if i == ex_id]
+    rpc.TestExecution.add_comment = lambda ex_id, text: posted.append((ex_id, text))
+    s = store(rpc)
+    assert s.comment_execution("5", "## TC-A-01 — PASS") and s.comment_execution("5", "## TC-A-01 — PASS")
+    assert posted == [(5, "## TC-A-01 — PASS")]
+
+
+def test_a_failing_comment_is_reported_not_raised():
+    rpc = FakeRPC()
+
+    def boom(*a):
+        raise RuntimeError("kiwi down")
+
+    rpc.TestExecution.get_comments = boom
+    assert store(rpc).comment_execution("5", "x") is False

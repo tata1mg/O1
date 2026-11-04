@@ -76,7 +76,21 @@ def recipes(clean_cases, clean_scenarios):
         (run_dir / "qa" / "eval.json").write_text(
             json.dumps(eval_json(clean_cases, clean_scenarios)))
 
-    return {"generate_cases": generate, "evaluate": evaluate}
+    def prerequisites(run_dir):
+        (run_dir / "qa" / "prerequisites.json").write_text(json.dumps(prereq_doc(run_dir)))
+
+    return {"generate_cases": generate, "evaluate": evaluate, "prerequisites": prerequisites}
+
+
+def prereq_doc(run_dir):
+    """A prerequisites file that satisfies the gate: every case that carries data in one fixture, the rest
+    prerequisite-free."""
+    facts = json.loads((run_dir / "qa" / "prerequisites.facts.json").read_text())
+    needy = [r["id"] for r in facts["cases"] if r["placeholders"] or r["invented"]]
+    fixtures = [{"id": "FX-01", "entity": "lab slot", "state": "open", "how_to_create": "seed",
+                 "used_by": needy}] if needy else []
+    return {"fixtures": fixtures, "config": [], "external_systems": [], "secrets": [],
+            "no_prerequisites": [r["id"] for r in facts["cases"] if r["id"] not in needy]}
 
 
 @pytest.fixture
@@ -112,9 +126,10 @@ def test_the_default_pipeline_runs_green_end_to_end(pipeline_ctx):
         assert entry["status"] == "ok", (name, entry)
         assert entry["gate"]["passed"] is True
     # only the two persona stages went to the engine
-    assert engine.calls == ["generate_cases", "evaluate"]
+    assert engine.calls == ["generate_cases", "evaluate", "prerequisites"]
     for rel in ("qa/sources.json", "qa/cases.json", "qa/scenarios.json", "qa/eval.json",
-                "qa/eval.mechanical.json", "qa/store.json"):
+                "qa/eval.mechanical.json", "qa/store.json", "qa/prerequisites.md",
+                "qa/test_data.template.yaml"):
         assert ctx.path(rel).exists(), rel
     # the default pipeline ends at the upload: nothing is derived until a reviewer approves the suite
     assert not ctx.path("qa/spec.json").exists()
@@ -216,7 +231,7 @@ def test_the_chain_resumes_from_disk_one_stage_per_invocation(pipeline_ctx):
     ctx, engine = pipeline_ctx
     for name in WORKFLOW.default_pipeline:
         run_pipeline(stages(), ctx, selected=[name])
-    assert engine.calls == ["generate_cases", "evaluate"]
+    assert engine.calls == ["generate_cases", "evaluate", "prerequisites"]
     assert manifest(ctx)["store_cases"]["status"] == "ok"
 
 
@@ -450,18 +465,20 @@ def test_compose_pipeline_defaults_to_the_declared_default(ctx):
 
 
 @pytest.mark.parametrize("flags,want", [
-    ({}, ("sources", "generate_cases", "render_xlsx", "evaluate", "store_cases")),
+    ({}, ("sources", "generate_cases", "render_xlsx", "evaluate", "store_cases", "prerequisites")),
     ({"testing.evaluate": False},
-     ("sources", "generate_cases", "render_xlsx", "store_cases")),
+     ("sources", "generate_cases", "render_xlsx", "store_cases", "prerequisites")),
     ({"testing.execute": True},
-     ("sources", "generate_cases", "render_xlsx", "evaluate", "store_cases", "derive_spec",
-      "execute_be")),
+     ("sources", "generate_cases", "render_xlsx", "evaluate", "store_cases", "prerequisites",
+      "derive_spec", "execute_be")),
     # no store -> nothing that reads from it, so the operator is told by the shape of the run
-    ({"testing.store": False}, ("sources", "generate_cases", "render_xlsx", "evaluate")),
+    ({"testing.store": False}, ("sources", "generate_cases", "render_xlsx", "evaluate", "prerequisites")),
     ({"testing.store": False, "testing.execute": True},
-     ("sources", "generate_cases", "render_xlsx", "evaluate")),
-    ({"testing.evaluate": False, "testing.store": False},
+     ("sources", "generate_cases", "render_xlsx", "evaluate", "prerequisites")),
+    ({"testing.evaluate": False, "testing.store": False, "testing.prerequisites": False},
      ("sources", "generate_cases", "render_xlsx")),
+    ({"testing.prerequisites": False, "testing.execute": True},
+     ("sources", "generate_cases", "render_xlsx", "evaluate", "store_cases", "derive_spec", "execute_be")),
 ])
 def test_compose_pipeline_honours_the_composition_flags(tmp_path, ctx_factory, flags, want):
     from workflows.testing import compose_pipeline

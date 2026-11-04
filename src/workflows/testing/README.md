@@ -1,6 +1,6 @@
 # `testing` workflow
 
-QA suite generation, evaluation, storage and backend execution. This is `test_agent` (plugin `ai-sdlc`
+QA suite generation, evaluation, storage, and backend, web UI and app UI execution. This is `test_agent` (plugin `ai-sdlc`
 1.1.0, HEAD `ca7d4ce`) re-expressed on the harness contracts.
 
 What it replaces: one bash script (`tools/run_chain.sh`) that ran `rfc-agent` as a subprocess and then a
@@ -9,9 +9,12 @@ storage MCP tool, with nothing checking either. There was no manifest for those 
 or latency accounting, and the evaluator skill was wired to nothing at all.
 
 ```
-generate and upload:  sources -> generate_cases -> render_xlsx -> evaluate -> store_cases
+generate and upload:  sources -> generate_cases -> render_xlsx -> evaluate -> store_cases -> prerequisites
                       (cases stored PROPOSED; a reviewer approves or rejects each one in Kiwi)
-run after review:     derive_spec -> execute_be
+run after review:     derive_spec -> execute_be            backend cases (exec:http)
+                      derive_ui -> execute_web             web UI cases (exec:ui + surface:web), Playwright
+                      publish_app                          app UI cases (exec:ui + surface:android/ios),
+                                                           from a Maestro run on a device
 ```
 
 The default pipeline stops at the upload. `derive_spec` reads only CONFIRMED cases, so it runs after review,
@@ -27,8 +30,9 @@ pipeline left out).
 - A regenerated suite **never overwrites a case a human has touched**: one whose status is no longer
   PROPOSED, or whose `TestCase.history` shows a save by any account other than the agent's. The store leaves
   it exactly as it is (status, fields, tags, plan membership) and comments the change it would have made,
-  once. Each such case is a `case_kept_for_human` decision. When the agent's own account is unknown
-  (credentials from `~/.tcms.conf` with no `testing.kiwi_user`), every existing case counts as touched.
+  once. Each such case is a `case_kept_for_human` decision. When the agent's own account is unknown (no
+  username in the flags or in `~/.tcms.conf`), every existing case counts as touched. That is why the agent
+  needs an account of its own: see [Kiwi account](#kiwi-account).
 - `testing.upload_status=CONFIRMED` skips review for the **JSON store only** (offline trials, tests); the
   Kiwi store refuses it. In the JSON store a reviewer edits `status` in `store/cases/<feature>.json`.
 
@@ -40,19 +44,108 @@ pipeline left out).
 | `generate_cases` | model (`skills/qa-test-case-generator`) | `qa/sources.json` | `qa/cases.json`, `qa/scenarios.json` | every schema validator; every `execution: http` case's steps re-parsed through `be_spec.parse_case` with a route and a status. `retry_on_gate_failure=1`, `revise_on_retry=True` |
 | `render_xlsx` | python | the two suite files | `qa/<FEATURE>_QA_Suite.xlsx` (conditional) | both sheets present, headers exactly the declared columns, row count equals `cases.json` |
 | `evaluate` | python + model (`skills/qa-test-case-evaluator`) | the suite + `qa/sources.json` | `qa/eval.mechanical.json`, `qa/eval.json` | schema valid; aggregates recomputed; every FAIL carries a violation naming a real id; `compliance_status` derived not asserted; the model's presence verdict equals the one Python computed. `retry_on_gate_failure=1`, `revise_on_retry=True` |
+| `prerequisites` | python + model (`skills/qa-test-prerequisites`) | `qa/cases.json`, `qa/sources.json` | `qa/prerequisites.facts.json`, `qa/prerequisites.json`, `qa/prerequisites.md`, `qa/test_data.template.yaml` | every case is in some item's `used_by` or in `no_prerequisites` (never both); every cited id is a real case; a case carrying a placeholder or an invented value is never prerequisite-free; every item's fields filled; fixture ids `FX-nn` and unique; no secret carries a value. `retry_on_gate_failure=1`, `revise_on_retry=True` |
 | `store_cases` | python | `qa/cases.json` | `qa/store.json` | `created + updated + unchanged + protected == total`, and `total` equals the number of cases in the suite |
 | `derive_spec` | python | `qa/store.json` | `qa/spec.json`, `qa/spec.report.json` | non-empty; every entry has a path and asserts something. Dropped and status-only cases become decisions |
 | `execute_be` | python | `qa/spec.json` | `qa/results.json` | every row carries extid/status/detail/http_status/duration_s; status in PASS/FAIL/BLOCKED/ERROR; the tally matches the rows |
+| `derive_ui` | python + model (`skills/qa-ui-playwright`) | `qa/sources.json` | `qa/ui/cases.json`, `qa/ui/roots.json`, `qa/ui/settings.json`, `qa/ui/plan.json`, `qa/ui/tests/*.spec.ts` (+ `login.setup.ts` with `--ui-login`) | every CONFIRMED web UI case tested or skipped with a reason (never both); one test per spec, titled with its case id; no absolute URL, credential literal, fixed sleep or undeclared `page.route` in a spec; every locator cites a file:line that exists in the source snapshot; `playwright test --list` loads exactly the tested ids. No CONFIRMED web case = no model call. `retry_on_gate_failure=1`, `revise_on_retry=True` |
+| `execute_web` | python | `qa/ui/plan.json` | `qa/ui/results.json` | as `execute_be`'s: every row complete, status in the four, tally matches |
+| `publish_app` | python | — | `qa/app/results.json` | at least one case recorded; status in the four; tally matches |
 
 Decisions recorded (`logs/decisions.jsonl`): `source_missing`, `xlsx_skipped`,
 `case_dropped_by_deriver`, `case_status_only`, `route_rewritten`, `case_not_attached`, `cases_stored`,
-`case_kept_for_human`, `response_attached`, `presence_check_mismatch`.
+`case_kept_for_human`, `response_attached`, `presence_check_mismatch`, `prerequisites_listed`,
+`ui_cases_selected`, `ui_case_not_automated`, `ui_evidence_attached`, `app_case_unattributed`.
 
 `sources` also copies every present source into `qa/sources/`, and the persona prompts name those copies:
 the persona runs with the run dir as its cwd, and a headless Claude child cannot read outside it without a
 permission prompt nobody is there to answer. The persona's SKILL.md is staged into
 `.claude/skills/<stage>/` for the same engine, and the request carries `native_ctx`, which the claude-code
 adapter requires.
+
+## Prerequisites and test data
+
+`prerequisites` answers "what has to be on prestag before this suite can run", and closes the loop on the
+**Test Data** source, which is `blocked` unless `--test-data` names a file.
+
+- **Python** reads the Implementation Plan's `### CHANGE-n <service>: … [REQ-…]` blocks: the services to
+  deploy and who owns them, deploy order (waves from each block's `depends on:`), migrations (from `files:`)
+  and the staging smoke checks (each `verify:` that mentions staging). A case needs a service when they cite
+  a REQ in common. It also lists, per case, the `<placeholders>` it left and whether its test data was marked
+  invented. That is `qa/prerequisites.facts.json`.
+- **The model** groups every case's precondition and test data into fixtures (one per distinct record
+  state), config values, external systems and secrets, each naming the cases that need it, in
+  `qa/prerequisites.json`. It can run `check_prerequisites.py`, the stage's own gate, in one call.
+- **Python renders** `qa/prerequisites.md` (sections 1-3 and 8 from the plan, 4-7 from the model) and
+  `qa/test_data.template.yaml`: one entry per fixture and config key, with the values the suite invented and
+  an empty `real_value`. Secrets are listed by name only and never appear in the template.
+
+The loop: the team provisions what `prerequisites.md` lists, fills the template with records that exist on
+prestag, and passes it back as `--test-data`. The next generation uses those values instead of inventing
+them, and the Test Data row is `present`.
+
+## From chat: `/test-agent:test`
+
+The `test-agent` plugin (`plugins/test-agent/`, listed in this repo's marketplace next to `rfc-agent`) runs
+this workflow from Claude Code with Claude as the progress view and the question UI:
+
+1. **Preflight** (`python -m workflows.testing.preflight check … --json`, seconds): the RFC run and its
+   sources, Kiwi (settings, `~/.tcms.conf` and its mode, a live probe with a 15 s timeout), Langfuse, the
+   `claude` CLI. A failed check stops the run before 40 minutes of generation are spent. An unreachable Kiwi
+   is a question, not a stop: retry after the VPN, or generate now with `--disable testing.store` and upload
+   later (`--stages store_cases,prerequisites`).
+2. **Phase A** in the background, one chat line per stage (`python -m workflows.testing.status <run>
+   --milestone <stage>`).
+3. **The handoff**: case counts, the evaluator's verdict, the Kiwi plan link, the prerequisites and their top
+   blockers, the workbook and checklist as files, and the instruction to set approved cases to CONFIRMED.
+4. **Phase B** only when the user says so, for the kinds they pick, each only once `status --kiwi` shows
+   CONFIRMED cases of that kind: backend (`--stages derive_spec,execute_be --enable testing.execute --curl …`),
+   web UI (`--stages derive_ui,execute_web --enable testing.execute_web --base-url … --ui-auth …`), app UI
+   (`--stages publish_app --enable testing.publish_app --maestro-report … --maestro-flows …`), all with
+   `--env … --build …`.
+
+`/test-agent:test --run-dir <run>` resumes from the run dir alone: `status` decides the next step.
+
+Kiwi settings live in `TESTING` in `~/.config/rfc-agent/config.json` (`preflight setup-kiwi` writes them:
+`storage`, `kiwi_web`, `product_prefix`, `kiwi_user`, `kiwi_url`, `insecure_tls`). Any `testing.*` flag can
+be set there; the password never is — it stays in `~/.tcms.conf`.
+
+## UI execution: Playwright (web) and Maestro (app)
+
+**Web.** `derive_ui` gives a model the CONFIRMED `exec:ui` + `surface:web` cases and the front-end source the
+RFC was written against (the RFC run's repo snapshots, `_snap/*`). It writes one Playwright test per case in
+`qa/ui/tests/<extid>.spec.ts`, titled with the case id, and `qa/ui/plan.json`: each tested case's locators,
+each citing the `file:line` that renders the element, and each skipped case's reason (a native-app step, a
+placeholder value, a human judgement). `execute_web` runs them with the pinned Playwright in
+`tools/ui-runner` (installed once: `npm ci && npx playwright install chromium` there; each run's
+`qa/ui/node_modules` links to it) against `--base-url`, emulating a phone. Login, one of two ways:
+`--ui-login <file>` (`{"phone", "otp"}` of a test account whose number and OTP stay fixed on the
+environment): `derive_ui` also writes `tests/login.setup.ts`, a Playwright setup step that logs in from
+`UI_LOGIN_PHONE` / `UI_LOGIN_OTP` and saves the session the cases start from, so nothing expires; the values
+reach the Playwright process only, and the login step is not a case, so its trace is never attached to the
+store. A failed login records every case BLOCKED ("not run — the login step failed …"). Or `--ui-auth
+<file>`, a session recorded with `npx playwright codegen --save-storage=<file> <base url>`, which expires.
+The base URL can come from the environment: `testing.environments` (the names a run may target) and
+`testing.base_url_template` (`https://{env}.1mg.com`) give `--env jupiter` the URL `https://jupiter.1mg.com`;
+`preflight setup-web` stores both, and the login file's path, under `TESTING` in config.json, and preflight
+checks that file (present, mode 600, `phone` and `otp` set — never printed). `testing.ui_headed` runs a
+visible, slowed-down browser so a person can watch; every run also writes Playwright's HTML report
+(`qa/ui/html-report`, open with `npx playwright show-report`), with each failure's screenshot and trace.
+Status: passed -> PASS; an assertion failed on a loaded page -> FAIL; the page never loaded (`net::ERR_*`,
+a navigation timeout) or the test skipped itself -> BLOCKED; the browser never ran -> ERROR. The failure's
+screenshot and trace are attached to its execution. Skipped cases are attached to the run and left IDLE for
+a person.
+
+**App.** Maestro runs on a device, with the app built from druid and the flows on druid's `AND-106907`
+branch (`.maestro/flows`, 198 flows: diagnostics, family, labs, radiology). `publish_app` records what such
+a run produced: `maestro.py` (ported from test_agent's `tools/maestro_publish.py`) attributes each JUnit
+testcase to the cases its flow's `# Covers:` block and labelled steps name, FAILs a case only when the failing
+step names it, and takes the worst verdict across flows. Each execution gets the evidence as a comment (the
+step timeline, the failing step, links to the attachments; Kiwi renders an execution's comments, not its
+attachments) and the flow's screenshot, log and commands file. The case-id pattern is widened from
+test_agent's `TC-[A-Z]+-\d+`, which matched none of the generator's ids.
+
+All three executors write into the same store run, `<feature> · <env> · <build>`.
 
 ## Inputs
 
@@ -62,18 +155,25 @@ sources.
 | Input | Meaning |
 |---|---|
 | `--feature` | The store's product key, the run-dir name and the xlsx filename stem. NOT the ID prefix inside case ids — the generator picks that mnemonic itself |
-| `--rfc-run-dir` | A completed RFC run dir. `sources` reads `raw/prd.md`, `out/rfc.md`, `out/contract.md`, `out/detail/plan.md`, `raw/figma.md` from it |
+| `--rfc-run-dir` | A completed RFC run dir. `sources` reads `raw/prd.md`, `out/rfc.md`, `out/contract.md`, `out/detail/plan.md` and `raw/figma.md` (or `raw/figma_index.md`) from it. Current rfc-agent runs have no contract or plan file: they are sections 5 and 6 of `out/rfc.md`, so `sources` cuts the `## … API contract` and `## … Implementation plan` sections out of the RFC instead and records a `source_extracted` decision |
 | `--prd` `--rfc` `--contract` `--plan` `--figma` `--test-data` | Explicit paths, each overriding the corresponding file in `--rfc-run-dir` |
 | `--from-cases` | Skip generation: load an existing `cases.json` or `.xlsx` as the suite. It is still held to the full `generate_cases` gate |
-| `--curl` `--env` `--build` `--route-map` | `execute_be` only |
+| `--curl` `--env` `--build` `--route-map` | `execute_be` only (`--env` and `--build` name the run for every executor) |
+| `--base-url` `--ui-login` `--ui-auth` | `execute_web` |
+| `--maestro-report` `--maestro-flows` `--maestro-map` `--maestro-blocked` | `publish_app` |
 
 ## Flags
 
-All 27 are `testing.*`, registered in `flags.py` with help text, and declared on `WORKFLOW.flags`. Today
+All 45 are `testing.*`, registered in `flags.py` with help text, and declared on `WORKFLOW.flags`. Today
 they are introspectable through the registry — after workflow discovery (`harness.workflows.names()`,
 which imports each workflow package and so registers its flags), `harness.flags.describe(owner="testing")`
 returns the machine-readable rows, including type, default, env var and help. `harness flags --workflow testing
 --json` is the intended CLI surface for the same data once the harness CLI lands.
+
+Layers, highest first: `--set`/`--enable`/`--disable`, the flag's env var, `TESTING.<name>` in
+config.json (`workflows.testing.config_get`), the workflow default, the flag default. The config layer is
+what keeps a resume on the same store: before it, a rerun that left out `--set testing.storage=kiwi`
+silently used the JSON store.
 
 `testing.evaluate`, `testing.store` and `testing.execute` compose the pipeline rather than gating a stage
 from inside it: `compose_pipeline(flags)` maps them to a stage list, and the harness CLI calls it (as
@@ -92,7 +192,10 @@ drops `derive_spec` and `execute_be`, since both read from the store. The harnes
 | `testing.exec_tag` | str | `"exec:http"` | The tag a case must carry to be machine-executable |
 | `testing.evaluate` | bool | `True` | Run the evaluator stage |
 | `testing.store` | bool | `True` | Run `store_cases` |
+| `testing.prerequisites` | bool | `True` | Run `prerequisites` |
 | `testing.execute` | bool | `False` | Run `execute_be` |
+| `testing.execute_web` | bool | `False` | Run `derive_ui` and `execute_web` (Playwright, web UI cases) |
+| `testing.publish_app` | bool | `False` | Run `publish_app` (a Maestro report, app UI cases) |
 | `testing.xlsx` | bool | `True` | Render the workbook (needs the optional extra) |
 | `testing.require_case_per_scenario` | bool | `True` | Gate every scenario to at least one case |
 | `testing.dry_run` | bool | `False` | Execute but write nothing to the store |
@@ -103,8 +206,25 @@ drops `derive_spec` and `execute_be`, since both read from the store. The harnes
 | `testing.curl` / `.env` / `.build` / `.route_map` | str | `""` | `execute_be` inputs, also settable as CLI inputs |
 | `testing.attach_responses` | bool | `False` | Attach each case's full JSON response to its execution. Off because Kiwi attachments are readable by every account |
 | `testing.cohort_path` | str | `""` | Dotted response path recorded as the `cohort_observed` execution property. Empty = not recorded |
-| `testing.kiwi_url` / `.kiwi_user` / `.kiwi_password` | str | `""` | Kiwi credentials (env `TCMS_API_URL` / `TCMS_USERNAME` / `TCMS_PASSWORD`). Empty = fall back to `~/.tcms.conf` |
+| `testing.base_url` | str | `""` | `execute_web`: the web app's origin on the target environment (`--base-url`) |
+| `testing.ui_auth` | str | `""` | `execute_web`: Playwright storage-state file with a logged-in session (`--ui-auth`); passed through, never read |
+| `testing.environments` | str | `""` | Comma-separated environments a run may target; the command offers them |
+| `testing.base_url_template` | str | `""` | `execute_web`: base URL with `{env}`, used when `--base-url` is absent |
+| `testing.ui_headed` | bool | `False` | `execute_web`: a visible, slowed-down browser to watch the suite |
+| `testing.ui_login` | str | `""` | `execute_web`: JSON `{"phone", "otp"}` of a test account; a login step runs before the cases (`--ui-login`) |
+| `testing.ui_device` | str | `"Pixel 7"` | `execute_web`: device emulated (the web cases are mweb); empty = desktop |
+| `testing.ui_timeout_s` | int | `60` | `execute_web`: per-test timeout |
+| `testing.ui_source_roots` | str | `""` | `derive_ui`: comma-separated source trees for locators; empty = the RFC run's `_snap/*` |
+| `testing.maestro_report` | str | `""` | `publish_app`: JUnit report of a Maestro run (`--maestro-report`) |
+| `testing.maestro_flows` | str | `""` | `publish_app`: the flows folder that run used (`--maestro-flows`) |
+| `testing.maestro_map` | str | `""` | `publish_app`: JSON `{flow: [case ids]}` overriding the derived mapping |
+| `testing.maestro_blocked` | str | `""` | `publish_app`: curated exclusions, recorded BLOCKED |
+| `testing.maestro_only_folder` | str | `""` | `publish_app`: publish only flows under `.maestro/flows/<this>/` |
+| `testing.app_exec_tag` | str | `"exec:ui"` | `publish_app`: tag a case needs to be recorded; empty = any CONFIRMED case a flow covers |
+| `testing.kiwi_url` / `.kiwi_user` / `.kiwi_password` | str | `""` | Kiwi credentials (env `TCMS_API_URL` / `TCMS_USERNAME` / `TCMS_PASSWORD`). Unless all three are set, the connection uses `~/.tcms.conf` and the agent is the username in that file |
 | `testing.kiwi_web` | str | `https://localhost:8443` | Base URL used only to build the printed plan/run links (env `KIWI_WEB`) |
+
+This workflow also re-defaults one harness flag: `hook_canary` is **off**. The canary checks that rfc-agent's `byte_budget` feedback reaches the model, and that hook only paces `rfc.md` / `contract.md` / `plan.md`, which no testing stage writes. `--enable hook_canary` runs it anyway.
 
 ### `testing.insecure_tls`
 
@@ -138,6 +258,50 @@ test fails if any `testing.*` flag whose name says credential is missing from it
 `testing.kiwi_user` is deliberately not redacted. It is not a secret on its own, it is already written to
 the Kiwi TestRun's `manager` field where every account can read it, and "which account did this run use"
 is the first question when a run's writes land in the wrong place.
+
+### Kiwi account
+
+`testing.storage=kiwi` needs one Kiwi account that only the agent uses. Call it **`test-agent`**.
+
+- **Not an admin, not a superuser, not anyone's personal account.** The store protects every case saved by
+  any account other than its own (see [Review rules](#review-rules)). If the agent shared an account with a
+  reviewer, it would overwrite that reviewer's edits.
+- **Reviewers use their own accounts.** Approving a case (CONFIRMED) is a save by someone other than
+  `test-agent`, and that save is what tells the store a person has taken over.
+- **Credentials go in `~/.tcms.conf`, mode 600**, never in the repo or on the command line. The store
+  reads its own username from the same file, so a run needs no `testing.kiwi_user`:
+
+  ```ini
+  [tcms]
+  url = https://<kiwi-host>/xml-rpc/
+  username = test-agent
+  password = <password>
+  ```
+
+  For CI, set all three of `TCMS_API_URL`, `TCMS_USERNAME` and `TCMS_PASSWORD`. If any one is missing,
+  the store falls back to the file.
+
+**Permissions.** Kiwi's `Tester` group is empty unless an admin has run `./manage.py refresh_permissions`.
+Give `test-agent` (or a group it belongs to) exactly these. Each one is needed by an RPC call in
+`store/kiwi.py`:
+
+| App | Permissions |
+|---|---|
+| `attachments` | add, delete, view `attachment` |
+| `auth` | view `user` (the store finds its own id) |
+| `django_comments` | add, view `comment` |
+| `management` | add + view `build`, `classification`, `product`, `tag`, `version`; view `priority` |
+| `testcases` | add `category`, `testcase`, `testcaseplan`, `testcasetag`; change `testcase`; view `category`, `testcase`, `testcasestatus` |
+| `testplans` | add `testplan`; view `plantype`, `testplan` |
+| `testruns` | add `testexecution`, `testexecutionproperty`, `testrun`; change `testexecution`; view `testexecution`, `testexecutionstatus`, `testrun` |
+
+That is 35 in all. Grant nothing for `auth` beyond view `user`, and no delete permission outside
+attachments: the agent never deletes a case, plan or run. If a permission is missing, Kiwi reports
+`Authentication failed when calling "<Api.method>"` even though the login itself worked. The method it
+names tells you which permission to add.
+
+The instance also needs the case statuses `PROPOSED` and `CONFIRMED` (Kiwi ships both) and at least one
+plan type.
 
 ## Artifact durability
 
@@ -216,6 +380,11 @@ is deliberately identical so the move is a delete-and-import.
     escape hatch. Likewise nine of the evaluator's fourteen compliance gates (3, 5, 6, 7, 9, 10, 12, 13,
     14) and all eight rubric dimensions need a requirement read and an opinion formed; they stay with the
     model.
+15. **The Kiwi store keeps its own tags in step.** test_agent's writer only ever added tags, so a case
+    retagged `manual` -> `http` carried both (NR-DIGICHEM, 2026-11-02: 19 cases), and one retagged the other
+    way would still have been selected by `create_run`'s `exec:http` check. An upsert now removes a stale
+    `scenario:`/`surface:`/`exec:` tag and adds the missing ones; anything else on the case is a person's
+    tag and stays. A reviewed case is not retagged: the change goes into its suggestion comment.
 
 ## What still needs Kiwi, Docker or a live environment
 
@@ -224,7 +393,7 @@ which is how the test suite exercises them.
 
 | Needs | For what |
 |---|---|
-| A reachable Kiwi + `tcms-api` installed | `testing.storage=kiwi` for `store_cases`, `derive_spec` and `execute_be`'s run/executions. The backend is unit-tested against a fake XML-RPC object (`tests/testing/test_kiwi_store.py`), which covers the logic but not whether `tcms-api`'s real client accepts the calls, nor the read-only `actual_duration` behaviour the start/stop-date trick works around |
+| A reachable Kiwi + `tcms-api` (extra `testing`: `uv sync --extra testing`) + the `test-agent` account ([Kiwi account](#kiwi-account)) | `testing.storage=kiwi` for `store_cases`, `derive_spec` and `execute_be`'s run/executions. The backend is unit-tested against a fake XML-RPC object (`tests/testing/test_kiwi_store.py`), which covers the logic but not whether `tcms-api`'s real client accepts the calls, nor the read-only `actual_duration` behaviour the start/stop-date trick works around |
 | Docker | Only to *host* Kiwi. `test_agent`'s `docker-compose.yml` and `make build-arm64` are not ported; point `testing.kiwi_url` at whatever instance you have |
 | A captured curl with live cookies, plus network reach to the target host | `execute_be`. Capture it from the browser's network tab; a hand-trimmed cookie jar returns 403 Bad CSRF where the full captured one returns 200 |
 | `--env` and `--build` | `execute_be` records both on the run and on every execution property |

@@ -34,7 +34,9 @@ duration trick because `actual_duration` is read-only, the 500/900 property trun
 
 from __future__ import annotations
 
+import configparser
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from . import STATUS, Case, Run, check_scope
 
@@ -72,6 +74,41 @@ SUGGESTION_VALUE_MAX = 2000
 UPLOAD_STATUS = "PROPOSED"
 #: scope -> the Kiwi API object. Every one exposes `list_attachments(id)` and `add_attachment(id, ...)`.
 _ATTACH_API = {"execution": "TestExecution", "case": "TestCase", "run": "TestRun", "plan": "TestPlan"}
+
+
+#: Where tcms-api looks for its config when no url is passed, in its own order (tcms_api/__init__.py).
+TCMS_CONF_PATHS = ("~/.tcms.conf", "/etc/tcms.conf")
+
+
+def _conf_username() -> str:
+    """The username tcms-api will log in with from its config file, or "" when it names none.
+
+    Mirrors tcms-api's lookup: the first file that exists wins, even if it has no username.
+    """
+    for raw in TCMS_CONF_PATHS:
+        path = Path(raw).expanduser()
+        if path.exists():
+            conf = configparser.ConfigParser()
+            conf.read(path)
+            return conf.get("tcms", "username", fallback="")
+    return ""
+
+
+#: Tag prefixes the store owns and keeps in step with the suite. `extid:`/`feature:` never change for a case,
+#: and a tag with none of these prefixes is a person's, so it is left alone.
+MANAGED_TAG_PREFIXES = ("scenario:", "surface:", "exec:")
+
+
+def _tag_diff(rpc, case_id, wanted: list[str]) -> tuple[list[str], list[str]]:
+    """(stale, missing): managed tags the case carries but the suite no longer gives it, and tags to add.
+
+    WHY: the store used to only ADD tags, so a case re-tagged `manual` -> `http` kept both (2026-11-02,
+    NR-DIGICHEM: 19 cases carried `exec:manual` and `exec:http`). `create_run` selects on `exec:http`
+    alone, so a case re-tagged the other way would still have been executed.
+    """
+    have = [t["name"] for t in rpc.Tag.filter({"case": case_id})]
+    stale = [t for t in have if t.startswith(MANAGED_TAG_PREFIXES) and t not in wanted]
+    return stale, [t for t in wanted if t not in have]
 
 
 def _changed_fields(existing: dict, fields: dict) -> dict:
@@ -132,7 +169,10 @@ class KiwiCaseStore:
         def connect():
             if self.url and self.user and self.password:
                 return tcms_cls(self.url, self.user, self.password)
-            return tcms_cls()  # ~/.tcms.conf — tcms-api's own default
+            # ~/.tcms.conf — tcms-api's own default. The agent is whoever that file logs in as, so its
+            # own edits are told apart from a reviewer's without also setting `testing.kiwi_user`.
+            self.user = _conf_username() or self.user
+            return tcms_cls()
 
         if context is None:
             return connect()
@@ -247,6 +287,8 @@ class KiwiCaseStore:
             }
             found = [x for x in rpc.TestCase.filter({"tag__name": f"extid:{c['id']}"})
                      if x["id"] in feature_case_ids]
+            wanted = case_tags(c, feature)
+            stale, missing = [], wanted
             if not found:
                 # Status is set on create and never again: test_agent re-confirmed every case after
                 # `TestPlan.add_case`, which in Kiwi links the case and leaves its status alone — so the
@@ -258,17 +300,24 @@ class KiwiCaseStore:
             else:
                 case = found[0]
                 changed = _changed_fields(case, fields)
-                if not changed:
+                stale, missing = _tag_diff(rpc, case["id"], wanted)
+                if not changed and not stale and not missing:
                     unchanged += 1
                     continue
                 touched = self._touched_by_human(rpc, case, agent_id)
                 if touched:
+                    if stale or missing:
+                        changed = {**changed, "tags": " ".join([*(f"-{t}" for t in stale),
+                                                                 *(f"+{t}" for t in missing)])}
                     self._suggest(rpc, case["id"], c["id"], touched, changed)
                     protected.append(c["id"])
                     continue
-                rpc.TestCase.update(case["id"], fields)
+                if changed:
+                    rpc.TestCase.update(case["id"], fields)
                 updated += 1
-            for t in case_tags(c, feature):
+            for t in stale:
+                rpc.TestCase.remove_tag(case["id"], t)
+            for t in missing:
                 rpc.TestCase.add_tag(case["id"], t)
 
         return {
@@ -279,8 +328,8 @@ class KiwiCaseStore:
         }
 
     def _agent_user_id(self, rpc):
-        """The id of the account this store writes as, or None when it cannot be told (credentials from
-        ~/.tcms.conf name no username here). None makes every existing case count as human-touched."""
+        """The id of the account this store writes as, or None when it cannot be told (no username in the
+        flags or in ~/.tcms.conf). None makes every existing case count as human-touched."""
         if not self.user:
             return None
         users = rpc.User.filter({"username": self.user})
@@ -489,6 +538,16 @@ class KiwiCaseStore:
             if stem and base.startswith(stem) and base.endswith(suffix):
                 fallback = a.get("url", "")
         return fallback
+
+    def comment_execution(self, execution_id: str, text: str) -> bool:
+        try:
+            rpc = self._rpc()
+            if any(c.get("comment") == text for c in rpc.TestExecution.get_comments(int(execution_id))):
+                return True
+            rpc.TestExecution.add_comment(int(execution_id), text)
+            return True
+        except Exception:
+            return False
 
     def health(self) -> dict:
         try:
