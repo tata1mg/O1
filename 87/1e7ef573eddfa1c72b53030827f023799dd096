@@ -1,0 +1,19 @@
+CHANGELOG.md
+  s_5beb35ed61f5ac::t_fbad9715c52397 10-16,41-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "871e7ef573eddfa1c72b53030827f023799dd096",
+  "prompts": {},
+  "sessions": {
+    "s_5beb35ed61f5ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fcebd562-94aa-4095-abfb-31502086db5a",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}
