@@ -264,6 +264,16 @@ def _waits(run_dir: Path, scope: dict) -> dict:
     return out
 
 
+def _export_failures(run_dir: Path) -> dict:
+    """Times the Langfuse exporter failed or dropped a batch (activity.log lines written by observe._ExportWatch).
+    Spans that ended in such a batch are missing from the trace, so a non-zero count explains missing numbers."""
+    log = run_dir / "logs" / "activity.log"
+    if not log.is_file():
+        return {}
+    with log.open(encoding="utf-8", errors="replace") as f:
+        return {"langfuse_export_failures": sum(1 for line in f if "[langfuse] export failed" in line)}
+
+
 def collect(run_dir: Path) -> dict:
     """All fields that can be read from `run_dir`; absent files drop their fields. Never raises."""
     out: dict = {}
@@ -278,6 +288,7 @@ def collect(run_dir: Path) -> dict:
         lambda: _rfc(run_dir),
         lambda: _waits(run_dir, scope),
         lambda: _agents(run_dir),
+        lambda: _export_failures(run_dir),
     ):
         with contextlib.suppress(Exception):  # one unreadable source must not drop the others
             out.update(part())

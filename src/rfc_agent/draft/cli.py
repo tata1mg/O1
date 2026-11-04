@@ -232,13 +232,18 @@ def main(argv: list[str] | None = None) -> int:
     total = round(time.monotonic() - t0, 1)
     cost = sum(x["cost_usd"] for x in runs)
     prev = _read(run_dir / "logs" / "draft.json") or {}
+    all_runs = (prev.get("runs") or []) + runs
+    # cost_usd is the stage's whole cost, every run in the file. It used to be this invocation's alone, so the gate
+    # re-check that Revise runs after each round (no agent, $0) overwrote it with 0 and Draft's cost vanished from the
+    # run's totals (measured: a $3.72 Draft shown as $0, the run $3.72 short).
     (run_dir / "logs" / "draft.json").write_text(
         json.dumps(
             {
                 "settings": s,
                 "seconds_this_invocation": total,
-                "cost_usd": round(cost, 3),
-                "runs": (prev.get("runs") or []) + runs,
+                "cost_usd": round(sum(x["cost_usd"] for x in all_runs), 3),
+                "agent_seconds": round(sum(x.get("seconds") or 0 for x in all_runs), 1),
+                "runs": all_runs,
                 "gate": status,
                 **st,
             },

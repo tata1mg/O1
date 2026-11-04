@@ -224,12 +224,16 @@ def build_scores(
     cleared_issues: tuple[tuple[str, str], ...] = (),
     cleared_stages: tuple[str, ...] = (),
     brief: str | None = None,
+    cleared_notes: tuple[str, ...] = (),
+    had_comment: bool = False,
 ) -> list[dict]:
     """The `create_score` kwargs for one piece of feedback (pure — tests assert on this).
 
     Every dimension is written, so a new rating replaces the whole previous one. `cleared_issues` are gaps picked
     on an earlier rating of the same target and not picked now: they are overwritten with "none". `notes` maps a
-    question (a dimension, or `run`) to what was typed under Other on it; it becomes that question's score comment."""
+    question (a dimension, or `run`) to what was typed under Other on it; it becomes that question's score comment.
+    A score sent again without a comment keeps its old one in Langfuse, so a question that had a note (`cleared_notes`)
+    or a thumb that had a comment (`had_comment`) and has none now is sent an empty comment, which clears it."""
     target = {"trace_id": trace_id} if trace_id else {"session_id": session_id}
     key = trace_id or f"session:{session_id}"
     meta = {
@@ -239,14 +243,14 @@ def build_scores(
     } | (facts or {})
     verdicts, issues, notes = verdicts or {}, issues or {}, notes or {}
 
-    def score(name: str, value, sid: str, note: str | None = None, **extra) -> dict:
+    def score(name: str, value, sid: str, note: str | None = None, clear: bool = False, **extra) -> dict:
         return dict(
             name=name,
             value=value,
             data_type="CATEGORICAL",
             score_id=f"fb:{key}:{sid}",
             metadata=extra.pop("metadata", meta),
-            **({"comment": note} if note else {}),
+            **({"comment": note} if note else {"comment": ""} if clear else {}),
             **extra,
             **target,
         )
@@ -257,13 +261,15 @@ def build_scores(
             value=1.0 if rating == "up" else 0.0,
             data_type="BOOLEAN",
             score_id=f"fb:{key}:overall",
-            comment=comment,
+            comment=comment if comment else ("" if had_comment else None),
             metadata=meta | ({"run_brief": brief} if brief else {}),
             **target,
         )
     ]
     for dim, allowed in DIMENSIONS.items():
-        scores.append(score(f"rfc_{dim}", verdicts.get(dim, "not_rated"), f"dim:{dim}", notes.get(dim)))
+        scores.append(
+            score(f"rfc_{dim}", verdicts.get(dim, "not_rated"), f"dim:{dim}", notes.get(dim), dim in cleared_notes)
+        )
         for issue in issues.get(dim, []):
             scores.append(
                 score(
@@ -276,12 +282,14 @@ def build_scores(
             )
     for dim, issue in cleared_issues:
         if issue not in issues.get(dim, []):
-            scores.append(score(f"rfc_{dim}_issue", "none", f"issue:{dim}:{issue}"))
+            scores.append(score(f"rfc_{dim}_issue", "none", f"issue:{dim}:{issue}", clear=True))
     stages = suspect_stages(issues)
     scores += [score("rfc_suspect_stage", st, f"suspect:{st}") for st in stages]
     scores += [score("rfc_suspect_stage", "none", f"suspect:{st}") for st in cleared_stages if st not in stages]
-    scores.append(score("rfc_run_speed", run_speed or "not_rated", "run_speed", notes.get("run")))
-    scores.append(score("rfc_run_cost", run_cost or "not_rated", "run_cost", notes.get("run")))
+    scores.append(
+        score("rfc_run_speed", run_speed or "not_rated", "run_speed", notes.get("run"), "run" in cleared_notes)
+    )
+    scores.append(score("rfc_run_cost", run_cost or "not_rated", "run_cost", notes.get("run"), "run" in cleared_notes))
     scores.append(score("rfc_start_ready", start_ready or "not_rated", "start_ready"))
     if stage:
         scores.append(score("rfc_feedback_stage", stage, "stage"))
@@ -295,10 +303,13 @@ def _plugin_version() -> str | None:
     return None
 
 
-def _previous(run_dir: Path, trace_id: str | None, session_id: str) -> tuple[set[tuple[str, str]], set[str]]:
-    """Gaps and suspected stages picked on earlier ratings of this same target (the trace, else the session)."""
+def _previous(run_dir: Path, trace_id: str | None, session_id: str):
+    """What earlier ratings of this same target (the trace, else the session) left behind: the gaps picked, the stages
+    they pointed at, the questions that had a typed note, and whether the thumb had a comment."""
     issues: set[tuple[str, str]] = set()
     stages: set[str] = set()
+    notes: set[str] = set()
+    had_comment = False
     with contextlib.suppress(OSError):
         for line in (run_dir / "logs" / FEEDBACK_FILE).read_text(encoding="utf-8").splitlines():
             with contextlib.suppress(json.JSONDecodeError, AttributeError, TypeError):
@@ -310,7 +321,9 @@ def _previous(run_dir: Path, trace_id: str | None, session_id: str) -> tuple[set
                 for dim, picked in (e.get("issues") or {}).items():
                     issues |= {(dim, i) for i in picked}
                 stages |= set(e.get("stages") or suspect_stages(e.get("issues") or {}))
-    return issues, stages
+                notes |= set(e.get("notes") or {})
+                had_comment = had_comment or bool(e.get("comment"))
+    return issues, stages, notes, had_comment
 
 
 def record(
@@ -337,7 +350,7 @@ def record(
     verdicts, issues = _norm_form(verdicts, issues, notes)
     trace_id = pick_trace(run_dir, stage)
     session_id = _session_id(run_dir)
-    prev_issues, prev_stages = _previous(run_dir, trace_id, session_id)
+    prev_issues, prev_stages, prev_notes, had_comment = _previous(run_dir, trace_id, session_id)
     facts = run_facts.collect(run_dir, _prd_ref(run_dir))
     brief = run_brief(
         run_dir, facts, rating=rating, verdicts=verdicts, issues=issues, notes=notes, comment=comment,
@@ -364,6 +377,8 @@ def record(
         notes=notes,
         cleared_issues=tuple(sorted(prev_issues)),
         cleared_stages=tuple(sorted(prev_stages)),
+        cleared_notes=tuple(sorted(prev_notes)),
+        had_comment=had_comment,
     )
     entry = {
         "ts": time.time(),
@@ -399,7 +414,7 @@ def run_brief(
     run_dir: Path,
     facts: dict,
     *,
-    rating: str,
+    rating: str | None,
     verdicts: dict[str, str],
     issues: dict[str, list[str]],
     notes: dict[str, str],
@@ -407,7 +422,8 @@ def run_brief(
     run_speed: str | None,
     run_cost: str | None,
 ) -> str:
-    """The run and what the reviewer said, in a few plain lines (no model involved: it is assembled from files)."""
+    """The run and what the reviewer said, in a few plain lines (no model involved: it is assembled from files).
+    `rating=None` is a run nobody has rated yet: the reviewer line says so and nothing is typed."""
 
     def line(label: str, *bits) -> str | None:
         bits = [b for b in bits if b]
@@ -423,12 +439,16 @@ def run_brief(
         f"{f['duration_s'] / 60:.0f} min" if f.get("duration_s") else None,
         f"${f['cost_usd']:.2f}" if f.get("cost_usd") is not None else None,
         f"{f['tokens_total'] / 1e6:.1f}M tokens" if f.get("tokens_total") else None,
+        f"{f['langfuse_export_failures']} failed Langfuse uploads (some spans may be missing)"
+        if f.get("langfuse_export_failures")
+        else None,
     )
     inputs = line(
         "Input",
         f"PRD {f['prd_words']:,} words" if f.get("prd_words") else None,
         f"{f['repos_kept']} of {f['repos_proposed']} proposed repos kept" if f.get("repos_proposed") else None,
         f"{f['figma_frames_in_scope']} Figma frames in scope" if f.get("figma_frames_in_scope") else None,
+        "no Figma exported" if f.get("figma_count") == 0 else None,  # a reviewer's "missing Figma flow" starts here
         f"{f['figma_sections_skipped']} Figma sections skipped" if f.get("figma_sections_skipped") else None,
     )
     reqs = line(
@@ -459,7 +479,7 @@ def run_brief(
     )
     gaps = [f"{d} ({', '.join(i)})" for d, i in issues.items()]
     fine = [d for d, v in verdicts.items() if v == "usable"]
-    said = line(
+    said = "Reviewer: not rated yet" if rating is None else line(
         "Reviewer",
         "👍" if rating == "up" else "👎",
         ("gaps in " + "; ".join(gaps)) if gaps else None,
@@ -474,6 +494,13 @@ def run_brief(
         x for x in (run, inputs, reqs, review, said, f"Typed: {typed}" if typed else None, f"Files: {files}") if x
     )
     return text if len(text) <= _BRIEF_CAP else text[: _BRIEF_CAP - 1] + "…"
+
+
+def run_summary(run_dir: Path, facts: dict) -> str:
+    """What happened in a run, for the end of the run, the trace's Output pane and logs/run_summary.md."""
+    return run_brief(
+        run_dir, facts, rating=None, verdicts={}, issues={}, notes={}, comment=None, run_speed=None, run_cost=None
+    )
 
 
 def summary_line(facts: dict) -> str:

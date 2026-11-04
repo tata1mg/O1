@@ -39,22 +39,18 @@ The thumb is asked alone first, so a plain 👍 or `Later` never shows the area 
    An `up` argument means `👍 Good`, a `down` argument `👎 Needs work`.
    - `👍 Good`: record the thumb and stop. Ask nothing more.
    - `Later`: ask nothing more; say they can run `/rfc-agent:feedback` any time after reading the RFC.
-   - `👍 Good, with notes` and `👎 Needs work` continue with screens 2 and 3, which are the same for both: an RFC
-     the person likes can still have gaps worth recording.
+   - `👍 Good, with notes` and `👎 Needs work` continue with screen 2, the same for both: an RFC the person likes
+     can still have gaps worth recording.
 
-**Screen 2** — the areas that matter most (one call, four questions):
+**Screen 2** — the four main areas, in one call (four questions, asked right after the thumb with no pause):
 
 2. **Coverage** — "Coverage: anything wrong? (pick any)"
 3. **Buildability** — "Buildability: anything wrong? (pick any)"
 4. **Approach** — "Approach: anything wrong? (pick any)"
 5. **Context layer use** — "Context layer use: anything wrong? (pick any)"
 
-**Screen 3** — the rest and the run (one call, three questions):
-
-6. **Readable summary** — "Readable summary: anything wrong? (pick any)"
-7. **Rollout and risk** — "Rollout and risk: anything wrong? (pick any)"
-8. **The run** — put `line` in the question text: "How was the run? (pick any)" — `Fine` · `Too slow to run` ·
-   `Too slow to review` · `Too token heavy`
+The readable summary, rollout and run questions are not asked by default: pass nothing for those dimensions, and
+ask them only if the person asks for them. Keep the turn between screens to the mapping; do not re-deliberate.
 
 Every area question is multiSelect and starts with `Nothing wrong`, then three gaps (a fourth would not fit the
 chat tool's four options). A question may not be left on `Nothing wrong` together with a gap; if both are picked,

@@ -25,6 +25,7 @@ Exit code: 0 done · 1 a stage stopped (the summary names it; resume with --run-
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import signal
 import sys
@@ -32,7 +33,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import observe
+from . import feedback, observe, run_facts
 from .legacy_names import OLD_FROM, migrate_run_dir
 
 STAGES = ("scope", "investigate", "draft", "review", "revise")
@@ -291,6 +292,10 @@ def main(argv: list[str] | None = None) -> int:
         (prev.get("seconds_all_attempts") or prev.get("seconds_total") or 0) + summary["seconds_total"], 1
     )
     (run_dir / "logs" / "run.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    with contextlib.suppress(Exception):  # the same text goes on the trace's Output pane (observe._close_root)
+        text = feedback.run_summary(run_dir, run_facts.collect(run_dir))
+        (run_dir / "logs" / "run_summary.md").write_text(text + "\n", encoding="utf-8")
+        print("\n" + "\n".join(f"  [rfc] {x}" for x in text.splitlines()), file=sys.stderr)
     if code == 0:
         status = _read(run_dir / "review" / "status.json") or {}
         unresolved = [k for k, v in status.items() if v.get("status") in ("unresolved", "not_reviewed")]

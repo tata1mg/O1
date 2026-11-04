@@ -154,5 +154,12 @@ dataset" on any observation.
   stay empty.
 - **Langfuse graphs individual traces only.** The Sessions page is a chronological list, so a view across a
   whole workstream has to be built on the API.
+- **A slow connection can drop spans.** The Langfuse SDK gives each export 5 seconds by default
+  (`LANGFUSE_TIMEOUT`); a batch that times out is dropped, and with it whatever ended in that batch. Seen on a full
+  run: Draft's stage span, its agent and its model call (405 s, $3.72) were missing from the trace, while its tool
+  spans and gate were there; the run's own files still had them. The run folder is the complete record, and the
+  `fact_*` scores are computed from it. If spans go missing, run with `LANGFUSE_TIMEOUT=30` in the environment.
+  Each failed or dropped export is written to `logs/activity.log` as `[langfuse] export failed: …` and counted as
+  `fact_langfuse_export_failures`; if that stays above zero across runs, a retry or a rebuild-from-files step is due.
 - **Tool span start times** are approximate (the drain read, up to 0.5 s late); durations come from the CLI
   events' own timestamps.

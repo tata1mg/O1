@@ -532,6 +532,13 @@ def test_the_brief_tells_the_run_the_review_and_what_the_reviewer_said(tmp_path)
     assert len(text) <= 1800
 
 
+def test_the_brief_says_when_a_run_had_no_figma(tmp_path):
+    kw = dict(rating="up", verdicts={}, issues={}, notes={}, comment=None, run_speed=None, run_cost=None)
+    assert "no Figma exported" in feedback.run_brief(tmp_path / "r", {"figma_count": 0, "prd_words": 10}, **kw)
+    assert "Figma" not in feedback.run_brief(tmp_path / "r", {"prd_words": 10}, **kw)  # unknown is not "none"
+    assert "no Figma" not in feedback.run_brief(tmp_path / "r", {"figma_count": 2, "figma_frames_in_scope": 5}, **kw)
+
+
 def test_the_brief_of_a_bare_run_is_short_and_never_fails(tmp_path):
     text = feedback.run_brief(
         tmp_path / "r", {}, rating="down", verdicts={}, issues={}, notes={}, comment=None, run_speed=None, run_cost=None
@@ -550,3 +557,44 @@ def test_the_brief_rides_on_the_headline_score_only_and_is_saved(tmp_path, monke
     brief = (tmp_path / "logs" / "run_brief.md").read_text()
     assert brief.strip() == next(x for x in sink.sent if x["name"] == "rfc_feedback")["metadata"]["run_brief"]
     assert "fine: coverage" in brief
+
+
+def test_rating_again_clears_the_comments_the_new_rating_does_not_repeat(tmp_path, monkeypatch):
+    _finished_run(tmp_path)
+    sink = Sink()
+    monkeypatch.setattr(observe, "_make_client", lambda cfg: sink)
+    feedback.record(
+        tmp_path,
+        "up",
+        comment="first overall",
+        verdicts={"coverage": "usable_with_gaps", "approach": "usable_with_gaps"},
+        issues={"coverage": ["missing_prd_flow"]},
+        notes={"coverage": "no retry flow", "approach": "skipped the queue option", "run": "slow in Figma"},
+        cfg=KEYS,
+    )
+    sink.sent.clear()
+    # the same gap again, but nothing typed: Langfuse keeps an old comment unless it is sent an empty one
+    feedback.record(
+        tmp_path, "up", verdicts={"coverage": "usable_with_gaps"}, issues={"coverage": ["missing_prd_flow"]}, cfg=KEYS
+    )
+    sent = {(x["name"], x["score_id"].split(":", 2)[-1]): x for x in sent_all(sink)}
+    assert sent[("rfc_feedback", "overall")]["comment"] == ""
+    assert sent[("rfc_coverage", "dim:coverage")]["comment"] == ""
+    assert sent[("rfc_run_speed", "run_speed")]["comment"] == "" == sent[("rfc_run_cost", "run_cost")]["comment"]
+    gone = sent[("rfc_approach_issue", "issue:approach:other_see_comment")]  # approach lost its typed gap: set to none
+    assert gone["value"] == "none" and gone["comment"] == ""
+    assert "comment" not in sent[("rfc_buildability", "dim:buildability")]  # never had one: left alone
+
+
+def sent_all(sink):
+    return sink.sent
+
+
+def test_run_summary_for_a_run_nobody_rated(tmp_path):
+    """The end-of-run summary has the run's numbers and says 'not rated yet', with no typed text or thumb."""
+    facts = {"status": "done", "duration_s": 3600, "cost_usd": 12.5, "prd_words": 900, "review_findings": 4,
+             "langfuse_export_failures": 2}  # fmt: skip
+    text = feedback.run_summary(tmp_path / "prd-1", facts)
+    assert "Reviewer: not rated yet" in text and "Typed" not in text and "👍" not in text and "👎" not in text
+    assert "$12.50" in text and "4 findings" in text and "2 failed Langfuse uploads" in text
+    assert "failed Langfuse" not in feedback.run_summary(tmp_path / "prd-1", {"status": "done"})

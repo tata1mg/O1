@@ -573,3 +573,30 @@ def test_a_stage_run_on_its_own_does_not_claim_the_whole_runs_outcome(traced, tm
     assert main(["--run-dir", str(tmp_path)]) == 0
     c = traced["client"]
     assert not [s for s in c.one("rfc-run").scores if s["name"] == "rfc_run_outcome"] and c.created == []
+
+
+def test_export_failures_are_counted_in_the_activity_log(tmp_path):
+    """A failed or dropped Langfuse batch leaves a line in activity.log, and the run's numbers count them."""
+    import logging
+
+    from rfc_agent import run_metrics
+
+    observe._watch_exports(tmp_path)
+    try:
+        log = logging.getLogger("opentelemetry.exporter.otlp.proto.http.trace_exporter")
+        # wording of opentelemetry 1.45
+        log.error("Failed to export %s batch due to timeout, max retries or shutdown.", "traces")
+        log.warning("Queue full, dropping %s.", "spans")
+        log.warning("Exporter already shutdown, ignoring batch")  # not a failure of ours: not counted
+    finally:
+        observe._unwatch_exports()
+    log.error("after the run: not counted")
+    lines = (tmp_path / "logs" / "activity.log").read_text().splitlines()
+    assert len(lines) == 2 and all("[langfuse] export failed" in x for x in lines)
+    assert run_metrics.collect(tmp_path)["langfuse_export_failures"] == 2
+
+
+def test_no_activity_log_means_no_export_count(tmp_path):
+    from rfc_agent import run_metrics
+
+    assert "langfuse_export_failures" not in run_metrics.collect(tmp_path)

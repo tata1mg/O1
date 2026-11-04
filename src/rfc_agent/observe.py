@@ -33,9 +33,11 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import logging
 import re
 import sys
 import threading
+import time
 from pathlib import Path
 
 FLAG = "--langfuse"
@@ -299,6 +301,38 @@ def _record_trace_id(run_dir: Path, entry: str, trace_id: str | None, prd: str |
         f.write(json.dumps(rec) + "\n")
 
 
+class _ExportWatch(logging.Handler):
+    """Writes a line to the run's activity.log each time the OpenTelemetry exporter fails or drops a batch
+    (timeouts, full queue), so a run shows how many times its spans may not have reached Langfuse."""
+
+    def __init__(self, run_dir: Path):
+        super().__init__(level=logging.WARNING)
+        self.path = run_dir / "logs" / "activity.log"
+
+    def emit(self, record: logging.LogRecord) -> None:
+        with contextlib.suppress(Exception):
+            msg = record.getMessage()
+            if record.levelno < logging.ERROR and "dropping" not in msg.lower():
+                return
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8") as f:
+                f.write(f"[{time.strftime('%H:%M:%S')}] [langfuse] {EXPORT_FAILED}: {' '.join(msg.split())[:160]}\n")
+
+
+def _watch_exports(run_dir: Path | None) -> None:
+    global _export_watch
+    if run_dir is not None and _export_watch is None:
+        _export_watch = _ExportWatch(run_dir)
+        logging.getLogger("opentelemetry").addHandler(_export_watch)
+
+
+def _unwatch_exports() -> None:
+    global _export_watch
+    if _export_watch is not None:
+        logging.getLogger("opentelemetry").removeHandler(_export_watch)
+        _export_watch = None
+
+
 def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
     """Open the root observation + trace attributes. Returns the start-as-current context manager."""
     global _client, _root, _root_otel_ctx, _facts_src, _entry_name
@@ -308,6 +342,7 @@ def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
     from .obs import _user_id
 
     _client = _make_client(cfg)
+    _watch_exports(run_dir)
     cm = _client.start_as_current_observation(as_type="chain", name="rfc-run")
     try:
         _root = cm.__enter__()
@@ -356,6 +391,9 @@ def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
 
 # Run facts that are numbers. Metadata cannot be summed or averaged on a dashboard, a score can, so each of these is
 # also written as a NUMERIC score named `fact_<key>` on the run's root observation when the trace closes.
+_export_watch: _ExportWatch | None = None
+EXPORT_FAILED = "export failed"  # the activity.log wording run_metrics counts
+
 FACT_SCORES = (
     "prd_words", "prd_tokens_est", "figma_sections", "figma_frames", "figma_frames_in_scope", "figma_sections_skipped",
     "snapshot_age_days", "flows", "flows_without_screens", "reqs", "open_questions",
@@ -366,7 +404,7 @@ FACT_SCORES = (
     "operator_wait_s", "triage_wait_s", "cost_usd", "duration_s", "attempts", "resumes",
     "repos_proposed", "repos_preticked", "repos_kept", "pages_proposed", "pages_preticked", "pages_kept",
     "figma_sections_kept", "readable_chars", "readable_ratio", "review_blockers", "review_majors", "review_minors",
-    "review_fixed", "review_ignored", "revise_rounds", "revise_lines_changed",
+    "review_fixed", "review_ignored", "revise_rounds", "revise_lines_changed", "langfuse_export_failures",
 )  # fmt: skip
 
 
@@ -423,6 +461,12 @@ def _close_root(cm, prop, code) -> None:
             _score_facts(_root, facts)
             if _entry_name == "rfc":  # a stage run on its own does not rewrite the whole run's run.json
                 _score_outcome(_root, _client, facts, _facts_src[0])
+                with contextlib.suppress(Exception):  # the trace's Output pane reads as the run's summary
+                    from . import feedback
+
+                    text = feedback.run_summary(_facts_src[0], facts)
+                    _root.update(output=text)
+                    _root.set_trace_io(output=text)
         _facts_src = None
     _entry_name = None
     if prop is not None:
@@ -432,6 +476,7 @@ def _close_root(cm, prop, code) -> None:
         cm.__exit__(None, None, None)
     with contextlib.suppress(Exception):
         _client.flush()
+    _unwatch_exports()
     _client = _root = _root_otel_ctx = None
     _stages.clear()
     _tool_spans_left = _MAX_TOOL_SPANS
@@ -525,7 +570,8 @@ class AgentTrace:
         global _tool_spans_left
         if not _verbose or self.agent is None:
             return
-        msg = ev.get("message") or {}
+        # system events (e.g. permission_denied) carry a plain string as `message`
+        msg = ev.get("message") if isinstance(ev.get("message"), dict) else {}
         blocks = msg.get("content") if isinstance(msg.get("content"), list) else []
         for b in blocks:
             if not isinstance(b, dict):
