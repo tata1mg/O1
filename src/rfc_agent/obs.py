@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import re
 import sys
 from typing import TYPE_CHECKING
@@ -160,6 +161,35 @@ def _warn_once(msg: str) -> None:
         _warned = True
 
 
+class _ExportNoise(logging.Handler):
+    """The trace exporters' log handler: ONE stderr line on the first export problem, then silence.
+
+    With Langfuse unreachable (VPN off, DNS down) the OTLP exporter and the Langfuse SDK log every retry of
+    every span batch to stderr — "Transient error … retrying", "Failed to export span batch", a support-link
+    banner — and in a run's `logs/run.out` that drowned the one `GATE FAILURE:` / `ENGINE FAILURE:` line
+    the user needed (2026-11-03, hdpo). Telemetry never fails a run, so it gets one line, not a scroll.
+    """
+
+    LOGGERS = ("langfuse", "opentelemetry")
+    said = False
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.levelno < logging.WARNING or _ExportNoise.said:
+            return
+        _ExportNoise.said = True
+        with contextlib.suppress(Exception):
+            print(f"[obs] Langfuse trace export is failing ({record.getMessage()[:160]}) — the run is "
+                  f"unaffected; further telemetry errors are not shown", file=sys.stderr)
+
+    @classmethod
+    def install(cls) -> None:
+        for name in cls.LOGGERS:
+            log = logging.getLogger(name)
+            if not any(isinstance(h, cls) for h in log.handlers):
+                log.addHandler(cls())
+            log.propagate = False
+
+
 def _release() -> str | None:
     """The installed plugin version — Langfuse `release` segments every metric (gate pass-rate, cost,
     latency) by the code that produced it, which is the whole cross-version benchmark story."""
@@ -255,6 +285,7 @@ def _get_client(ctx: RunContext):
             kwargs["mask_otel_spans"] = privacy.mask_otel_spans
         # base_url, not the deprecated host= (SDK docstring): base_url is what the SDK derives the
         # OTLP span-export endpoint from — cribbed from animus, which switched for exactly that
+        _ExportNoise.install()
         _client = Langfuse(public_key=public, secret_key=secret, base_url=cfg.get("LANGFUSE.HOST") or None,
                            release=_release(), **kwargs)
     except Exception as exc:  # noqa: BLE001 — observability never fails a run

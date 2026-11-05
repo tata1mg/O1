@@ -132,8 +132,22 @@ def run_engine_stage(stage: Stage, ctx: RunContext, skill_path: Path,
         # this it refuses the request outright, so neither persona stage could run on the default engine.
         native_ctx={"stage": stage, "ctx": ctx},
     )
+    absent = [o for o in stage.outputs if not (ctx.run_dir / o).exists()]
     res = ctx.engine.run(req)
     summary = res.summary
+    # An errored session that wrote nothing is a dropped connection or an API outage, not a bad suite. Left
+    # to the gate it read "declared output missing: qa/cases.json" and spent the stage's one automatic
+    # revision on a second call into the same outage (2026-11-03, hdpo: two attempts, $1.46, no suite).
+    # Raising stops the run at once with the real reason; re-running resumes this stage. "Wrote nothing" is
+    # judged on the outputs absent before the call — some are Python's, written before or after it — and
+    # anything the session did write still goes to the gate, as `rfc_agent.engine.claude_engine` does.
+    if getattr(summary, "is_error", False) and absent and not any((ctx.run_dir / o).exists() for o in absent):
+        reason = getattr(summary, "error_reason", None) or "unknown"
+        raise EngineFailure(
+            f"the model session for {stage.name!r} ended with an error ({reason}) before it wrote "
+            f"{', '.join(absent)} — usually a dropped connection or an API outage, not the inputs; "
+            f"re-run the same command to resume this stage (trace: {res.trace_path})"
+        )
     return StageResult(
         final_text=getattr(summary, "final_text", "") or "",
         tool_calls=list(getattr(summary, "tool_calls", []) or []),

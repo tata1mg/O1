@@ -8,11 +8,12 @@ turn into a checklist and a question, not six ad-hoc greps.
 
     python -m workflows.testing.preflight check --feature F --rfc-run-dir D [--json] [--no-network]
     python -m workflows.testing.preflight recent [--limit N] [--json]
+    python -m workflows.testing.preflight runs [--rfc-run-dir D] [--feature F] [--all] [--json]
     python -m workflows.testing.preflight features --rfc-run-dir D [--json]
     python -m workflows.testing.preflight setup-kiwi --kiwi-web URL --product-prefix P [--kiwi-user U]
                                                     [--kiwi-url X] [--insecure-tls true|false]
     python -m workflows.testing.preflight setup-web [--environments a,b,c] [--base-url-template T]
-                                                   [--ui-login FILE]
+                                                   [--ui-login FILE] [--curl FILE]
     python -m workflows.testing.preflight envs [--json]
 
 `check` exits 0 when nothing failed (warnings allowed), 1 when a check failed. Each check is
@@ -265,6 +266,9 @@ def suggest_run_dir(cfg, feature: str) -> str:
 
 def check(feature: str, rfc_run_dir: str | None, overrides: dict | None = None, *,
           network: bool = True) -> dict:
+    # One spelling per feature: a key typed as "hdpo" and one picked as "HDPO" would otherwise name two Kiwi
+    # products and two run folders for the same thing.
+    feature = feature_key(feature) if feature else feature
     cfg = load_config()
     checks = []
     if cfg is None:
@@ -290,6 +294,8 @@ def check(feature: str, rfc_run_dir: str | None, overrides: dict | None = None, 
             "product": flags.get("testing.product_prefix") + (feature or "<feature>"),
             "ui_login": str((overrides or {}).get("ui_login") or flags.get("testing.ui_login") or ""),
             "environments": environments(flags),
+            # unfinished runs of this same feature and RFC run: the command offers to continue one
+            "existing_runs": runs(rfc_run_dir, feature, limit=3) if feature and rfc_run_dir else [],
         },
     }
 
@@ -307,6 +313,59 @@ def recent(limit: int = 8) -> list[dict]:
             title = next((ln.lstrip("# ").strip() for ln in rfc.read_text(errors="replace").splitlines()
                           if ln.startswith("# ")), d.name)
             rows.append({"path": str(d), "name": d.name, "title": title[:90], "mtime": rfc.stat().st_mtime})
+    rows.sort(key=lambda r: r["mtime"], reverse=True)
+    return rows[:limit]
+
+
+# ---- earlier testing runs (resume instead of starting a duplicate) --------------------------------------
+
+#: `status.next_step` in the words the resume question uses.
+STEP_LABELS = {
+    "start": "nothing ran yet",
+    "resume_generate": "generation stopped part-way",
+    "fix": "stopped at {stage}",
+    "store": "generated, not uploaded to Kiwi yet",
+    "review": "waiting for review in Kiwi",
+    "execute": "execution part-done",
+    "done": "finished",
+}
+
+
+def runs(rfc_run_dir: str | None = None, feature: str = "", *, include_done: bool = False,
+         limit: int = 8) -> list[dict]:
+    """Earlier testing runs, newest first: {path, name, feature, rfc_run_dir, next, label}.
+
+    WHY: every new start used to get a fresh `<date>-testing-<feature>` folder, so one feature was generated
+    three times over two days (NR-DIGICHEM, 2026-11-02/-v2/11-04), each paying ~40 minutes and ~$8 that a
+    resume of the first would have skipped. Filtered to one RFC run and/or feature when given; finished runs
+    are left out unless asked for, since there is nothing to continue in them.
+    """
+    from .status import next_step, stages, store_summary
+
+    cfg = load_config()
+    root = Path((cfg.get("RUNS_ROOT") if cfg else None) or "~/rfc-runs").expanduser()
+    want_rfc = Path(rfc_run_dir).expanduser().resolve() if rfc_run_dir else None
+    want_key = feature_key(feature) if feature else ""
+    rows = []
+    for d in root.glob("*-testing-*") if root.is_dir() else ():
+        if not (d / "manifest.json").is_file():
+            continue
+        try:
+            inv = json.loads((d / "qa" / "sources.json").read_text())
+        except (OSError, ValueError):
+            inv = {}
+        used = inv.get("rfc_run_dir") or ""
+        if want_rfc and (not used or Path(used).expanduser().resolve() != want_rfc):
+            continue
+        if want_key and feature_key(str(inv.get("feature") or "")) != want_key:
+            continue
+        nxt = next_step(stages(d), store_summary(d))
+        if nxt["step"] == "done" and not include_done:
+            continue
+        rows.append({"path": str(d), "name": d.name, "feature": inv.get("feature") or "",
+                     "rfc_run_dir": used, "next": nxt,
+                     "label": STEP_LABELS[nxt["step"]].format(stage=nxt.get("stage", "")),
+                     "mtime": (d / "manifest.json").stat().st_mtime})
     rows.sort(key=lambda r: r["mtime"], reverse=True)
     return rows[:limit]
 
@@ -422,6 +481,12 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("recent")
     r.add_argument("--limit", type=int, default=8)
     r.add_argument("--json", action="store_true")
+    u = sub.add_parser("runs")
+    u.add_argument("--rfc-run-dir")
+    u.add_argument("--feature", default="")
+    u.add_argument("--all", action="store_true", help="include finished runs")
+    u.add_argument("--limit", type=int, default=8)
+    u.add_argument("--json", action="store_true")
     f = sub.add_parser("features")
     f.add_argument("--rfc-run-dir", required=True)
     f.add_argument("--json", action="store_true")
@@ -444,6 +509,11 @@ def main(argv: list[str] | None = None) -> int:
         rows = recent(args.limit)
         print(json.dumps(rows, indent=2) if args.json else
               "\n".join(f"{r['name']}  {r['title']}" for r in rows) or "no RFC runs found")
+        return 0
+    if args.cmd == "runs":
+        rows = runs(args.rfc_run_dir, args.feature, include_done=args.all, limit=args.limit)
+        print(json.dumps(rows, indent=2) if args.json else
+              "\n".join(f"{r['name']}  {r['label']}" for r in rows) or "no testing runs to continue")
         return 0
     if args.cmd == "features":
         rows = feature_suggestions(args.rfc_run_dir)

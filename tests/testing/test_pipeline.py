@@ -503,3 +503,44 @@ def test_a_composed_pipeline_actually_runs(pipeline_ctx):
     names = compose_pipeline(ctx.flags)
     run_pipeline(stages(names), ctx)
     assert set(manifest(ctx)) == set(names)
+
+
+# ---- an errored model session ----------------------------------------------------------------------------
+
+
+class ErroringEngine(FakeEngine):
+    """Ends `generate_cases` with an errored result (a dropped connection), optionally after writing."""
+
+    def __init__(self, recipes: dict, *, write: bool) -> None:
+        super().__init__(recipes)
+        self.write = write
+
+    def run(self, req) -> EngineResult:
+        if req.label != "generate_cases":
+            return super().run(req)
+        self.calls.append(req.label)
+        if self.write:
+            self.recipes[req.label](req.cwd)
+        return EngineResult(
+            summary=TraceSummary(got_result=True, is_error=True, error_reason="api_error", cost_usd=0.5),
+            duration_s=1.0, engine_desc="fake:test", prompt_sent=req.prompt, trace_path=req.trace_path,
+        )
+
+
+def test_an_errored_session_that_wrote_nothing_stops_without_spending_the_revision(pipeline_ctx, recipes):
+    """2026-11-03, hdpo: an api_error read as "declared output missing" and burned the automatic revision."""
+    from harness.contracts import EngineFailure
+
+    ctx, _ = pipeline_ctx
+    ctx.engine = engine = ErroringEngine(recipes, write=False)
+    with pytest.raises(EngineFailure, match=r"api_error.*dropped connection"):
+        run_pipeline(stages(), ctx)
+    assert engine.calls == ["generate_cases"]                      # no second call into the outage
+    assert manifest(ctx)["generate_cases"]["status"] == "engine_failed"
+
+
+def test_an_errored_session_that_wrote_its_outputs_still_goes_to_the_gate(pipeline_ctx, recipes):
+    ctx, _ = pipeline_ctx
+    ctx.engine = ErroringEngine(recipes, write=True)
+    run_pipeline(stages(), ctx)
+    assert manifest(ctx)["generate_cases"]["status"] == "ok"

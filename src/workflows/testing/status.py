@@ -165,6 +165,61 @@ def next_step(st: dict[str, dict], store: dict | None) -> dict:
     return {"step": "review"}
 
 
+#: Words in an engine error that mean the network or the API, not the run's inputs.
+_TRANSIENT = ("api_error", "overloaded", "connection", "timed out", "timeout", "nameresolution",
+              "network", "unreachable", "rate_limit", "503", "529")
+
+
+def _last_terminal_reason(run_dir: Path, stage: str) -> str:
+    """`terminal_reason` of the stage's last model result, "" when there is none."""
+    stream = run_dir / "logs" / f"{stage}.stream.jsonl"
+    try:
+        lines = stream.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    for line in reversed(lines):
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(ev, dict) and ev.get("type") == "result":
+            return str(ev.get("terminal_reason") or "") if ev.get("is_error") else ""
+    return ""
+
+
+def explain_failure(run_dir: Path, stage: str, row: dict) -> dict:
+    """Why `stage` stopped, in words for the user: {kind: connection|gate|engine, message, retry}.
+
+    `retry` is true when re-running the same command is the whole fix. The gate's own wording ("declared
+    output missing: qa/cases.json") reads as a broken suite; a run that stopped on that line was a dropped
+    connection (2026-11-03, hdpo), and the user abandoned it instead of re-running.
+    """
+    engine_line = ""
+    try:
+        for line in (run_dir / "logs" / "activity.log").read_text(errors="replace").splitlines():
+            if f"[{stage}] ENGINE FAILURE:" in line:
+                engine_line = line.split("ENGINE FAILURE:", 1)[1].strip()
+    except OSError:
+        pass
+    failures = row.get("failures") or []
+    only_missing = bool(failures) and all(f.startswith("declared output missing") for f in failures)
+    if row.get("status") == "engine_failed" or (only_missing and _last_terminal_reason(run_dir, stage)):
+        text = engine_line or _last_terminal_reason(run_dir, stage) or "the model session failed"
+        transient = only_missing or any(w in text.lower() for w in _TRANSIENT)
+        return {"kind": "connection" if transient else "engine",
+                "message": (f"{stage} lost its connection to the model before it finished "
+                            f"({text[:200]}). Nothing is wrong with the inputs: re-run to resume from {stage}."
+                            if transient else f"{stage} failed to run: {text[:300]}"),
+                "retry": transient}
+    if only_missing:
+        files = ", ".join(f.split(":", 1)[1].strip() for f in failures)
+        return {"kind": "gate", "message": f"{stage} finished without writing {files}.", "retry": True}
+    return {"kind": "gate",
+            "message": f"{stage} produced output that failed {len(failures)} check(s) after its automatic "
+                       f"revision: " + "; ".join(str(f)[:160] for f in failures[:3]),
+            "retry": False}
+
+
 def kiwi_counts(feature: str, run_dir: Path) -> dict:
     """{status: {exec: n}} for this feature's plan, from the live store; {"error": …} when unreachable."""
     import socket
@@ -226,6 +281,8 @@ def report(run_dir: Path, *, kiwi: bool = False) -> dict:
         "cost_usd": round(sum(r["cost_usd"] or 0 for r in st.values()), 2),
         "duration_s": sum(r["duration_s"] for r in st.values()),
     }
+    if out["next"]["step"] == "fix":
+        out["next"]["why"] = explain_failure(run_dir, out["next"]["stage"], st[out["next"]["stage"]])
     if kiwi:
         out["kiwi"] = kiwi_counts(feature, run_dir)
     return out

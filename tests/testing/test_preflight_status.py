@@ -324,3 +324,72 @@ def test_setup_web_stores_the_login_path_not_the_values(tmp_path):
                          config_path=path, allowed=preflight.WEB_SETTINGS, default_storage=False)
     assert json.loads(path.read_text())["TESTING"] == {
         "environments": "jupiter", "ui_login": "~/.secrets/playwright/prestag-login.json"}
+
+
+# ---- earlier runs: resume instead of a duplicate ----------------------------------------------------------
+
+
+def make_testing_run(root: Path, name: str, rfc_run: Path, feature: str, rows: dict[str, str]) -> Path:
+    run = root / name
+    manifest(run, rows)
+    (run / "qa").mkdir()
+    (run / "qa/sources.json").write_text(json.dumps({"feature": feature, "rfc_run_dir": str(rfc_run)}))
+    return run
+
+
+def test_runs_lists_unfinished_runs_of_this_rfc_and_feature(tmp_path, rfc_run, monkeypatch):
+    """NR-DIGICHEM was generated three times over two days because every start made a new folder."""
+    monkeypatch.setattr(preflight, "load_config", lambda: Cfg({"RUNS_ROOT": str(tmp_path)}))
+    make_testing_run(tmp_path, "2026-11-02-testing-F-1", rfc_run, "F-1", {"sources": "ok", "generate_cases": "ok"})
+    make_testing_run(tmp_path, "2026-11-03-testing-F-1", rfc_run, "F-1",
+                {**GEN_OK, "derive_spec": "ok", "execute_be": "ok"})          # finished
+    make_testing_run(tmp_path, "2026-11-03-testing-G-2", rfc_run, "G-2", {"sources": "ok"})
+    other = tmp_path / "other-rfc"
+    make_testing_run(tmp_path, "2026-11-04-testing-F-1", other, "F-1", {"sources": "ok"})
+
+    rows = preflight.runs(str(rfc_run), "f-1")
+    assert [r["name"] for r in rows] == ["2026-11-02-testing-F-1"]
+    assert rows[0]["label"] == "generation stopped part-way"
+    assert len(preflight.runs(str(rfc_run), "F-1", include_done=True)) == 2
+    assert {r["feature"] for r in preflight.runs()} == {"F-1", "G-2"}
+
+
+def test_check_normalises_the_feature_and_offers_the_earlier_run(tmp_path, rfc_run, monkeypatch):
+    monkeypatch.setattr(preflight, "load_config", lambda: Cfg({"RUNS_ROOT": str(tmp_path)}))
+    make_testing_run(tmp_path, "2026-11-03-testing-HDPO", rfc_run, "HDPO", {"sources": "ok"})
+    resolved = preflight.check("hdpo", str(rfc_run), network=False)["resolved"]
+    assert resolved["feature"] == "HDPO"
+    assert [r["name"] for r in resolved["existing_runs"]] == ["2026-11-03-testing-HDPO"]
+
+
+# ---- status: why a run stopped, in words -------------------------------------------------------------------
+
+
+def test_a_dropped_connection_is_not_reported_as_a_broken_suite(tmp_path):
+    """The hdpo run on disk: gate_failed with 'declared output missing', its stream ending in api_error."""
+    manifest(tmp_path, {"sources": "ok", "generate_cases": "gate_failed"})
+    m = json.loads((tmp_path / "manifest.json").read_text())
+    m["generate_cases"]["gate"]["failures"] = ["declared output missing: qa/cases.json"]
+    (tmp_path / "manifest.json").write_text(json.dumps(m))
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "logs/generate_cases.stream.jsonl").write_text(
+        json.dumps({"type": "result", "is_error": True, "terminal_reason": "api_error"}) + "\n")
+    why = status.report(tmp_path)["next"]["why"]
+    assert why["kind"] == "connection" and why["retry"] is True
+    assert "declared output missing" not in why["message"]
+
+
+def test_an_engine_failure_is_explained_from_the_activity_log(tmp_path):
+    manifest(tmp_path, {"sources": "ok", "generate_cases": "engine_failed"})
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "logs/activity.log").write_text(
+        "[10:00:00] [generate_cases] ENGINE FAILURE: claude exited 1: permission denied\n")
+    why = status.report(tmp_path)["next"]["why"]
+    assert why == {"kind": "engine", "retry": False,
+                   "message": "generate_cases failed to run: claude exited 1: permission denied"}
+
+
+def test_a_real_gate_failure_names_its_checks(tmp_path):
+    manifest(tmp_path, {"sources": "ok", "generate_cases": "gate_failed"})
+    why = status.report(tmp_path)["next"]["why"]
+    assert why["kind"] == "gate" and why["retry"] is False and "bad" in why["message"]

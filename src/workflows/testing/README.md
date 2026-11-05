@@ -104,7 +104,12 @@ this workflow from Claude Code with Claude as the progress view and the question
    (`--stages publish_app --enable testing.publish_app --maestro-report … --maestro-flows …`), all with
    `--env … --build …`.
 
-`/test-agent:test --run-dir <run>` resumes from the run dir alone: `status` decides the next step.
+`/test-agent:test --run-dir <run>` resumes from the run dir alone: `status` decides the next step. Without
+`--run-dir`, the command first lists unfinished runs (`preflight runs`) and offers to continue one, and
+`preflight check` reports any unfinished run of the same feature and RFC run (`resolved.existing_runs`), so
+a feature is not regenerated from scratch by accident. When a run stops, `status --json` carries
+`next.why`: the reason in plain words, and whether re-running is the whole fix (a dropped connection is).
+Each launch logs to its own `logs/run.<kind>.out` (`generate`, `store`, `backend`, `web`, `app`).
 
 Kiwi settings live in `TESTING` in `~/.config/rfc-agent/config.json` (`preflight setup-kiwi` writes them:
 `storage`, `kiwi_web`, `product_prefix`, `kiwi_user`, `kiwi_url`, `insecure_tls`). Any `testing.*` flag can

@@ -36,11 +36,17 @@ If `$ARGUMENTS` has `--run-dir R` and `R/manifest.json` exists, this is a **resu
 | `next.step` | Go to |
 |---|---|
 | `start` / `resume_generate` | section 3 (launch phase A with the same `--run-dir`; finished stages are skipped) |
-| `fix` | Report `next.stage` and its `stages.<stage>.failures`, then offer to relaunch phase A (section 3) |
+| `fix` | Post `next.why.message` as it is (never the raw gate failures). When `next.why.retry` is true, ask `Resume from <stage>` (section 3, same `--run-dir`) or `Later`; otherwise also show the stage's `stages.<stage>.failures` and offer `Rerun` or `Stop` |
 | `store` | section 4b |
 | `review` | section 5 (the handoff, then the execute question) |
 | `execute` | section 6 |
 | `done` | section 7 (report the last results) |
+
+With no `--run-dir`, first run `… preflight runs --json --limit 3` (unfinished testing runs, newest first;
+add `--rfc-run-dir D` / `--feature F` when those were given). If it lists any, ask **"Continue a testing run,
+or start a new one?"** with one option per run (label = `feature` and the folder's date, description =
+`label`, e.g. "waiting for review in Kiwi") and `Start a new run`. A run picked is a resume of its `path`, as
+above. Never skip this question when runs are listed: a new run regenerates the whole suite (~40 minutes).
 
 Otherwise it is a **new run**: continue with section 2.
 
@@ -70,7 +76,13 @@ An argument given with no value (`--feature` alone) counts as not given.
    Warnings do not stop the run. Say in one line what each costs: no contract → backend cases come out
    `manual` and nothing is executable; no test data → invented values, and the prerequisites stage writes a
    template to fill.
-4. Use `resolved.run_dir` from the check as `R` (a fresh `~/rfc-runs/<date>-testing-<feature>` folder).
+4. Use `resolved.feature` as `F` from here on: the check normalises the key (`hdpo` → `HDPO`) so every run of
+   a feature names the same Kiwi product.
+5. If `resolved.existing_runs` is non-empty, this feature already has an unfinished run from this RFC run.
+   Ask **"<F> already has a run from this RFC — continue it?"** with `Continue <folder name>` (description =
+   its `label`; a resume of its `path`, section 1) and `Start fresh` (description: regenerates the suite,
+   ~40 min; cases already reviewed in Kiwi stay as they are).
+6. Use `resolved.run_dir` from the check as `R` (a fresh `~/rfc-runs/<date>-testing-<feature>` folder).
 
 ## 3. Phase A — launch
 
@@ -85,7 +97,7 @@ and, with `run_in_background`, ONE command that begins with the label (the task 
 shell by the start of its command):
 
 ```
-TASK="testing · <R folder name>" uv run --project <PROJ> harness run testing --feature F --rfc-run-dir D --run-dir <R> --no-interactive [overrides] [--disable testing.store] > "<R>/logs/run.out" 2>&1
+TASK="testing · <R folder name>" uv run --project <PROJ> harness run testing --feature F --rfc-run-dir D --run-dir <R> --no-interactive [overrides] [--disable testing.store] > "<R>/logs/run.generate.out" 2>&1
 ```
 
 In the same turn, start a **Monitor** (`timeout_ms` 1800000, description `testing run events`):
@@ -94,7 +106,7 @@ In the same turn, start a **Monitor** (`timeout_ms` 1800000, description `testin
 cd "<R>/logs" && touch activity.log && tail -n +1 -F activity.log | grep --line-buffered -E '\] (STAGE started|gate PASSED|gate FAILED|ENGINE FAILURE|inputs changed)'
 ```
 
-Don't poll and don't read `run.out` while the run is live (its progress spinner is one endless line).
+Don't poll and don't read its `run.<kind>.out` while the run is live (its progress spinner is one endless line).
 
 ## 4. Relay progress
 
@@ -115,14 +127,16 @@ Monitor (TaskStop) when the run exits.
 
 ### 4a. The run exited
 
-Read the last ~30 lines of `<R>/logs/run.out` (`tail -n 30 … | tr '\r' '\n' | tail -n 30`) and
-`… status <R> --json`.
+Run `… status <R> --json`. Each launch writes its own log (`<R>/logs/run.<kind>.out`: `generate`,
+`store`, `backend`, `web`, `app`), so an earlier launch's log is still there to read.
 
 - `next.step` is `review` or `store` → section 5.
-- `next.step` is `fix` → report the stage, its `failures` and the `GATE FAILURE:` / `ENGINE FAILURE:` line
-  from run.out in plain words. If `store_cases` failed on a connection error, Kiwi dropped mid-run: offer
-  `Retry the upload` (section 4b) or `Later`. Otherwise offer `Rerun` (section 3, same command: finished
-  stages are skipped) or `Stop`.
+- `next.step` is `fix` → post `next.why.message` as it is: it says in plain words why the stage stopped
+  (a dropped connection reads as one, not as "declared output missing"). Read the last ~30 lines of that
+  launch's log (`tail -n 30 … | tr '\r' '\n' | tail -n 30`) only when `next.why.kind` is `engine` or the
+  message is not enough. If `store_cases` failed on a connection error, Kiwi dropped mid-run: offer
+  `Retry the upload` (section 4b) or `Later`. When `next.why.retry` is true offer `Resume from <stage>`
+  (section 3, same command: finished stages are skipped) or `Later`; otherwise `Rerun` or `Stop`.
 
 ### 4b. Upload to Kiwi (phase A ran without it, or the upload failed)
 
@@ -130,7 +144,7 @@ Re-run `… preflight check … --json`; if `kiwi` still fails, say so and stop 
 `/test-agent:test --run-dir <R>`). Otherwise, in the background and monitored as in section 3:
 
 ```
-TASK="testing · <R folder name> · store" uv run --project <PROJ> harness run testing --feature F --rfc-run-dir D --run-dir <R> --stages store_cases,prerequisites --no-interactive > "<R>/logs/run.out" 2>&1
+TASK="testing · <R folder name> · store" uv run --project <PROJ> harness run testing --feature F --rfc-run-dir D --run-dir <R> --stages store_cases,prerequisites --no-interactive > "<R>/logs/run.store.out" 2>&1
 ```
 
 (`prerequisites` is skipped when already green.) Then section 5.
@@ -235,9 +249,9 @@ in the SAME Kiwi test run, `<feature> · <env> · <build>`:
    per launch). Same `TASK=` label rule; `<common>` is `--feature F --rfc-run-dir D --run-dir <R> --env <env>
    --build <build> --no-interactive`:
 
-   - Backend: `TASK="testing · <R folder name> · backend" uv run --project <PROJ> harness run testing <common> --stages derive_spec,execute_be --enable testing.execute --curl <path> > "<R>/logs/run.out" 2>&1`
-   - Web UI: `TASK="testing · <R folder name> · web" uv run --project <PROJ> harness run testing <common> --stages derive_ui,execute_web --enable testing.execute_web [--base-url <url>] [--ui-login <path> | --ui-auth <path>] [--enable testing.ui_headed] > "<R>/logs/run.out" 2>&1`
-   - App UI: `TASK="testing · <R folder name> · app" uv run --project <PROJ> harness run testing <common> --stages publish_app --enable testing.publish_app --maestro-report <report> --maestro-flows <flows> > "<R>/logs/run.out" 2>&1`
+   - Backend: `TASK="testing · <R folder name> · backend" uv run --project <PROJ> harness run testing <common> --stages derive_spec,execute_be --enable testing.execute --curl <path> > "<R>/logs/run.backend.out" 2>&1`
+   - Web UI: `TASK="testing · <R folder name> · web" uv run --project <PROJ> harness run testing <common> --stages derive_ui,execute_web --enable testing.execute_web [--base-url <url>] [--ui-login <path> | --ui-auth <path>] [--enable testing.ui_headed] > "<R>/logs/run.web.out" 2>&1`
+   - App UI: `TASK="testing · <R folder name> · app" uv run --project <PROJ> harness run testing <common> --stages publish_app --enable testing.publish_app --maestro-report <report> --maestro-flows <flows> > "<R>/logs/run.app.out" 2>&1`
 
    Relay as in section 4. `derive_ui` is an agent (a few minutes): after its ✓ line, post the skipped cases
    from `status --json` → `ui_plan.skipped` (id: reason) — those stay in the Kiwi run for a person.
