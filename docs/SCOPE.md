@@ -214,6 +214,12 @@ One numbered list, in four groups:
 
 At least one repo must be selected.
 
+**No design.** When Figma isn't skipped (`--no-figma`) but no design is available — the PRD links no Figma
+design, or none of its links gave readable screens — the same checkpoint asks *"No design is available. Do you
+want to proceed as it is?"*. Proceed → the run goes on without a design (recorded as `no_design` in
+`scope.json`); Stop → Scope exits with `STOP: no design available …`. In file mode the proposal carries
+`"no_design": "<why>"` and the answers must say `"proceed_without_design": true`. `--yes` goes on with a warning.
+
 ### 6a. Repo snapshots
 
 Each selected repo becomes a **read-only, detached git worktree** at `<run>/_snap/<repo>`, pinned to the
