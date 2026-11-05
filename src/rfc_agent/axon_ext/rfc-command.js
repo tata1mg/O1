@@ -490,7 +490,7 @@ class Run {
     ui?.notify(`rfc ${this.name}: ${ok ? "done" : "stopped"}`, ok ? "info" : "error");
     const tail = ok
       ? "Read out/rfc.readable.md first; out/rfc.md is the full RFC with citations."
-      : "Rerunning the same /rfc command resumes; finished stages are kept.";
+      : `Continue it with /rfc --run-dir ${this.dir} — finished stages are kept. (/rfc --prd again starts a new run.)`;
     this.pi.sendMessage({
       customType: "rfc-agent",
       content: `rfc-agent run ${this.dir}\n${body}\n${tail}`,
@@ -522,10 +522,10 @@ function childEnv() {
 
 const HELP = [
   "/rfc --prd <confluence url | page id | file.md> [flags]   run the pipeline (agents on Axon by default)",
-  "/rfc --run-dir <run> --from <stage> [flags]               redo a stage onward",
+  "/rfc --run-dir <run> [--from <stage>]                      continue a stopped run (or redo a stage onward)",
   "/rfc attach <run dir>                                     follow a run started elsewhere (or answer its pause)",
   "/rfc doctor                                               check Axon, models and fleetlens",
-  "Flags are the rfc CLI's: --jira, --repos, --no-figma, --preset, --ask, --ask-review, --yes, --langfuse, --engine, --stage-engine.",
+  "Flags are the rfc CLI's: --jira, --repos, --no-figma, --preset, --ask, --ask-review, --yes, --langfuse-verbose, --engine, --stage-engine.",
 ].join("\n");
 
 export default function make(pi, { project, uv = "uv" } = {}) {

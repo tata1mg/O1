@@ -15,7 +15,7 @@ How the pipeline works, and what differs from Claude Code: [AXON.md](AXON.md).
 | An account on your team's **Confluence / Jira** site | PRDs and tickets are read from there | Your team |
 | The **team values**: Atlassian site, fleetlens URL, product surfaces, service inventory | Shared settings, not secret. Easiest: a teammate's `config.json` | A teammate |
 | The **fleetlens token** and its URL | Scope, Investigate and Review trace code across repos through it. Needs the VPN | The team vault |
-| The **Langfuse keys** (optional) | Run tracing. Without them, turn tracing off (step 4) | The team vault |
+| The **Langfuse keys** | Every run is traced, and a run without them stops before it starts | The team vault |
 | The **Figma desktop app**, signed in, with edit access to the PRD's Figma files | Only if PRDs link Figma designs | figma.com/downloads |
 
 ## 1. Install Axon and sign in
@@ -89,7 +89,7 @@ Open it (`open -t ~/.config/rfc-agent/config.json`) and fill in:
 | `ATLASSIAN.SITE` | The team's Atlassian site, e.g. `https://<team>.atlassian.net` |
 | `MCP.mcpServers.fleetlens.url` | The fleetlens URL |
 | `MCP.mcpServers.fleetlens.headers` | `{"Authorization": "Bearer <token from the vault>"}` |
-| `LANGFUSE.PUBLIC_KEY`, `LANGFUSE.SECRET_KEY` | From the vault. Or set `LANGFUSE.ENABLED` to `false` |
+| `LANGFUSE.PUBLIC_KEY`, `LANGFUSE.SECRET_KEY` | From the vault. Required: every run is traced |
 | `SCOPE.SURFACES`, `SERVICES_MAP` | Team values. Optional: without them, name repos with `--repos` |
 
 A teammate's file carries their personal values too. Replace `REPOS_ROOT`, `RUNS_ROOT`, the keys, and
@@ -101,7 +101,7 @@ Check that it loads, and that the Langfuse keys are right:
 uv run --project "$RFC" python -c "from rfc_agent import observe; raise SystemExit(observe.preflight())"
 ```
 
-It prints `langfuse=off` or `langfuse=on keys=ok`.
+It prints `langfuse=on keys=ok …`. `keys=MISSING` means the keys aren't in the file yet.
 
 ## 5. Connect Axon to Atlassian
 
@@ -165,7 +165,8 @@ Add `--jira <KEY>` if there's a ticket. Every flag the `rfc` command takes works
 - **It keeps running if you quit Axon.** `/rfc attach <run folder>` follows it again and asks any pause still
   waiting.
 
-If it stops, fix what it reports and run the same `/rfc` command again. Finished stages are kept.
+If it stops, fix what it reports, then continue it with `/rfc --run-dir <run folder>` (the folder is in the
+closing message). Finished stages are kept. `/rfc --prd` again starts a new run in a new folder.
 
 ## Updating
 
@@ -193,7 +194,7 @@ axon pi remove git:github.com/tata1mg/O1
 | `could not list gateway models` | Check `axon auth status` and the VPN, then `axon doctor` |
 | `Axon's Atlassian MCP server … is not signed in` | `axon pi mcp login atlassian` |
 | `context layer unavailable` / fleetlens FAIL | VPN on, and check the fleetlens URL and token in the config file |
-| `Langfuse observability is ON but the Langfuse keys are missing` | Paste the keys into the config file, or set `LANGFUSE.ENABLED` to `false` |
+| `Langfuse observability is ON but the Langfuse keys are missing` | Paste the keys from the vault into the config file |
 | A repo shows `no access` or `clone failed` | Check you can `git clone` that repo yourself, and fix your git credentials for its host |
 | Terminal approval prompts when you ask Axon other things | That's Axon's org terminal policy, for bash commands. `/terminal-permissions` shows what it allows |
 
