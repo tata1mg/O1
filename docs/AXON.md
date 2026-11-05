@@ -171,5 +171,4 @@ Different on Axon:
 - **Axon backs up each agent session to DeputyDev**, as it does for interactive use.
 - **Quality and cost differ.** The prompts were tuned on Claude. Compare a few runs before relying on it.
 
-Design notes and the reasoning behind each choice are in [decisions.md](../decisions.md) and
-[docs/harness/AXON_PLAN.md](harness/AXON_PLAN.md).
+Design notes and the reasoning behind each choice are in [decisions.md](../decisions.md).

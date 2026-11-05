@@ -1,7 +1,7 @@
 # Decisions: rfc-agent on Axon
 
 A running log of the decisions taken while adding Axon (the org's managed Pi) as a second engine for the
-rfc-agent pipeline, 2026-10-27/28. The plan this implements is [docs/harness/AXON_PLAN.md](docs/harness/AXON_PLAN.md).
+rfc-agent pipeline, from 2026-10-27.
 Each entry says what was decided, why, and what would change it.
 
 Environment measured: Axon 0.2.6, managed Pi 1.4.0, gateway provider `litellm`, macOS arm64.
@@ -79,7 +79,7 @@ $0.75/$3.75, deepseek-v4.1-flash $0.30/$1.20, gpt-6-luna $0.10/$0.50. The gatewa
 Overridable in config `AGENT.AXON.MODELS` (by tier, or by exact Claude id), or for the harness with
 `--set axon.models=…`. A non-Claude model id passes through unchanged.
 
-**Would change if** the A/B in AXON_PLAN §6 shows a better pick, or the gateway adds Claude.
+**Would change if** a quality A/B against Claude shows a better pick, or the gateway adds Claude.
 
 ## D-08 Effort maps one-to-one to `--thinking`
 
@@ -191,7 +191,7 @@ the read deadline).
 
 ---
 
-## D-21 `/rfc` inside Axon: a Pi extension that drives the CLI (plan P5)
+## D-21 `/rfc` inside Axon: a Pi extension that drives the CLI
 
 **Decision.** `src/rfc_agent/axon_ext/rfc-command.js` registers `/rfc` in Axon. It does what
 `commands/rfc.md` tells Claude Code to do, in code: it runs the Axon doctor as a preflight, starts
@@ -312,7 +312,7 @@ All runs used copies of the finished Claude run `prd-5672665111` (Upload Report 
 | Review (`--fresh`) | 7 reviewers in parallel: 19 blocker, 25 major, 5 minor | 13m41s | $5.65 |
 | Revise (`--fresh`) + Summarize | Round 1: 43/44 resolved, 4 new blockers. Round 2: 3 resolved. 4 left unresolved and published. Gate clean: 117 citations | 23m15s + 1m39s | $7.24 + $0.08 |
 
-**Observations for the quality A/B (AXON_PLAN §6):**
+**Observations for a quality A/B against Claude:**
 
 - The Axon RFC is smaller than the Claude one for the same PRD: 76.7 KB vs 116.3 KB, 8 CHANGEs vs 12, 117
   citations vs 178.
