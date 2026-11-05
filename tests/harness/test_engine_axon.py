@@ -34,7 +34,7 @@ def test_model_tiers():
     assert model_tier("claude-opus-5-5[1m]") == "opus[1m]"
     assert model_tier("claude-haiku-4-5-20251001") == "haiku"
     assert model_tier("gemini-3.8-flash") is None
-    assert map_model("claude-sonnet-5-5") == "openai/gpt-6.1-terra"
+    assert map_model("claude-sonnet-5-5") == "anthropic/claude-sonnet-5.5"
     assert map_model("claude-sonnet-5-5", {"sonnet": "x"}) == "x"
     assert map_model(None) is None
 
@@ -60,7 +60,7 @@ def test_run_keeps_axons_extensions_and_registers_mcp(tmp_path, fake):
     assert argv[1] == "pi" and "--no-extensions" not in argv
     assert [Path(argv[i + 1]).name for i, a in enumerate(argv) if a == "-e"] == ["harness-guard.js", "rfc-tools.js"]
     assert argv[argv.index("--provider") + 1] == "litellm"
-    assert argv[argv.index("--model") + 1] == "openai/gpt-6.1-sol"
+    assert argv[argv.index("--model") + 1] == "anthropic/claude-opus-5.5"
     assert argv[argv.index("--tools") + 1] == "read,mcp__fleetlens__find_symbol"
     env = dumped["env"]
     assert env["PI_OFFLINE"] is None and env["PI_CODING_AGENT_DIR"] is None

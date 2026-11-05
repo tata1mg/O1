@@ -115,10 +115,10 @@ def test_every_stage_cli_and_the_pipeline_accept_the_engine_flags():
 
 
 @pytest.mark.parametrize("claude,gateway", [
-    ("claude-opus-5-5[1m]", "Kimi-k3.1-pro"),
-    ("claude-opus-5-5", "openai/gpt-6.1-sol"),
-    ("claude-sonnet-5-5", "openai/gpt-6.1-terra"),
-    ("claude-sonnet-5[1m]", "openai/gpt-6.1-terra"),
+    ("claude-opus-5-5[1m]", "anthropic/claude-opus-5.5"),
+    ("claude-opus-5-5", "anthropic/claude-opus-5.5"),
+    ("claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"),
+    ("claude-sonnet-5[1m]", "anthropic/claude-sonnet-5.5"),
     ("claude-haiku-4-5-20251001", "gemini-3.8-flash"),
     ("openai/gpt-6-luna", "openai/gpt-6-luna"),  # already a gateway id: untouched
 ])
@@ -130,7 +130,7 @@ def test_model_overrides_by_tier_and_by_exact_id():
     cfg = Cfg(**{"AGENT.AXON": {"MODELS": {"opus": "deepseek/deepseek-v4.1-flash",
                                            "claude-sonnet-5-5": "openai/gpt-6-luna"}}})
     assert ax.gateway_model("claude-opus-5-5", cfg) == "deepseek/deepseek-v4.1-flash"
-    assert ax.gateway_model("claude-opus-5-5[1m]", cfg) == "Kimi-k3.1-pro"  # [1m] tier keeps its default
+    assert ax.gateway_model("claude-opus-5-5[1m]", cfg) == "anthropic/claude-opus-5.5"  # [1m] tier keeps its default
     assert ax.gateway_model("claude-sonnet-5-5", cfg) == "openai/gpt-6-luna"
 
 
@@ -219,7 +219,7 @@ def test_agent_run_on_axon_end_to_end(tmp_path, monkeypatch):
     for f in ("--no-approve", "--no-skills", "--no-context-files", "--no-prompt-templates", "--no-themes"):
         assert f in argv
     assert argv[argv.index("--provider") + 1] == "litellm"
-    assert argv[argv.index("--model") + 1] == "Kimi-k3.1-pro"
+    assert argv[argv.index("--model") + 1] == "anthropic/claude-opus-5.5"
     assert argv[argv.index("--thinking") + 1] == "high"
     tools = argv[argv.index("--tools") + 1].split(",")
     assert tools[:5] == ["read", "grep", "find", "write", "ls"]

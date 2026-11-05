@@ -123,14 +123,15 @@ Precedence: `--stage-engine` > `--engine` > `AGENT.STAGE_ENGINES` > `AGENT.ENGIN
 
 ## 4. Models
 
-The stages name Claude models. On Axon each is mapped to a gateway model by tier:
+The stages name Claude models. On Axon each is mapped to a gateway model by tier. The gateway serves
+Opus 5.5 and Sonnet 5.5, so those stages run on Claude; it has no Haiku:
 
 | Stage model | Used by | Gateway model |
 |---|---|---|
-| `claude-opus-5-5[1m]` | Investigate lead, Draft, Review, Revise | `Kimi-k3.1-pro` |
-| `claude-opus-5-5` | Investigate UI reader | `openai/gpt-6.1-sol` |
-| `claude-sonnet-5-5` | tracers, Summarize, Scope discovery | `openai/gpt-6.1-terra` |
-| `claude-haiku-4-5…` | Scope PRD summary | `gemini-3.8-flash` |
+| `claude-opus-5-5[1m]` | Investigate lead, Draft, Review, Revise | `anthropic/claude-opus-5.5` |
+| `claude-opus-5-5` | Investigate UI reader | `anthropic/claude-opus-5.5` |
+| `claude-sonnet-5-5` | tracers, Summarize, Scope discovery | `anthropic/claude-sonnet-5.5` |
+| `claude-haiku-4-5…` | Scope PRD summary, Atlassian fetch | `gemini-3.8-flash` |
 
 Print the current mapping:
 

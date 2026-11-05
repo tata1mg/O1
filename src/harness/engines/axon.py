@@ -35,13 +35,13 @@ from .pi import _EXT_DIR, PiEngine, _older, _version_of
 
 RFC_TOOLS_JS = _EXT_DIR / "rfc-tools.js"
 
-# Claude tier -> gateway model. Chosen 2026-10-27 from the gateway's list and measured prices (decisions.md
-# D-07): the 1M-context tiers need a >= ~900K window because the Investigate lead is resumed across steps.
+# Claude tier -> gateway model (decisions.md D-07, revised 2026-11-05 when the gateway added Claude): the
+# stages' own models where the gateway has them. It has no Haiku, so that tier stays on the cheap Gemini.
 DEFAULT_MODELS: dict[str, str] = {
-    "opus[1m]": "Kimi-k3.1-pro",
-    "opus": "openai/gpt-6.1-sol",
-    "sonnet[1m]": "openai/gpt-6.1-terra",
-    "sonnet": "openai/gpt-6.1-terra",
+    "opus[1m]": "anthropic/claude-opus-5.5",
+    "opus": "anthropic/claude-opus-5.5",
+    "sonnet[1m]": "anthropic/claude-sonnet-5.5",
+    "sonnet": "anthropic/claude-sonnet-5.5",
     "haiku": "gemini-3.8-flash",
 }
 
