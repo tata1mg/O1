@@ -73,7 +73,8 @@ def main() -> int:
         p.write_text(rel)
     for ln in lines:
         print(ln, flush=True)
-    return 0  # like real pi --mode json: exit 0 even when the stream says the agent failed
+    # like real pi --mode json: exit 0 even when the stream says the agent failed ($FAKE_AXON_EXIT overrides)
+    return int(os.environ.get("FAKE_AXON_EXIT", "0"))
 
 
 if __name__ == "__main__":

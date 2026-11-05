@@ -49,22 +49,43 @@ ENGINES = ("claude-code", "axon")
 DEFAULT_ENGINE = "claude-code"
 ENGINE_ENV = "RFC_AGENT_ENGINE"  # set by `rfc --engine` (and each stage CLI); beats config AGENT.ENGINE
 STAGE_ENGINES_ENV = "RFC_AGENT_STAGE_ENGINES"  # JSON {stage: engine}, set by --stage-engine
+EXIT_GRACE_S = 15  # how long a settled Pi gets to exit by itself (Axon backs the session up on the way out)
+STAGE_NAMES = ("scope", "investigate", "draft", "review", "revise", "summarize")
 _SRC = Path(__file__).resolve().parents[1]  # src/ — absolute, for the guard's python
 
 
 # ---- engine selection ------------------------------------------------------------------------------
 
 
+def check_stage_map(value, where: str) -> dict[str, str]:
+    """A {stage: engine} map with known stages and engines, or ValueError naming `where`. A typo'd stage would
+    otherwise be ignored and that stage would quietly run on the run's engine."""
+    if not isinstance(value, dict):
+        raise ValueError(f"{where} must be a {{stage: engine}} map, got {type(value).__name__}")
+    for stage, engine in value.items():
+        if stage not in STAGE_NAMES:
+            raise ValueError(f"{where}: unknown stage {stage!r}; stages: {', '.join(STAGE_NAMES)}")
+        if engine not in ENGINES:
+            raise ValueError(f"{where}: unknown engine {engine!r} for {stage}; known: {', '.join(ENGINES)}")
+    return {str(k): str(v) for k, v in value.items()}
+
+
+def _env_stage_engines() -> dict[str, str]:
+    raw = os.environ.get(STAGE_ENGINES_ENV, "")
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        raise ValueError(f"{STAGE_ENGINES_ENV} is not JSON: {raw[:120]!r}") from None
+    return check_stage_map(value, STAGE_ENGINES_ENV)
+
+
 def stage_engines(cfg) -> dict[str, str]:
     """{stage: engine}: config AGENT.STAGE_ENGINES, with --stage-engine (env) on top."""
-    out = dict((cfg.get("AGENT.STAGE_ENGINES", {}) if cfg else {}) or {})
-    raw = os.environ.get(STAGE_ENGINES_ENV, "")
-    if raw:
-        try:
-            out.update(json.loads(raw))
-        except ValueError:
-            raise ValueError(f"{STAGE_ENGINES_ENV} is not JSON: {raw[:120]!r}") from None
-    return {str(k): str(v) for k, v in out.items()}
+    out = check_stage_map((cfg.get("AGENT.STAGE_ENGINES", {}) if cfg else {}) or {}, "AGENT.STAGE_ENGINES")
+    out.update(_env_stage_engines())
+    return out
 
 
 def engine_for(stage: str, cfg) -> str:
@@ -85,8 +106,9 @@ def parse_stage_engines(items: list[str] | None) -> dict[str, str]:
             if not part:
                 continue
             stage, sep, engine = part.partition("=")
-            if not sep or not stage.strip() or engine.strip() not in ENGINES:
-                raise ValueError(f"--stage-engine wants <stage>=<{'|'.join(ENGINES)}>, got {part!r}")
+            if not sep or stage.strip() not in STAGE_NAMES or engine.strip() not in ENGINES:
+                raise ValueError(f"--stage-engine wants <{'|'.join(STAGE_NAMES)}>=<{'|'.join(ENGINES)}>, "
+                                 f"got {part!r}")
             out[stage.strip()] = engine.strip()
     return out
 
@@ -99,13 +121,7 @@ def apply_engine_args(engine: str | None, stage_items: list[str] | None) -> None
         os.environ[ENGINE_ENV] = engine
     extra = parse_stage_engines(stage_items)
     if extra:
-        cur = {}
-        if os.environ.get(STAGE_ENGINES_ENV):
-            try:
-                cur = json.loads(os.environ[STAGE_ENGINES_ENV])
-            except ValueError:
-                cur = {}
-        os.environ[STAGE_ENGINES_ENV] = json.dumps({**cur, **extra})
+        os.environ[STAGE_ENGINES_ENV] = json.dumps({**_env_stage_engines(), **extra})
 
 
 def settings(cfg) -> dict:
@@ -430,6 +446,12 @@ def _run_proc(argv, prompt, run_dir, env, spec, stream_path, res, shim: PiToClau
                 for cev in shim.feed(ev):
                     emit(out, cev)
         finally:
+            exit_code = None  # Pi's own exit status, when it exits by itself after its output ends
+            if not timed_out:
+                try:
+                    exit_code = proc.wait(timeout=EXIT_GRACE_S)
+                except subprocess.TimeoutExpired:
+                    pass
             _kill_group(proc, pgid)
         stderr_tail = ""
         try:
@@ -445,6 +467,11 @@ def _run_proc(argv, prompt, run_dir, env, spec, stream_path, res, shim: PiToClau
         elif not shim.settled and not shim.error:
             last = stderr_tail.strip().splitlines()[-1][:300] if stderr_tail.strip() else "no stderr"
             error = f"axon exited {proc.returncode} without finishing: {last}"
+        elif exit_code and not shim.error:
+            # a finished turn, but the process failed afterwards (Pi exits 0 in --mode json even when the agent
+            # errored, so a non-zero code here is the launcher or Pi itself); as the Claude path does, it fails
+            last = stderr_tail.strip().splitlines()[-1][:300] if stderr_tail.strip() else "no stderr"
+            error = f"axon exited {exit_code} after the turn finished: {last}"
         # the session file is authoritative (survives a torn pipe, includes compaction spend) but holds EVERY
         # turn of the session: on a resume it would re-bill the earlier invocations, so there the stream sum
         # of this invocation's messages is the honest number
@@ -566,9 +593,19 @@ def main(argv: list[str] | None = None) -> int:
     from .config import get_config
 
     p = argparse.ArgumentParser(prog="python -m rfc_agent.axon_agent")
-    p.add_argument("command", choices=("doctor", "models", "install", "uninstall"))
+    p.add_argument("command", choices=("doctor", "models", "engines", "install", "uninstall"))
     p.add_argument("--no-atlassian", action="store_true", help="doctor: skip the Atlassian check (local --prd file)")
-    args = p.parse_args(argv)
+    args, rest = p.parse_known_args(argv)
+    if args.command == "engines":
+        # the engine each stage of a run with these rfc arguments will use: flags, then config, then the default
+        ep = argparse.ArgumentParser(prog="python -m rfc_agent.axon_agent engines")
+        add_engine_args(ep)
+        eargs, _ = ep.parse_known_args(rest)
+        apply_engine_args(eargs.engine, eargs.stage_engine)
+        print(json.dumps({stage: engine_for(stage, get_config()) for stage in STAGE_NAMES}))
+        return 0
+    if rest:
+        p.error(f"unrecognized arguments: {' '.join(rest)}")
     if args.command == "install":
         path = install()
         print(f"installed {path}")

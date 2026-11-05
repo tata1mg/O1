@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 
 from .. import observe
-from .atlassian import TOOLS, TURN_TIMEOUT_S, AtlassianError, ToolCall, TurnResult, _result_text
+from .atlassian import TOOLS, TURN_TIMEOUT_S, AtlassianError, ToolCall, TurnResult, _result_text, pick_cloud_id
 
 DEFAULT_SERVER = "atlassian"
 # Pi's hermetic set minus --no-approve: the one project file this session writes must be trusted
@@ -175,16 +175,7 @@ class AxonConnectorSession:
         res = self._turn("Call getAccessibleAtlassianResources once. Do not call anything else. Reply: done.")
         for c in res.calls:
             if c.name == "getAccessibleAtlassianResources" and not c.is_error:
-                try:
-                    sites = json.loads(c.text)
-                except ValueError:
-                    sites = []
-                host = site.split("//")[-1].rstrip("/")
-                for s in sites if isinstance(sites, list) else []:
-                    if host in str(s.get("url", "")):
-                        self.cloud_id = s.get("id")
-                if not self.cloud_id and isinstance(sites, list) and sites:
-                    self.cloud_id = sites[0].get("id")
+                self.cloud_id = pick_cloud_id(c.text, site)
         if self.cloud_id:
             self.connector_status = "connected"
             return res

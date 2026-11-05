@@ -296,7 +296,7 @@ The rfc-agent pipeline uses the same pieces through its own agent seam (`rfc_age
 | Axon's session backup | Every agent is a backed-up session (full transcript). No supported headless opt-out yet |
 | Axon's terminal policy | Loaded alongside the guard. Stages give agents no bash, so it is mostly inert |
 | No steering channel | As `pi`: `--mode json` has no stdin turns; a `LOG` event records the drop |
-| Atlassian | Not available headless without a one-time `axon pi mcp login` or a gateway MCP route; rfc Scope keeps fetching through Claude |
+| Atlassian | Needs a one-time `axon pi mcp add atlassian --url https://mcp.atlassian.com/v1/mcp` and `axon pi mcp login atlassian`. rfc Scope on Axon then fetches Confluence/Jira through it (`scope/atlassian_axon.py`, decisions.md D-22), and `rfc_agent.axon_agent doctor` checks the sign-in. Not a harness-adapter feature: harness workflows don't use it |
 
 ---
 

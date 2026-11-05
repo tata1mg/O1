@@ -18,6 +18,9 @@ check("withEngine adds axon", m.withEngine(["--prd", "x"]).join(" ") === "--prd 
 check("withEngine keeps a chosen engine", m.withEngine(["--engine", "claude-code"]).join(" ") === "--engine claude-code");
 check("withEngine keeps a stage map", m.withEngine(["--stage-engine", "review=axon"]).length === 2);
 check("usesAxon stage map", m.usesAxon(["--stage-engine", "review=axon"]) && !m.usesAxon(["--engine", "claude-code"]));
+check("usesAxon reads comma lists and = form",
+  m.usesAxon(["--stage-engine", "review=axon,draft=claude-code"]) && m.usesAxon(["--stage-engine=draft=claude-code, review=axon"]) &&
+  !m.usesAxon(["--stage-engine", "review=claude-code,draft=claude-code"]));
 check("needsAtlassian: confluence url, jira, local file, rerun",
   m.needsAtlassian(["--prd", "https://x.atlassian.net/wiki/pages/1"], "/") && m.needsAtlassian(["--jira", "AB-1"], "/") &&
   !m.needsAtlassian(["--prd", "prd.md"], "/w", () => true) && !m.needsAtlassian(["--run-dir", "/r", "--from", "review"], "/"));

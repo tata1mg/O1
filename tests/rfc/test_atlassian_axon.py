@@ -89,6 +89,16 @@ def test_fetch_reads_the_untruncated_file(tmp_path, fake):
     assert "cloudId cloud-1" in fake.seen[0]["input"]
 
 
+def test_the_site_must_match_exactly(tmp_path, fake):
+    lookalike = [{"id": "evil", "url": "https://notacme.atlassian.net"}, {"id": "other", "url": "https://other.net"}]
+    fake.turns.append((_stream([("getAccessibleAtlassianResources", {}, {"text": json.dumps(lookalike)})]), 0))
+    with pytest.raises(at.AtlassianError) as e:
+        _session(tmp_path).connect("https://acme.atlassian.net")
+    assert not e.value.retryable and "notacme.atlassian.net" in str(e.value)  # no substring match, no first-site pick
+    assert at.pick_cloud_id(json.dumps(SITES), "ACME.atlassian.net/") == "cloud-1"  # scheme, case, slash don't matter
+    assert at.pick_cloud_id("[]", "https://acme.atlassian.net") is None  # nothing listed: the retryable path
+
+
 def test_not_signed_in_is_not_retried(tmp_path, fake):
     fake.turns.append((_stream([]), 0))
     fake.status = {"servers": [{"name": "atlassian", "state": "needs-auth"}]}

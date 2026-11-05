@@ -58,13 +58,18 @@ def _mains():
     return {"scope": scope, "investigate": investigate, "draft": draft, "review": review, "revise": revise}
 
 
-def _engines() -> dict:
-    """Which engine each stage's agents ran on (run.json records it, so a finished run says what ran it)."""
+def _engines(ran: list[dict]) -> dict:
+    """Which engine each stage that ran in this attempt used (run.json records it, so a run says what ran it).
+    Stages skipped by --from or a resume, or never reached after a stop, are left out. Summarize runs inside
+    Revise, so it is listed whenever Revise ran."""
     from .axon_agent import engine_for
     from .config import get_config
 
     cfg = get_config()
-    return {stage: engine_for(stage, cfg) for stage in (*STAGES, "summarize")}
+    stages = [r["stage"] for r in ran]
+    if "revise" in stages:
+        stages.append("summarize")
+    return {stage: engine_for(stage, cfg) for stage in stages}
 
 
 def _read(p: Path):
@@ -287,7 +292,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             break
     summary = _summary(run_dir, ran)
-    summary["engines"] = _engines()
+    summary["engines"] = _engines(ran)
     summary["status"] = "done" if code == 0 else f"stopped at {ran[-1]['stage']}"
     prev = _read(run_dir / "logs" / "run.json") or {}  # read before it is overwritten below
     with (run_dir / "logs" / "attempts.jsonl").open("a", encoding="utf-8") as f:

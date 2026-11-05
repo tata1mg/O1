@@ -76,9 +76,11 @@ export function withEngine(argv) {
 
 /** Whether any stage of this invocation runs on Axon (then the Axon doctor is the preflight). */
 export function usesAxon(argv) {
-  const e = argValue(argv, "--engine");
-  if (e === "axon") return true;
-  return argv.some((a, i) => (a === "--stage-engine" && /=axon$/.test(argv[i + 1] || "")) || /^--stage-engine=.*=axon$/.test(a));
+  if (argValue(argv, "--engine") === "axon") return true;
+  // every --stage-engine value, each a comma list like review=axon,draft=claude-code
+  const values = argv.flatMap((a, i) => (a === "--stage-engine" ? [argv[i + 1] || ""]
+    : a.startsWith("--stage-engine=") ? [a.slice("--stage-engine=".length)] : []));
+  return values.some((v) => v.split(",").some((part) => part.split("=")[1]?.trim() === "axon"));
 }
 
 /** Whether Scope will fetch from Confluence/Jira (then the doctor also checks Axon's Atlassian sign-in). */
@@ -168,16 +170,16 @@ export function writeAnswers(file, data) {
 
 /** New complete lines of a growing file since `state.offset` (state is mutated). */
 export function readNewLines(file, state) {
-  let size;
+  let fd;
   try {
-    size = fs.statSync(file).size;
+    fd = fs.openSync(file, "r");
   } catch {
     return [];
   }
-  if (size < state.offset) state.offset = 0; // truncated or replaced: start over
-  if (size === state.offset) return [];
-  const fd = fs.openSync(file, "r");
   try {
+    const size = fs.fstatSync(fd).size; // of the file just opened, not a path that may have changed since
+    if (size < state.offset) state.offset = 0; // truncated or replaced: start over
+    if (size === state.offset) return [];
     const buf = Buffer.alloc(size - state.offset);
     fs.readSync(fd, buf, 0, buf.length, state.offset);
     const text = (state.rest || "") + buf.toString("utf8");
@@ -673,8 +675,8 @@ export default function make(pi, { project, uv = "uv" } = {}) {
       const logs = path.join(runDir, "logs");
       fs.mkdirSync(logs, { recursive: true });
       const outFile = path.join(logs, "run.out");
-      const start = fs.existsSync(outFile) ? fs.statSync(outFile).size : 0;
       const fd = fs.openSync(outFile, "a");
+      const start = fs.fstatSync(fd).size;
       const cli = [...full.filter((a, i) => !(a === "--run-dir" || full[i - 1] === "--run-dir" || a.startsWith("--run-dir="))),
         "--run-dir", runDir, "--confirm-file"];
       const child = spawn(uv, ["run", "--project", project, "rfc", ...cli], {

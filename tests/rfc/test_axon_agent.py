@@ -70,6 +70,40 @@ def test_stage_engine_flag_parsing(monkeypatch):
     assert json.loads(os.environ[ax.STAGE_ENGINES_ENV]) == {"review": "claude-code"}
 
 
+def test_a_typo_in_a_stage_name_is_refused_not_ignored(monkeypatch):
+    with pytest.raises(ValueError, match="reveiw"):
+        ax.parse_stage_engines(["reveiw=axon"])
+    with pytest.raises(ValueError, match="unknown stage 'reveiw'"):
+        ax.engine_for("review", Cfg(**{"AGENT.STAGE_ENGINES": {"reveiw": "axon"}}))
+    with pytest.raises(ValueError, match="map"):
+        ax.engine_for("review", Cfg(**{"AGENT.STAGE_ENGINES": ["review"]}))
+    monkeypatch.setenv(ax.STAGE_ENGINES_ENV, "null")  # valid JSON, not a map
+    with pytest.raises(ValueError, match="map"):
+        ax.engine_for("review", Cfg())
+    with pytest.raises(ValueError, match="map"):
+        ax.apply_engine_args(None, ["review=axon"])
+
+
+def test_engines_command_resolves_flags_over_config(monkeypatch, capsys):
+    import rfc_agent.config as config
+
+    monkeypatch.setattr(config, "get_config", lambda: Cfg(**{"AGENT.ENGINE": "axon"}))
+    assert ax.main(["engines", "--prd", "x.md", "--stage-engine", "scope=claude-code,review=claude-code"]) == 0
+    got = json.loads(capsys.readouterr().out)
+    assert got["scope"] == "claude-code" and got["review"] == "claude-code" and got["draft"] == "axon"
+    assert set(got) == set(ax.STAGE_NAMES)
+
+
+def test_run_json_lists_only_the_stages_that_ran(monkeypatch):
+    import rfc_agent.config as config
+    from rfc_agent import run as rfc_run
+
+    monkeypatch.setattr(config, "get_config", lambda: Cfg(**{"AGENT.ENGINE": "axon"}))
+    assert rfc_run._engines([{"stage": "review"}]) == {"review": "axon"}  # --from review: nothing earlier
+    assert rfc_run._engines([{"stage": "revise"}]) == {"revise": "axon", "summarize": "axon"}
+    assert rfc_run._engines([]) == {}
+
+
 def test_every_stage_cli_and_the_pipeline_accept_the_engine_flags():
     from rfc_agent.run import build_parser
 
@@ -246,6 +280,16 @@ def test_a_failed_agent_reports_the_provider_error(tmp_path, monkeypatch):
     cfg = Cfg(**{"AGENT.ENGINE": "axon", "AGENT.AXON": {"BIN": str(exe)}})
     res = ag.run(_spec(use_context=False), "p", run, cfg, stage="review")
     assert not res.ok and "429 rate limit" in res.error
+
+
+def test_a_failed_exit_after_a_finished_turn_is_an_error(tmp_path, monkeypatch):
+    exe = _fake(tmp_path, monkeypatch)
+    monkeypatch.setenv("FAKE_AXON_EXIT", "3")
+    run = tmp_path / "run"
+    run.mkdir()
+    cfg = Cfg(**{"AGENT.ENGINE": "axon", "AGENT.AXON": {"BIN": str(exe)}})
+    res = ag.run(_spec(use_context=False), "p", run, cfg, stage="draft")
+    assert not res.ok and "exited 3 after the turn finished" in res.error
 
 
 def test_a_missing_launcher_is_a_clear_error(tmp_path):
