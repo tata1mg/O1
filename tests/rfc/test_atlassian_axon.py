@@ -94,7 +94,10 @@ def test_the_site_must_match_exactly(tmp_path, fake):
     fake.turns.append((_stream([("getAccessibleAtlassianResources", {}, {"text": json.dumps(lookalike)})]), 0))
     with pytest.raises(at.AtlassianError) as e:
         _session(tmp_path).connect("https://acme.atlassian.net")
-    assert not e.value.retryable and "notacme.atlassian.net" in str(e.value)  # no substring match, no first-site pick
+    assert not e.value.retryable  # no substring match, no first-site pick
+    assert str(e.value) == ("ATLASSIAN.SITE is acme.atlassian.net, but this Atlassian sign-in reaches only: "
+                            "notacme.atlassian.net, other.net. Fix ATLASSIAN.SITE, or sign in with an account "
+                            "that can see that site.")
     assert at.pick_cloud_id(json.dumps(SITES), "ACME.atlassian.net/") == "cloud-1"  # scheme, case, slash don't matter
     assert at.pick_cloud_id("[]", "https://acme.atlassian.net") is None  # nothing listed: the retryable path
 
