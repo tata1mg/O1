@@ -1,4 +1,19 @@
-# rfc_agent
+# O1
+
+Tata 1mg's agent toolkit for the software lifecycle: from a PRD to a grounded tech RFC, test cases and code,
+with every claim about existing code cited to a file and line.
+
+| Component | What it does | Status |
+|---|---|---|
+| **rfc-agent** | PRD → grounded tech RFC (Scope → Summarize). A Claude Code plugin | Pilot (0.1.0) |
+| **Harness** | Agent-agnostic run loop, engines, contracts and policy that the agents share (`src/harness`) | In progress |
+| **Testing agent** | Tech RFC → QA test cases (`src/workflows/testing`) | In progress |
+| **Context layer** | Finds and traces code across repos, to ground every agent | Planned |
+| **Coding agent** | Tech RFC → implementation | Planned |
+
+Today the repo ships **rfc-agent**. The rest of this README covers it.
+
+## rfc-agent
 
 > **Pipeline (Scope → Summarize, `uv run rfc`)** — architecture and flow diagrams: **[docs/HLD.md](docs/HLD.md)**.
 >

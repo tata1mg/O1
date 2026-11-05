@@ -38,7 +38,11 @@ def main(argv: list[str] | None = None) -> int:
                                 description="Summarize: readable copy of the RFC.")
     p.add_argument("--run-dir", required=True, help="the run folder, after Revise")
     p.add_argument("--fresh", action="store_true", help="write it again even if it is up to date")
+    from ..axon_agent import add_engine_args, apply_engine_args
+
+    add_engine_args(p)
     args = p.parse_args(argv)
+    apply_engine_args(args.engine, args.stage_engine)
     run_dir = Path(args.run_dir).expanduser().resolve()
     migrate_run_dir(run_dir)
     rfc = run_dir / "out" / "rfc.md"

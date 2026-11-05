@@ -1,0 +1,16 @@
+{"type": "session", "version": 3, "id": "__SID__", "cwd": "/run"}
+{"type": "agent_start"}
+{"type": "turn_start"}
+{"type": "message_end", "message": {"role": "user", "content": [{"type": "text", "text": "prompt"}]}}
+{"type": "message_end", "message": {"role": "assistant", "provider": "litellm", "model": "openai/gpt-6.1-terra", "content": [{"type": "thinking", "thinking": "plan"}, {"type": "toolCall", "id": "c1", "name": "read", "arguments": {"path": "_snap/repo/a.py"}}], "usage": {"input": 100, "output": 10, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 110, "cost": {"input": 0.005, "output": 0.005, "cacheRead": 0, "cacheWrite": 0, "total": 0.01}}, "stopReason": "toolUse"}}
+{"type": "tool_execution_start", "toolCallId": "c1", "toolName": "read", "args": {"path": "_snap/repo/a.py"}}
+{"type": "tool_execution_end", "toolCallId": "c1", "toolName": "read", "result": {"content": [{"type": "text", "text": "print(1)"}]}, "isError": false}
+{"type": "message_end", "message": {"role": "toolResult", "toolCallId": "c1", "toolName": "read", "content": [{"type": "text", "text": "print(1)"}], "isError": false}}
+{"type": "message_end", "message": {"role": "assistant", "provider": "litellm", "model": "openai/gpt-6.1-terra", "content": [{"type": "toolCall", "id": "c2", "name": "mcp__fleetlens__find_symbol", "arguments": {"name": "Foo"}}], "usage": {"input": 100, "output": 10, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 110, "cost": {"input": 0.005, "output": 0.005, "cacheRead": 0, "cacheWrite": 0, "total": 0.01}}, "stopReason": "toolUse"}}
+{"type": "message_end", "message": {"role": "toolResult", "toolCallId": "c2", "toolName": "mcp__fleetlens__find_symbol", "content": [{"type": "text", "text": "Foo at a.py:1"}], "isError": false}}
+{"type": "message_end", "message": {"role": "assistant", "provider": "litellm", "model": "openai/gpt-6.1-terra", "content": [{"type": "toolCall", "id": "c3", "name": "write", "arguments": {"path": "out/x.md", "content": "hi"}}], "usage": {"input": 100, "output": 10, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 110, "cost": {"input": 0.005, "output": 0.005, "cacheRead": 0, "cacheWrite": 0, "total": 0.01}}, "stopReason": "toolUse"}}
+{"type": "message_end", "message": {"role": "toolResult", "toolCallId": "c3", "toolName": "write", "content": [{"type": "text", "text": "Successfully wrote to out/x.md"}], "isError": false}}
+{"type": "message_end", "message": {"role": "assistant", "provider": "litellm", "model": "openai/gpt-6.1-terra", "content": [{"type": "text", "text": "done."}], "usage": {"input": 100, "output": 10, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 110, "cost": {"input": 0.01, "output": 0.01, "cacheRead": 0, "cacheWrite": 0, "total": 0.02}}, "stopReason": "stop"}}
+{"type": "turn_end"}
+{"type": "agent_end", "willRetry": false}
+{"type": "agent_settled", "aborted": false}

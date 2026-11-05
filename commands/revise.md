@@ -1,6 +1,6 @@
 ---
 description: The revise stage — the lead fixes the review findings, the gate re-checks, reviewers confirm (up to two rounds)
-argument-hint: --run-dir <run dir after Review> [--fresh]
+argument-hint: --run-dir <run dir after Review> [--fresh] [--engine claude-code|axon] [--stage-engine STAGE=ENGINE]
 ---
 
 Run rfc-agent's Revise (fix) for: `$ARGUMENTS`

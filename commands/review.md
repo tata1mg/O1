@@ -1,6 +1,6 @@
 ---
 description: The review stage — independent review of the RFC (one reviewer per flow + one cross-cutting, in parallel)
-argument-hint: --run-dir <run dir after Draft> [--ask-review] [--fresh]
+argument-hint: --run-dir <run dir after Draft> [--ask-review] [--fresh] [--engine claude-code|axon] [--stage-engine STAGE=ENGINE]
 ---
 
 Run rfc-agent's Review for: `$ARGUMENTS`

@@ -58,6 +58,20 @@ def _mains():
     return {"scope": scope, "investigate": investigate, "draft": draft, "review": review, "revise": revise}
 
 
+def _engines(ran: list[dict]) -> dict:
+    """Which engine each stage that ran in this attempt used (run.json records it, so a run says what ran it).
+    Stages skipped by --from or a resume, or never reached after a stop, are left out. Summarize runs inside
+    Revise, so it is listed whenever Revise ran."""
+    from .axon_agent import engine_for
+    from .config import get_config
+
+    cfg = get_config()
+    stages = [r["stage"] for r in ran]
+    if "revise" in stages:
+        stages.append("summarize")
+    return {stage: engine_for(stage, cfg) for stage in stages}
+
+
 def _read(p: Path):
     try:
         return json.loads(p.read_text(encoding="utf-8"))
@@ -102,6 +116,9 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--redo-scope", action="store_true", help="run Scope again even if the inputs exist")
     g.add_argument("--redo-prep", dest="redo_scope", action="store_true", help=argparse.SUPPRESS)  # old name
     g.add_argument("--yes", action="store_true", help="accept every pause's default (no questions)")
+    from .axon_agent import add_engine_args
+
+    add_engine_args(p.add_argument_group("engine (claude-code | axon)"))
     g = p.add_argument_group("observability (Langfuse)")
     g.add_argument(
         observe.VERBOSE_FLAG,
@@ -198,6 +215,9 @@ def _summary(run_dir: Path, ran: list[dict]) -> dict:
 @observe.entry(None)
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    from .axon_agent import apply_engine_args
+
+    apply_engine_args(args.engine, args.stage_engine)
     _stop_on_sigterm()
     if args.run_dir:
         run_dir = Path(args.run_dir).expanduser().resolve()
@@ -272,6 +292,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             break
     summary = _summary(run_dir, ran)
+    summary["engines"] = _engines(ran)
     summary["status"] = "done" if code == 0 else f"stopped at {ran[-1]['stage']}"
     prev = _read(run_dir / "logs" / "run.json") or {}  # read before it is overwritten below
     with (run_dir / "logs" / "attempts.jsonl").open("a", encoding="utf-8") as f:

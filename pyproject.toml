@@ -1,7 +1,7 @@
 [project]
 name = "rfc-agent"
-version = "0.1.1"
-description = "Staged RFC-generation agent: PRD -> grounded RFC via headless Claude stages"
+version = "0.2.0"
+description = "O1 agent toolkit: rfc-agent (PRD -> grounded tech RFC), with the shared harness and testing agent"
 requires-python = "==3.12.*"
 dependencies = [
     "defusedxml>=0.7.1",

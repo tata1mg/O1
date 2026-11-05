@@ -45,7 +45,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--run-dir", required=True, help="the run folder, after Investigate")
     p.add_argument("--fresh", action="store_true", help="write again even if out/rfc.md exists")
     p.add_argument("--check-only", action="store_true", help="don't write — re-run the gate on out/rfc.md")
+    from ..axon_agent import add_engine_args, apply_engine_args
+
+    add_engine_args(p)
     args = p.parse_args(argv)
+    apply_engine_args(args.engine, args.stage_engine)
     run_dir = Path(args.run_dir).expanduser().resolve()
     migrate_run_dir(run_dir)
     work = run_dir / "work"

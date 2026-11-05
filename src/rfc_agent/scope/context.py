@@ -135,7 +135,12 @@ def discover(prd_text: str, cfg, spec: dict, log_dir: Path | None = None) -> dic
     usage: dict = {}
     calls: dict[str, dict] = {}
     try:
-        p = _run_live(cmd, prompt, log_dir)
+        if _on_axon(cfg):
+            stream_text, _ = _axon_agent(prompt, model, cfg, log_dir, label="discovery", use_context=True,
+                                         timeout_s=DISCOVERY_TIMEOUT_S)
+            p = subprocess.CompletedProcess(cmd, 0, stream_text, "")
+        else:
+            p = _run_live(cmd, prompt, log_dir)
         result = None
         for line in p.stdout.splitlines():
             try:
@@ -170,6 +175,45 @@ def discover(prd_text: str, cfg, spec: dict, log_dir: Path | None = None) -> dic
                      cost_usd=out["cost_usd"], usage=usage, seconds=out["seconds"], error=out["error"] or "",
                      tool_calls=list(calls.values()))
     return out
+
+
+def _on_axon(cfg) -> bool:
+    from ..axon_agent import engine_for
+
+    return engine_for("scope", cfg) == "axon"
+
+
+def _axon_agent(prompt: str, model: str, cfg, log_dir: Path | None, *, label: str, use_context: bool,
+                timeout_s: int) -> tuple[str, dict]:
+    """One Scope helper agent on Axon (--engine axon): → (its Claude-shaped stream, the final `result` event).
+    Same prompt, no built-in tools; the discovery agent gets the fleetlens read tools, the summary none."""
+    import tempfile
+
+    from .. import axon_agent
+    from ..investigate import agent as ag  # late: investigate.agent imports this module
+    from ..investigate.progress import Progress
+
+    in_run = log_dir is not None and log_dir.name == "logs"
+    run_dir = log_dir.parent if in_run else Path(tempfile.mkdtemp(prefix=f"rfc-scope-{label}-"))
+    prog = Progress(run_dir, stage="scope") if in_run else None
+    spec = ag.AgentSpec(label, model, None, (), (), use_context=use_context, timeout_s=timeout_s)
+    res = axon_agent.run(spec, prompt, run_dir, cfg, on_event=prog.tick if prog else None, stage="scope")
+    try:
+        text = Path(res.stream).read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    result: dict = {}
+    for line in text.splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(ev, dict) and ev.get("type") == "result":
+            result = ev
+    if not result:
+        result = {"type": "result", "is_error": True, "result": res.error or "no result from axon"}
+        text += json.dumps(result) + "\n"
+    return text, result
 
 
 def _run_live(cmd: list[str], prompt: str, log_dir: Path) -> subprocess.CompletedProcess:
@@ -267,10 +311,14 @@ def summarise(prd_text: str, cfg) -> dict:
     t0 = time.monotonic()
     usage: dict = {}
     try:
-        p = subprocess.run([binary, "-p", "--model", model, "--tools", "", "--output-format", "json",
-                            "--setting-sources", "", "--strict-mcp-config"],
-                           input=prompt, capture_output=True, text=True, timeout=SUMMARY_TIMEOUT_S)
-        res = json.loads(p.stdout)
+        if _on_axon(cfg):
+            _, res = _axon_agent(prompt, model, cfg, None, label="summary", use_context=False,
+                                 timeout_s=SUMMARY_TIMEOUT_S)
+        else:
+            p = subprocess.run([binary, "-p", "--model", model, "--tools", "", "--output-format", "json",
+                                "--setting-sources", "", "--strict-mcp-config"],
+                               input=prompt, capture_output=True, text=True, timeout=SUMMARY_TIMEOUT_S)
+            res = json.loads(p.stdout)
         if res.get("is_error"):
             raise ValueError(str(res.get("result") or res.get("subtype") or "claude reported an error"))
         out["cost_usd"] = round(float(res.get("total_cost_usd") or 0), 4)

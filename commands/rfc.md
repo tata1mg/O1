@@ -1,6 +1,6 @@
 ---
 description: Generate a tech RFC from a PRD — the whole pipeline (Scope → Summarize) in one command; progress and every pause shown here
-argument-hint: --prd <confluence-url | page-id | file> [--jira KEY] [--repos a,b] [--no-figma] [--preset balanced|fast] [--ask] [--ask-review] [--langfuse-verbose true|false]  |  --run-dir <run folder> (continue a stopped run)
+argument-hint: --prd <confluence-url | page-id | file> [--jira KEY] [--repos a,b] [--no-figma] [--preset balanced|fast] [--ask] [--ask-review] [--langfuse-verbose true|false] [--engine claude-code|axon] [--stage-engine STAGE=ENGINE]  |  --run-dir <run folder> (continue a stopped run)
 ---
 
 Run the whole rfc-agent pipeline for: `$ARGUMENTS`
@@ -26,12 +26,23 @@ Run the last line with `run_in_background`. The terminal's task list (`/tasks`) 
 **start of its command**, so send it as one command that begins with the `TASK="…"` label: write `$PROJ` and
 `$RUN` out as literal paths, and put no `cd`, `PROJ=` or other assignment in front of it.
 
-Preflight first (seconds): `claude mcp list | grep -iE "claude\.ai Atlassian|^atlassian"` —
+Preflight first (seconds). Which engine each stage runs on comes from the flags in `$ARGUMENTS` and from config
+(`AGENT.ENGINE`, `AGENT.STAGE_ENGINES`), so ask the pipeline rather than reading the flags:
+`uv run --project "$PROJ" python -m rfc_agent.axon_agent engines $ARGUMENTS` prints `{"scope": "claude-code", …}`.
+
+When `scope` is `claude-code`: `claude mcp list | grep -iE "claude\.ai Atlassian|^atlassian"` —
 either line (the claude.ai Atlassian connector, or a user-scope server named `atlassian`) showing ✔ Connected
 is enough. If neither is connected, stop and tell the user to connect one (`/mcp`). VPN is needed for the
 context layer and Bitbucket. Then Langfuse: `uv run --project "$PROJ" python -c "from rfc_agent import observe; raise SystemExit(observe.preflight())"`
 — exit 2 means the keys are missing (tracing is required): stop and relay its message (add the keys to the config;
 `/rfc-agent:setup` fills them in). There is no way to run untraced.
+
+**Axon** (when any stage in that map is `axon`): those agents run on the org's managed Pi instead of
+`claude -p`; progress, pauses and outputs look the same. Preflight
+`uv run --project "$PROJ" python -m rfc_agent.axon_agent doctor` — anything but `axon: READY` stops the run; relay
+its FAIL lines (each names its fix). When `scope` is `axon`, Scope fetches a Confluence/Jira PRD through Axon's own
+Atlassian MCP sign-in, which the doctor checks, so the Claude Atlassian check above is skipped. Pass the doctor
+`--no-atlassian` when `scope` isn't `axon`, or for a local `--prd <file>` with no `--jira`.
 
 ## 2. Relay progress
 
