@@ -135,6 +135,9 @@ NAMES = (
     _f("cases", str, "",
        "Only these case ids (comma-separated) are derived and run by derive_spec and derive_ui — to run one "
        "case end to end. Empty = every CONFIRMED case of the kind."),
+    _f("ui_only_new", bool, False,
+       "derive_ui: keep the tests already written and derive only the CONFIRMED web cases that have neither a "
+       "test nor a skip; nothing new = no model call. What /test-agent:execute uses by default."),
     _f("environments", str, "",
        "The environments a run can target, comma-separated (e.g. dione,earth,jupiter,…). The command offers "
        "them as choices; the chosen one is --env and, with base_url_template, gives the web base URL."),

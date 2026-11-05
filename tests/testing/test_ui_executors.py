@@ -219,8 +219,11 @@ def test_execute_web_records_each_case_and_attaches_the_evidence(ui_ctx, monkeyp
     write_json(ui / ui_web.PLAN, plan)
     shot = tmp_path / "shot.png"
     shot.write_bytes(b"png")
+    tracefile = tmp_path / "trace.zip"
+    tracefile.write_bytes(b"not a real trace")
     report = pw_report((WEB, "failed", "Error: expect(locator).toBeVisible() failed",
-                        [{"name": "screenshot", "path": str(shot), "contentType": "image/png"}], []))
+                        [{"name": "screenshot", "path": str(shot), "contentType": "image/png"},
+                         {"name": "trace", "path": str(tracefile), "contentType": "application/zip"}], []))
     seen = {}
 
     def fake_run(ui_, **kw):
@@ -237,7 +240,23 @@ def test_execute_web_records_each_case_and_attaches_the_evidence(ui_ctx, monkeyp
     run = json.loads(next((ui_ctx.run_dir / "store" / "runs").rglob("*.json")).read_text())
     assert set(run["attached"]) == {WEB, WEB2}                     # the skipped case is in the run, IDLE
     assert run["executions"][WEB]["status"] == "FAIL" and WEB2 not in run["executions"]
-    assert any(p.name.startswith("screenshot-") for p in (ui_ctx.run_dir / "store" / "attachments").rglob("*"))
+    stored = [p.name for p in (ui_ctx.run_dir / "store" / "attachments").rglob("*") if p.is_file()]
+    assert any(n.startswith("screenshot-") for n in stored) and not any("trace" in n for n in stored)
+    comment = run["executions"][WEB]["comments"][0]
+    assert comment.startswith(f"## {WEB} — FAIL") and "toBeVisible() failed" in comment
+    assert "screenshot-" in comment
+
+
+def test_the_evidence_comment_names_the_failed_requests(tmp_path):
+    import zipfile
+
+    trace = tmp_path / "trace.zip"
+    with zipfile.ZipFile(trace, "w") as z:
+        z.writestr("0-trace.network", "\n".join(json.dumps({"snapshot": {
+            "request": {"method": "GET", "url": url}, "response": {"status": code}}})
+            for url, code in (("https://web.test/pwa-api/patient", 500), ("https://web.test/ok", 200),
+                              ("https://analytics.test/x", 500))))
+    assert ui_web.failed_requests(trace, "https://web.test") == ["500 GET https://web.test/pwa-api/patient"]
 
 
 @pytest.mark.parametrize("change, match", [
@@ -545,3 +564,79 @@ def test_testing_cases_narrows_derive_ui_to_the_named_case(ui_ctx, monkeypatch):
     ui_ctx.engine = SpecEngine()
     derive_ui.STAGE.engine(derive_ui.STAGE, ui_ctx)
     assert [c["extid"] for c in json.loads(ui_ctx.path(derive_ui.CASES_OUT).read_text())] == [WEB]
+
+
+# ---- screenshots as JPEG, and the rerun command ------------------------------------------------------------
+
+
+def test_a_screenshot_is_shrunk_to_jpeg(tmp_path):
+    pil = pytest.importorskip("PIL.Image")
+    png = tmp_path / "shot.png"
+    pil.new("RGB", (1080, 2400), (240, 240, 240)).save(png)
+    data, ext = ui_web.compact_screenshot(png)
+    assert ext == ".jpg" and data[:3] == b"\xff\xd8\xff" and len(data) < png.stat().st_size
+    from io import BytesIO
+
+    assert pil.open(BytesIO(data)).width == ui_web.SHOT_MAX_WIDTH
+
+
+def test_a_file_that_is_not_an_image_is_kept_as_it_is(tmp_path):
+    bad = tmp_path / "shot.png"
+    bad.write_bytes(b"not an image")
+    assert ui_web.compact_screenshot(bad) == (b"not an image", ".png")
+
+
+def test_execute_builds_the_command_from_the_run_dir(tmp_path):
+    from workflows.testing import execute
+
+    run = tmp_path / "2026-11-05-testing-F-1"
+    (run / "qa" / "ui").mkdir(parents=True)
+    write_json(run / "qa/sources.json", {"feature": "F-1", "rfc_run_dir": "/rfc"})
+    write_json(run / "qa/ui/plan.json", {"tests": [], "skipped": []})
+    write_json(run / "qa/ui/results.json", {"environment": "jupiter", "build": "b7"})
+    joined = " ".join(execute.command("web", run, headed=True))
+    assert "--stages derive_ui,execute_web" in joined and "testing.ui_only_new" in joined
+    assert "--env jupiter --build b7" in joined and "--feature F-1" in joined and "testing.ui_headed" in joined
+    fast = " ".join(execute.command("web", run, only_existing=True))
+    assert "--stages execute_web " in fast and "ui_only_new" not in fast
+    with pytest.raises(SystemExit, match="--curl"):
+        execute.command("backend", run)
+    cmd = " ".join(execute.command("backend", run, curl="~/c.txt"))
+    assert "--stages derive_spec,execute_be" in cmd and "--env jupiter" in cmd
+
+
+def test_only_existing_needs_a_written_plan(tmp_path):
+    from workflows.testing import execute
+
+    run = tmp_path / "r"
+    (run / "qa").mkdir(parents=True)
+    write_json(run / "qa/sources.json", {"feature": "F-1"})
+    with pytest.raises(SystemExit, match="no test is written yet"):
+        execute.command("web", run, env="jupiter", build="b", only_existing=True)
+    assert "derive_ui" in " ".join(execute.command("web", run, env="jupiter", build="b"))
+
+
+def test_derive_ui_only_new_keeps_existing_tests_and_asks_for_the_rest(ui_ctx, monkeypatch):
+    monkeypatch.setattr(ui_web, "runner_problem", lambda: "")
+    monkeypatch.setattr(ui_web, "prepare", lambda ui: (ui / ui_web.TESTS_DIR).mkdir(parents=True, exist_ok=True))
+    ui = ui_ctx.path(ui_web.UI_DIR)
+    write_specs(ui, {"tests": [{"extid": WEB}]})
+    write_json(ui / ui_web.PLAN, {"tests": [{"extid": WEB, "locators": []}, {"extid": "TC-GONE-1"}],
+                                  "skipped": []})
+    ui_ctx.flags._v["testing.ui_only_new"] = True
+    engine = SpecEngine()
+    ui_ctx.engine = engine
+    derive_ui.STAGE.engine(derive_ui.STAGE, ui_ctx)
+    prompt = engine.requests[0].prompt
+    assert prompt.startswith("Add Playwright tests for 1 newly CONFIRMED web UI case(s)") and WEB2 in prompt
+    assert (ui / ui_web.TESTS_DIR / ui_web.spec_name(WEB)).is_file()            # kept, not moved aside
+
+
+def test_derive_ui_only_new_with_nothing_new_calls_no_model(ui_ctx, monkeypatch):
+    monkeypatch.setattr(ui_web, "runner_problem", lambda: "")
+    monkeypatch.setattr(ui_web, "prepare", lambda ui: (ui / ui_web.TESTS_DIR).mkdir(parents=True, exist_ok=True))
+    write_json(ui_ctx.path(ui_web.UI_DIR) / ui_web.PLAN,
+               {"tests": [{"extid": WEB}], "skipped": [{"extid": WEB2, "reason": "r"}]})
+    ui_ctx.flags._v["testing.ui_only_new"] = True
+    ui_ctx.engine = None
+    assert "nothing new to derive" in derive_ui.STAGE.engine(derive_ui.STAGE, ui_ctx).final_text

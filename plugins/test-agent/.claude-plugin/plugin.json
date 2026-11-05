@@ -1,7 +1,7 @@
 {
   "name": "test-agent",
-  "description": "Runs the harness `testing` workflow from chat: preflight, QA suite generation from an RFC run, evaluation, upload to Kiwi for review, a prerequisites checklist, then backend, web UI (Playwright) and app UI (Maestro) execution once you have confirmed the cases in Kiwi. Command: /test-agent:test. Needs the rfc-agent plugin from the same marketplace (it runs that plugin's harness).",
-  "version": "0.3.1",
+  "description": "Runs the harness `testing` workflow from chat: preflight, QA suite generation from an RFC run, evaluation, upload to Kiwi for review, a prerequisites checklist, then backend, web UI (Playwright) and app UI (Maestro) execution once you have confirmed the cases in Kiwi. Commands: /test-agent:test (the whole flow), /test-agent:execute (run the CONFIRMED cases of an existing run). Needs the rfc-agent plugin from the same marketplace (it runs that plugin's harness).",
+  "version": "0.5.0",
   "author": {
     "name": "Tata 1mg - O1"
   }

@@ -10,10 +10,14 @@ dependencies = [
 
 [project.optional-dependencies]
 # The `testing` workflow's optional deps: openpyxl for the xlsx render, tcms-api for the Kiwi case store
-# (`testing.storage=kiwi`). Everything else in that workflow — generation, gates, evaluation, the JSON
+# (`testing.storage=kiwi`), pillow to shrink failure screenshots to JPEG before they are uploaded. Everything else in that workflow — generation, gates, evaluation, the JSON
 # case store, spec derivation, BE execution — is stdlib, so a run without this extra records a decision
 # and skips the workbook instead of failing (D8/D10), and the JSON store needs neither.
-testing = ["openpyxl>=3.1,<4", "tcms-api>=15"]
+testing = [
+    "openpyxl>=3.1,<4",
+    "pillow>=10,<13",
+    "tcms-api>=15",
+]
 
 [project.scripts]
 rfc = "rfc_agent.run:main"

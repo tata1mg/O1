@@ -445,8 +445,10 @@ def test_a_long_property_value_is_truncated(clean_cases):
     rpc.TestExecution.rows.append({"id": 901, "run": int(run.run_id), "case": case["id"]})
     store(rpc).record_execution(run.run_id, "TC-RSE-SLOT-FUNC-01", "PASS",
                                 actual="a" * 5000, props={"endpoint": "b" * 5000})
-    assert len(rpc.props[901]["actual"]) == ACTUAL_VALUE_MAX
-    assert len(rpc.props[901]["endpoint"]) == PROP_VALUE_MAX
+    assert len(rpc.props[901]["actual"]) == ACTUAL_VALUE_MAX == 255       # Kiwi 16: varchar(255), rejected above
+    assert len(rpc.props[901]["endpoint"]) == PROP_VALUE_MAX == 255
+    store(rpc).record_execution(run.run_id, "TC-RSE-SLOT-FUNC-01", "FAIL", actual="line one\nline two")
+    assert rpc.props[901]["actual"] == "line one line two"
 
 
 def test_recording_for_an_unattached_case_raises(clean_cases):
@@ -558,3 +560,19 @@ def test_a_failing_comment_is_reported_not_raised():
 
     rpc.TestExecution.get_comments = boom
     assert store(rpc).comment_execution("5", "x") is False
+
+
+def test_kiwi_escaping_is_not_a_change_and_is_undone_on_read(clean_cases):
+    """Kiwi stores `"` and `'` HTML-escaped. Unescaped compare: an unchanged case stays unchanged; unescaped
+    read: derive_spec sees the step text as written."""
+    import html as html_mod
+
+    rpc = FakeRPC()
+    quoted = [{**clean_cases[0], "title": "the 'You' tab", "steps": 'Assert body.status == "ok"'}]
+    store(rpc).upsert_cases("RSE-1", quoted)
+    reindex(rpc)
+    for row in rpc.TestCase.rows:
+        row["summary"], row["text"] = html_mod.escape(row["summary"]), html_mod.escape(row["text"])
+    assert store(rpc).upsert_cases("RSE-1", quoted)["unchanged"] == 1
+    case = store(rpc).list_cases("RSE-1")[0]
+    assert "'You'" in case.summary and '"ok"' in case.text

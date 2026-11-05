@@ -147,6 +147,28 @@ test_agent's `TC-[A-Z]+-\d+`, which matched none of the generator's ids.
 
 All three executors write into the same store run, `<feature> · <env> · <build>`.
 
+### Executing an existing run: `/test-agent:execute`
+
+`/test-agent:execute [web|backend|all] [--only-existing] [--run-dir R] [--env E] [--build B] [--headed]
+[--cases …]` (or `python -m workflows.testing.execute …`) builds the harness line from the run dir: feature
+and RFC run from `qa/sources.json`, environment and build from the last results. `web` runs
+`derive_ui,execute_web` with `testing.ui_only_new`: tests are written only for CONFIRMED web cases that have
+neither a test nor a skip (no model call when there are none), then every test runs. `--only-existing` runs
+`execute_web` alone — the tests already written, at once, no model. `--pending` lists which CONFIRMED web
+cases have a test and which do not; the chat command uses it to offer that choice. `backend` is
+`derive_spec,execute_be` (Python, seconds). The newest testing run is the default; `--print` shows the
+command without running it. The backend curl's path can be stored once with
+`preflight setup-web --curl <file>`.
+
+### Evidence and Kiwi's upload limit
+
+Failure screenshots are uploaded as JPEG at 720 px wide (Pillow, else macOS `sips`): a 918 KB PNG becomes
+~47 KB. Every file sent to Kiwi is capped at 700 KB because the request goes base64 through XML-RPC, and the
+ingress in front of plutokiwi-agent rejects bodies over ~1 MB (ingress-nginx's default `proxy-body-size`),
+well under Kiwi's own `FILE_UPLOAD_MAX_SIZE` (5 MB) and the container nginx's `client_max_body_size` (10 MB).
+Traces stay in the local HTML report. A failed case's comment holds the reason, the failing requests and the
+screenshot link; a property value is capped at 255 characters, Kiwi's column size.
+
 ## Inputs
 
 `--feature` is required. Everything else is optional, and `--rfc-run-dir` is the normal way to supply the
@@ -164,7 +186,7 @@ sources.
 
 ## Flags
 
-All 45 are `testing.*`, registered in `flags.py` with help text, and declared on `WORKFLOW.flags`. Today
+All 47 are `testing.*`, registered in `flags.py` with help text, and declared on `WORKFLOW.flags`. Today
 they are introspectable through the registry — after workflow discovery (`harness.workflows.names()`,
 which imports each workflow package and so registers its flags), `harness.flags.describe(owner="testing")`
 returns the machine-readable rows, including type, default, env var and help. `harness flags --workflow testing
@@ -208,6 +230,7 @@ drops `derive_spec` and `execute_be`, since both read from the store. The harnes
 | `testing.cohort_path` | str | `""` | Dotted response path recorded as the `cohort_observed` execution property. Empty = not recorded |
 | `testing.base_url` | str | `""` | `execute_web`: the web app's origin on the target environment (`--base-url`) |
 | `testing.ui_auth` | str | `""` | `execute_web`: Playwright storage-state file with a logged-in session (`--ui-auth`); passed through, never read |
+| `testing.ui_only_new` | bool | `False` | `derive_ui`: keep written tests, derive only CONFIRMED web cases without one |
 | `testing.environments` | str | `""` | Comma-separated environments a run may target; the command offers them |
 | `testing.base_url_template` | str | `""` | `execute_web`: base URL with `{env}`, used when `--base-url` is absent |
 | `testing.ui_headed` | bool | `False` | `execute_web`: a visible, slowed-down browser to watch the suite |

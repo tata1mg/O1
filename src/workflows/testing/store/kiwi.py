@@ -35,6 +35,7 @@ duration trick because `actual_duration` is read-only, the 500/900 property trun
 from __future__ import annotations
 
 import configparser
+import html
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -66,9 +67,12 @@ def _apply_context(client, context) -> bool:
 
 #: sheet Priority -> Kiwi Priority value (kiwi_writer.py:26).
 PRIORITY_MAP = {"high": "P1", "medium": "P3", "low": "P5", "critical": "P1"}
-#: Kiwi truncates nothing itself; these caps keep one response value from filling the properties table.
-PROP_VALUE_MAX = 500
-ACTUAL_VALUE_MAX = 900
+#: A TestExecution property value is `varchar(255)` in Kiwi 16: a longer one is REJECTED ("value too long
+#: for type character varying(255)"), not truncated, and `add_property` swallowed that, so every failure
+#: reason over 255 characters reached Kiwi as nothing at all (2026-11-04, probed on plutokiwi-agent 16.2).
+#: The full text goes in the execution's comment; the property is the one-line summary.
+PROP_VALUE_MAX = 255
+ACTUAL_VALUE_MAX = 255
 SUGGESTION_VALUE_MAX = 2000
 #: The only status the agent writes a case with. Approving (CONFIRMED) or rejecting (DISABLED) is a human's.
 UPLOAD_STATUS = "PROPOSED"
@@ -111,10 +115,22 @@ def _tag_diff(rpc, case_id, wanted: list[str]) -> tuple[list[str], list[str]]:
     return stale, [t for t in wanted if t not in have]
 
 
+def _cap(text: str, limit: int) -> str:
+    """One line, at most `limit` characters — what fits Kiwi's varchar(255) property column."""
+    line = " ".join(text.split())
+    return line if len(line) <= limit else line[: limit - 1] + "…"
+
+
+def _unescape(value) -> str:
+    """Kiwi hands back what it stored HTML-escaped (`'` -> `&#x27;`, `"` -> `&quot;`). Read it as written."""
+    return html.unescape(str(value if value is not None else ""))
+
+
 def _changed_fields(existing: dict, fields: dict) -> dict:
     """{field: new value} for each field whose stored value differs. Ids compare as strings, because
-    XML-RPC hands back ints where the writer may hold either."""
-    return {k: v for k, v in fields.items() if str(existing.get(k, "")) != str(v)}
+    XML-RPC hands back ints where the writer may hold either; text compares unescaped, because otherwise
+    every case with a quote in it read as changed and was rewritten on every upload (2026-11-04: 71 of 98)."""
+    return {k: v for k, v in fields.items() if _unescape(existing.get(k, "")) != str(v)}
 
 
 def _basename(url: str) -> str:
@@ -389,9 +405,11 @@ class KiwiCaseStore:
             extid = next((t.split(":", 1)[1] for t in case_tags_ if t.startswith("extid:")), None)
             if not extid:
                 continue
-            out.append(Case(extid=extid, text=case.get("text") or "",
+            # unescaped: derive_spec parses this text, and `Assert body.x == "ok"` must not arrive as
+            # `== &quot;ok&quot;`
+            out.append(Case(extid=extid, text=_unescape(case.get("text")),
                             status=case["case_status__name"], tags=case_tags_,
-                            summary=case.get("summary", "")))
+                            summary=_unescape(case.get("summary"))))
         return out
 
     def create_run(self, feature: str, build: str, env: str, extids: list[str] | None = None,
@@ -484,12 +502,12 @@ class KiwiCaseStore:
         # evidence + metadata. Redact before this point; Kiwi is readable by every account.
         for k, v in (props or {}).items():
             try:
-                rpc.TestExecution.add_property(target["id"], str(k), str(v)[:PROP_VALUE_MAX])
+                rpc.TestExecution.add_property(target["id"], str(k), _cap(str(v), PROP_VALUE_MAX))
             except Exception:
                 pass
         if actual:
             try:
-                rpc.TestExecution.add_property(target["id"], "actual", actual[:ACTUAL_VALUE_MAX])
+                rpc.TestExecution.add_property(target["id"], "actual", _cap(actual, ACTUAL_VALUE_MAX))
             except Exception:
                 pass
         return str(target["id"])

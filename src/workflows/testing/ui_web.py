@@ -49,8 +49,11 @@ LOGIN_SPEC = "login.setup.ts"
 LOGIN_TITLE = "login"
 #: The environment variables the login step reads; no other spec may touch them.
 LOGIN_ENV = ("UI_LOGIN_PHONE", "UI_LOGIN_OTP")
-#: Per-file ceiling for evidence attached to an execution (screenshots, traces).
-MAX_ATTACH = 8 * 1024 * 1024
+#: Per-file ceiling for evidence uploaded to the store. XML-RPC sends a file base64 in one request, and on
+#: plutokiwi-agent a 940 KB screenshot (1.25 MB on the wire) failed while 286 KB ones went through, and the
+#: broken upload took the execution's comment with it (2026-11-05). Larger files stay local; the comment
+#: names them.
+MAX_ATTACH = 700 * 1024
 
 CONFIG = """\
 // Written by the testing workflow (workflows/testing/ui_web.py) on every run. Edits are overwritten.
@@ -241,6 +244,71 @@ def results(report: dict) -> list[dict]:
             if row["playwright_status"] == "skipped":
                 row.update(status="BLOCKED", detail=f"not run — {login_error}")
     return out
+
+
+#: Screenshot shrink: phone emulation renders at ~2.6x pixel density, so a PNG is 0.3-1 MB. Half that width
+#: as JPEG is ~50-150 KB and still readable.
+SHOT_MAX_WIDTH = 720
+SHOT_QUALITY = 72
+
+
+def compact_screenshot(path: Path) -> tuple[bytes, str]:
+    """(bytes, extension) for upload: the screenshot as a smaller JPEG, or the original when it cannot be
+    converted. Pillow first; macOS `sips` without it; else the file as it is (the size cap still applies)."""
+    import io
+    import tempfile
+
+    try:
+        from PIL import Image
+
+        with Image.open(path) as img:
+            img = img.convert("RGB")
+            if img.width > SHOT_MAX_WIDTH:
+                img = img.resize((SHOT_MAX_WIDTH, round(img.height * SHOT_MAX_WIDTH / img.width)))
+            buf = io.BytesIO()
+            img.save(buf, "JPEG", quality=SHOT_QUALITY, optimize=True)
+            return buf.getvalue(), ".jpg"
+    except ImportError:
+        pass
+    except OSError:
+        return path.read_bytes(), path.suffix
+    if shutil.which("sips"):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "shot.jpg"
+            proc = subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", str(SHOT_QUALITY),
+                                   "--resampleWidth", str(SHOT_MAX_WIDTH), str(path), "--out", str(out)],
+                                  capture_output=True, timeout=30)
+            if proc.returncode == 0 and out.is_file():
+                return out.read_bytes(), ".jpg"
+    return path.read_bytes(), path.suffix
+
+
+def failed_requests(trace_zip: Path, base_url: str, limit: int = 10) -> list[str]:
+    """`<status> <METHOD> <url>` for each 4xx/5xx response the page got from its own site, read from the
+    Playwright trace — the line a QA needs when a page shows only "Something went wrong" (2026-11-04,
+    jupiter: the health-record API returned 500)."""
+    import zipfile
+    from urllib.parse import urlsplit
+
+    host = urlsplit(base_url).netloc
+    out: list[str] = []
+    try:
+        with zipfile.ZipFile(trace_zip) as z:
+            for name in (n for n in z.namelist() if n.endswith(".network")):
+                for line in z.read(name).decode("utf-8", "replace").splitlines():
+                    try:
+                        snap = json.loads(line).get("snapshot") or {}
+                    except ValueError:
+                        continue
+                    req, res = snap.get("request") or {}, snap.get("response") or {}
+                    url, status = str(req.get("url", "")), res.get("status") or 0
+                    if status >= 400 and urlsplit(url).netloc == host:
+                        row = f"{status} {req.get('method', '?')} {url[:200]}"
+                        if row not in out:
+                            out.append(row)
+    except (OSError, zipfile.BadZipFile):
+        return []
+    return out[:limit]
 
 
 def _finished_at(result: dict):

@@ -32,7 +32,9 @@ locators you found in the application's source, so the test fails only when the 
    test account, write the **login step** once — `tests/login.setup.ts`, one test titled `login` — and
    nothing else touches credentials: it opens the login route, enters the number from
    `process.env.UI_LOGIN_PHONE` and the OTP from `process.env.UI_LOGIN_OTP` (never a literal), waits on a
-   logged-in state the source defines, and saves the session with
+   logged-in state the source defines — first `await expect(page).not.toHaveURL(/\/auth\//)`, and when the
+   proof needs a click (opening a menu), wrap click + check in `await expect(async () => { … }).toPass()`:
+   a click can land before the page hydrates and do nothing — and saves the session with
    `await page.context().storageState({ path: process.env.STORAGE_STATE })`. Its locators are cited like
    any other. Never set cookies or tokens by hand, and never put a credential in a spec.
 5. **Assert what the case expects, with web-first assertions.** `await expect(locator).toBeVisible()`,

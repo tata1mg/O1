@@ -54,6 +54,7 @@ def source_roots(ctx: RunContext) -> list[Path]:
 def _build_prompt(ctx: RunContext) -> str:
     cases = read_json(ctx.path(CASES_OUT), []) or []
     roots = read_json(ctx.path(ROOTS_OUT), []) or []
+    only = (read_json(ctx.path(SETTINGS_OUT), {}) or {}).get("only") or []
     lines = [
         f"Write Playwright tests for the {len(cases)} CONFIRMED web UI case(s) of feature {feature_of(ctx)}.",
         "",
@@ -94,6 +95,15 @@ def _build_prompt(ctx: RunContext) -> str:
         "",
         "In your final message, give the counts (tested / skipped) and the skip reasons grouped.",
     ]
+    if only:
+        lines[0:1] = [
+            f"Add Playwright tests for {len(only)} newly CONFIRMED web UI case(s) of feature {feature_of(ctx)}: "
+            f"{', '.join(only)}.",
+            "",
+            f"{ctx.path(PLAN_OUT)} already covers the other {len(cases) - len(only)} case(s), with their specs in",
+            f"{ctx.path(ui_web.UI_DIR) / ui_web.TESTS_DIR}: keep those entries, specs and the login step exactly as",
+            "they are. Add each new case to `tests` (its spec + cited locators) or to `skipped` (with a reason).",
+        ]
     return "\n".join(lines) + guidance_note(ctx, "derive_ui")
 
 
@@ -113,9 +123,30 @@ def _engine(stage: Stage, ctx: RunContext):
     roots = source_roots(ctx)
     ui = ctx.path(ui_web.UI_DIR)
     ui_web.prepare(ui)
+    # Specs from an earlier derive (another case set, e.g. `testing.cases` narrowed the run) are not this
+    # plan's: the gate rejects strays. Kept beside it rather than deleted, so nothing written is lost.
+    selected = {ui_web.spec_name(c["extid"]) for c in cases}
+    for old in (ui / ui_web.TESTS_DIR).glob("*.spec.ts"):
+        if old.name not in selected:
+            keep = ui / "tests.previous"
+            keep.mkdir(exist_ok=True)
+            old.replace(keep / old.name)
+    # Incremental (`testing.ui_only_new`): keep every test already written for a still-CONFIRMED case, drop
+    # the entries of cases that are no longer CONFIRMED, and ask the model only for the cases with neither a
+    # test nor a skip — so newly confirmed cases do not mean re-deriving (and re-paying for) all the rest.
+    new = [c["extid"] for c in cases]
+    previous = read_json(ctx.path(PLAN_OUT), None)
+    if bool(ctx.flag("testing.ui_only_new", False)) and isinstance(previous, dict):
+        confirmed = {c["extid"] for c in cases}
+        kept = {sec: [r for r in previous.get(sec) or [] if isinstance(r, dict) and r.get("extid") in confirmed]
+                for sec in ("tests", "skipped")}
+        done = {r["extid"] for sec in kept.values() for r in sec}
+        new = [e for e in new if e not in done]
+        write_json(ctx.path(PLAN_OUT), {**previous, **kept})
     write_json(ctx.path(CASES_OUT), cases)
     write_json(ctx.path(ROOTS_OUT), [str(r) for r in roots])
-    write_json(ctx.path(SETTINGS_OUT), {"login_required": login_required(ctx)})
+    write_json(ctx.path(SETTINGS_OUT), {"login_required": login_required(ctx),
+                                        "only": new if len(new) < len(cases) else []})
     decisions.record(ctx, stage.name, "ui_cases_selected",
                      why="the CONFIRMED exec:ui surface:web cases the run will attach, and the source the "
                          "locators must come from",
@@ -123,6 +154,9 @@ def _engine(stage: Stage, ctx: RunContext):
     if not cases:
         write_json(ctx.path(PLAN_OUT), {"tests": [], "skipped": []})
         return StageResult(final_text="no CONFIRMED web UI case — nothing to derive", engine_desc="python")
+    if not new:
+        return StageResult(final_text=f"every one of the {len(cases)} CONFIRMED web UI cases already has a test "
+                                      f"or a skip — nothing new to derive", engine_desc="python")
     # The Claude engine grants reads outside the run dir only through `--add-dir` on `repos_root`
     # (`Stage.add_repos_root`); the write guard keeps that tree read-only. One directory, so the snapshots'
     # common parent.
