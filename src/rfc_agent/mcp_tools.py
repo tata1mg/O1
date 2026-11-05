@@ -48,6 +48,9 @@ READONLY_TOOLS: dict[str, tuple[str, ...]] = {
         "get_callees",
         "get_symbol",
         "find_symbol",
+        "get_source",
+        "get_engineering_guidance",
+        "discover_libraries",
     ),
     "gsheets": (
         # instrumentation-sheet inventory needs READS only — the server also ships ~35 write tools

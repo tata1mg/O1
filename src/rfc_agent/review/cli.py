@@ -239,6 +239,7 @@ def main(argv: list[str] | None = None) -> int:
     total = {sev: sum(review.counts(m["findings"])[sev] for m in merged.values()) for sev in review.SEVERITIES}
 
     triage = None
+    triage_wait = None
     if s["ASK"]:
         items, ids = [], {}
         for rid in sorted(merged, key=lambda x: (x != "R-X", x)):
@@ -260,6 +261,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"Review: {total['BLOCKER']} blocker, {total['MAJOR']} major, {total['MINOR']} "
                 "minor — waiting for your triage",
             )
+            t_ask = time.monotonic()
             ans = pauses.ask(
                 3,
                 run_dir,
@@ -268,6 +270,7 @@ def main(argv: list[str] | None = None) -> int:
                 file_mode=args.confirm_file,
                 accept_defaults=args.yes,
             )
+            triage_wait = round(time.monotonic() - t_ask, 1)  # the person's time, not the stage's
             notes = dict(ans.get("notes") or {})
             if ans["feedback"]:
                 notes["_all"] = ans["feedback"]
@@ -298,6 +301,7 @@ def main(argv: list[str] | None = None) -> int:
                 "counts": total,
                 "reviewers": done,
                 "triage": bool(triage),
+                **({"triage_wait_s": triage_wait} if triage_wait is not None else {}),
             },
             indent=2,
         ),

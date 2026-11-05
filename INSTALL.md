@@ -15,7 +15,7 @@ plugin into Figma. It takes about
 | What | Why | Where to get it |
 |---|---|---|
 | Claude Code, already installed | The plugin runs inside it | — |
-| Access to the GitHub repo `tata1mg/O1` | It's where the plugin is installed from | Your team |
+| Access to the GitHub repo `tata1mg/O1` | It's where the plugin is installed from https://github.com/tata1mg/O1 | Your team |
 | An account on your team's **Confluence / Jira** site | PRDs and tickets are read from there | Your team |
 | The **team values**: Atlassian site, fleetlens URL, product surfaces, service inventory | Settings shared by the whole team. Not secret | A teammate |
 | A running **fleetlens** server (the context layer), its URL and token | Scope, Investigate and Review use it to find and trace code across repos. fleetlens is open source: [github.com/tata1mg/fleetlens](https://github.com/tata1mg/fleetlens) | Your team runs it. The token is in the team vault |
@@ -138,7 +138,7 @@ in.
 | `ATLASSIAN.SITE is not set` | Run `/rfc-agent:setup` and give the team's Atlassian site |
 | `context layer unavailable` | Run `/rfc-agent:setup` to check the fleetlens URL and token, and that the server is reachable |
 | A repo shows `no access` or `clone failed` | Check you can `git clone` that repo yourself, and fix your git credentials for its host |
-| `Langfuse observability is ON but the Langfuse keys are missing` | Copy the keys from the vault into `~/.config/rfc-agent/config.json`, or add `--langfuse false` to the run command |
+| `Langfuse tracing is required but the Langfuse keys are missing` | Copy the keys from the vault into `~/.config/rfc-agent/config.json`, or run `/rfc-agent:setup` |
 | Figma: nothing happens when you press ⌥⌘P | Run it once from **Plugins → Development → rfc-agent Figma snapshot**. If it isn't listed, run `/rfc-agent:setup`: it re-imports it |
 | Figma: "import it once from its fixed folder" or "an OLD rfc-agent plugin window" | Do what the message says: import the manifest path it shows, or close the old plugin window (✕) and press ⌥⌘P again |
 

@@ -81,14 +81,28 @@ def _slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:60] or "page"
 
 
+_FRESH: dict[tuple[str, str], Path] = {}  # one new folder per (root, name) per process, so every caller agrees
+
+
 def _run_dir(args, cfg) -> Path:
+    """The run folder: the given one, or a NEW `<name>-<timestamp>` folder (never an earlier run's).
+
+    A PRD run always starts fresh, so rerunning the same PRD never mixes into or overwrites a previous run, and each
+    run is its own Langfuse session. Continuing a stopped run is `--run-dir` without `--prd`. The name is chosen once
+    per process: tracing, the whole-run entry and Scope all ask, and they must land in the same folder."""
     if args.run_dir:
         return Path(args.run_dir).expanduser()
     root = Path(args.out or cfg.get("RUNS_ROOT") or "~/rfc-runs").expanduser()
     key = at.jira_key_of(args.jira) if args.jira else None
     pid = at.page_id_of(args.prd)
     name = key.lower() if key else (f"prd-{pid}" if pid else _slugify(Path(args.prd).stem))
-    return root / name
+    if (str(root), name) not in _FRESH:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path, n = root / f"{name}-{stamp}", 2
+        while path.exists():
+            path, n = root / f"{name}-{stamp}-{n}", n + 1
+        _FRESH[(str(root), name)] = path
+    return _FRESH[(str(root), name)]
 
 
 def _write_page(path: Path, page: dict, site: str | None = None) -> None:
@@ -124,13 +138,17 @@ def _axon_atlassian(cfg, model: str, run_dir: Path):
 @observe.entry("scope")
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv[:1] == ["run-dir"]:  # where a run for these args lands — used by /rfc-agent:scope before it starts
+    if argv[:1] == ["run-dir"]:  # where a run for these args lands — used by the commands before they start
         rp = argparse.ArgumentParser(prog="python -m rfc_agent.scope run-dir")
-        rp.add_argument("--prd", required=True)
+        rp.add_argument("--prd")
         rp.add_argument("--jira")
         rp.add_argument("--run-dir")
         rp.add_argument("--out")
-        print(_run_dir(rp.parse_known_args(argv[1:])[0], get_config()))  # ignores other stages' options
+        ns = rp.parse_known_args(argv[1:])[0]  # ignores other stages' options
+        if not ns.prd and not ns.run_dir:
+            print("run-dir: pass --prd (a new folder) or --run-dir (the folder to continue)", file=sys.stderr)
+            return 2
+        print(_run_dir(ns, get_config()))
         return 0
     if argv[:1] == ["cleanup"]:
         if len(argv) != 2:
@@ -145,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--jira", help="Jira key or url")
     p.add_argument("--repos", default="", help="repos you already know are in scope, comma list")
     p.add_argument("--repos-root", help="local checkouts root (default: config REPOS_ROOT)")
-    p.add_argument("--run-dir", help="run directory (default: RUNS_ROOT/<jira-key or prd-id>)")
+    p.add_argument("--run-dir", help="run directory (default: a new RUNS_ROOT/<jira-key or prd-id>-<timestamp>)")
     p.add_argument("--out", help="parent for the auto-named run dir (default: config RUNS_ROOT)")
     p.add_argument("--yes", action="store_true", help="accept the proposal without the confirm screen")
     p.add_argument("--confirm-file", action="store_true",

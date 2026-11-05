@@ -15,7 +15,7 @@ RUN=<the --run-dir value from $ARGUMENTS, made absolute>
 TASK="draft · <run folder name>" uv run --project "$PROJ" python -m rfc_agent.draft $ARGUMENTS > "$RUN/logs/draft.out" 2>&1
 ```
 
-If it exits 2 with `Langfuse observability is ON but the Langfuse keys are missing`, nothing ran: relay the message (add the keys to the config, or rerun with `--langfuse false`). Never pick `false` for the user.
+If it exits 2 with `Langfuse tracing is required but the Langfuse keys are missing`, nothing ran: relay the message (add the keys to the config; `/rfc-agent:setup` fills them in).
 
 Run it with `run_in_background`. If `$RUN/work/understanding.md` is missing, stop: Investigate
 (`/rfc-agent:investigate`) comes first.

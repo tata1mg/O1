@@ -23,12 +23,11 @@ each, with the concrete fix for every FAIL. Read-only — change nothing without
 4. **Config loads**: `uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "import rfc_agent.config as c; c.get_config(); print('resolved config:', c._LOCAL)"`
    exits clean — report the path. WARN on any `unknown key(s) [...] are ignored` line (typo or a leftover from an
    older version). Then check the team values resolve: `ATLASSIAN.SITE` is set (FAIL for Confluence/Jira PRDs).
-   - **Langfuse (FAIL if tracing is on and the keys are missing — the run stops with exit 2)**:
+   - **Langfuse (FAIL if the keys are missing — tracing is required and the run stops with exit 2)**:
      `uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "from rfc_agent import observe; raise SystemExit(observe.preflight())"`
-     — prints `langfuse=off`, or `langfuse=on keys=ok|MISSING verbose=…`. `MISSING` fix: fill
+     — prints `langfuse=on keys=ok|MISSING verbose=…`. `MISSING` fix: fill
      `LANGFUSE.PUBLIC_KEY`/`LANGFUSE.SECRET_KEY` in ~/.config/rfc-agent/config.json (or export
-     `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`), or turn tracing off: `LANGFUSE.ENABLED: false` in that file,
-     or `--langfuse false` on a single run.
+     `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`).
 5. **REPOS_ROOT + RUNS_ROOT**: REPOS_ROOT exists and contains repo checkouts (`ls` a couple of known
    ones). Additionally WARN (not FAIL) if RUNS_ROOT resolves INSIDE REPOS_ROOT: the tracers search the
    REPOS_ROOT tree, so run dirs living in it let a search hit prior runs' findings/RFCs and cite them as if
