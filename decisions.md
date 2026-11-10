@@ -64,7 +64,12 @@ mandatory.
 
 ## D-07 Default model mapping (Claude tier → gateway model)
 
-**Decision.**
+**Current defaults.** The gateway now serves Claude 5.5 for every tier: `opus` / `opus[1m]` map to
+`anthropic/claude-opus-5.5`, `sonnet` / `sonnet[1m]` to `anthropic/claude-sonnet-5.5`, and `haiku` to
+`anthropic/claude-haiku-5.5` (replacing Gemini). The table and prices below record the original mapping,
+not the current defaults; see [docs/AXON.md](docs/AXON.md) for the current stage mapping.
+
+**Original decision.**
 
 | Stage model (Claude) | Gateway model | Why |
 |---|---|---|

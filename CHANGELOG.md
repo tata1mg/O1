@@ -22,6 +22,16 @@ versions match `.claude-plugin/plugin.json`.
   sign-in (`axon pi mcp login atlassian`), so `--engine axon` no longer needs `claude`. The Axon doctor checks
   the sign-in.
 
+### Changed
+
+- **Langfuse Python SDK v5, ready for the Langfuse v4 platform.** `langfuse>=5,<6` (5.2.0 locked). A trace's
+  input and output are now its root observation's own (`set_trace_io` / `set_current_trace_io` are gone in v5).
+  The secret scrubber decodes v5's JSON-encoded metadata values before scrubbing them. Propagated metadata now
+  keeps non-string values that v4 dropped (`run_count`, `identity_degraded`). `scripts/mine_reasons.py` reads the
+  Observations API v2 (`/api/public/v2/observations`, cursor pages, `--days` to bound the search) instead of the
+  v1 endpoint Langfuse Cloud retires on 2026-11-16. `tests/infra/test_langfuse_v5.py` fails on any call v5 removed
+  or any retired public-API endpoint.
+
 ## 0.1.1 (pilot)
 
 ### Changed

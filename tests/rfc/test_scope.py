@@ -346,6 +346,15 @@ def test_plugin_imported_from_fixed_folder_gets_current_code(tmp_path, monkeypat
     assert json.loads((home / "manifest.json").read_text())["id"] == plugin_id  # Figma's entry stays valid
 
 
+@pytest.mark.parametrize("override", [None, "custom-atlassian-model"])
+def test_connector_session_model_default_and_override(tmp_path, override):
+    kwargs = {"model": override} if override else {}
+    session = at.ConnectorSession(tmp_path / "s.jsonl", **kwargs)
+    expected = override or "claude-haiku-5-5"
+    assert session.model == expected
+    assert session.cmd[session.cmd.index("--model") + 1] == expected
+
+
 def test_connector_session_reports_claude_refusal_not_connector(tmp_path):
     """A usage-limit reply used to surface as 'connector not usable'; it must name the real cause."""
     fake = tmp_path / "claude"

@@ -1,8 +1,8 @@
-"""The Axon backend for rfc-agent's agents: one headless `axon pi --mode json -p` per AgentSpec.
+"""Shared Pi transport for rfc-agent: `axon pi` or vanilla `pi --mode json -p` per AgentSpec.
 
 `investigate.agent.run` is the one place every stage starts an agent (lead, tracers, UI reader, drafter,
 reviewers, fixers, summarizer). On the default engine it runs `claude -p` exactly as before; when the stage's
-engine is `axon` it hands the same AgentSpec here and gets the same AgentResult back.
+engine is `axon` or `pi` it hands the same AgentSpec here and gets the same AgentResult back.
 
 The trick that keeps the rest of the pipeline untouched: Pi's event stream is converted, line by line, into
 the Claude stream-json shape (`PiToClaude`) and written to the SAME `logs/<stage>.<label>.<step>.stream.jsonl`
@@ -45,7 +45,7 @@ from harness.engines.pi import (
 )
 from harness.engines.pi_translate import session_usage_cost
 
-ENGINES = ("claude-code", "axon")
+ENGINES = ("claude-code", "axon", "pi")
 DEFAULT_ENGINE = "claude-code"
 ENGINE_ENV = "RFC_AGENT_ENGINE"  # set by `rfc --engine` (and each stage CLI); beats config AGENT.ENGINE
 STAGE_ENGINES_ENV = "RFC_AGENT_STAGE_ENGINES"  # JSON {stage: engine}, set by --stage-engine
@@ -88,9 +88,11 @@ def stage_engines(cfg) -> dict[str, str]:
     return out
 
 
-def engine_for(stage: str, cfg) -> str:
-    """The engine a stage's agents run on: per-stage override > run engine > claude-code."""
-    name = stage_engines(cfg).get(stage) or os.environ.get(ENGINE_ENV) or (
+def engine_for(stage: str, cfg, *, engine: str | None = None,
+               stage_overrides: dict[str, str] | None = None) -> str:
+    """Resolve the effective engine; optional CLI choices also work before apply_engine_args exports them."""
+    stages = {**stage_engines(cfg), **(stage_overrides or {})}
+    name = stages.get(stage) or engine or os.environ.get(ENGINE_ENV) or (
         cfg.get("AGENT.ENGINE") if cfg else None) or DEFAULT_ENGINE
     if name not in ENGINES:
         raise ValueError(f"unknown engine {name!r} for stage {stage!r}; known: {', '.join(ENGINES)}")
@@ -124,21 +126,27 @@ def apply_engine_args(engine: str | None, stage_items: list[str] | None) -> None
         os.environ[STAGE_ENGINES_ENV] = json.dumps({**_env_stage_engines(), **extra})
 
 
-def settings(cfg) -> dict:
-    """AGENT.AXON from config: BIN, PROVIDER, MODELS (tier/id -> gateway id), THRESHOLD_COMPACTION,
-    ATLASSIAN_SERVER (the name of the Atlassian MCP server in Axon's mcp.json)."""
-    s = (cfg.get("AGENT.AXON", {}) if cfg else {}) or {}
+def settings(cfg, *, engine: str = "axon") -> dict:
+    """AGENT.AXON or AGENT.PI: the same model/tool transport, different executable and auth home."""
+    if engine not in ("axon", "pi"):
+        raise ValueError(f"not a Pi runtime: {engine!r}")
+    s = (cfg.get(f"AGENT.{engine.upper()}", {}) if cfg else {}) or {}
+    if engine == "axon":
+        provider = s.get("PROVIDER") or "litellm"
+    else:  # Pi: the shipped model tiers are OpenRouter ids; an explicit "" leaves the choice to Pi itself
+        provider = s["PROVIDER"] if s.get("PROVIDER") is not None else "openrouter"
     return {
-        "bin": str(s.get("BIN") or os.environ.get("AXON_BIN") or "axon"),
-        "provider": str(s.get("PROVIDER") or "litellm"),
+        "bin": str(s.get("BIN") or os.environ.get(f"{engine.upper()}_BIN") or engine),
+        "provider": str(provider),
         "models": dict(s.get("MODELS") or {}),
         "threshold_compaction": bool(s.get("THRESHOLD_COMPACTION", False)),
         "atlassian_server": str(s.get("ATLASSIAN_SERVER") or "atlassian"),
+        "agent_dir": str(Path(s.get("AGENT_DIR") or "~/.pi/agent").expanduser()),
     }
 
 
-def gateway_model(model: str | None, cfg) -> str | None:
-    return map_model(model, settings(cfg)["models"])
+def gateway_model(model: str | None, cfg, *, engine: str = "axon") -> str | None:
+    return map_model(model, settings(cfg, engine=engine)["models"])
 
 
 # ---- Pi stream -> Claude stream-json ---------------------------------------------------------------
@@ -174,7 +182,9 @@ def _text_of(content) -> str:
 class PiToClaude:
     """Feed Pi `--mode json` events, get Claude stream-json events back (a list per input event)."""
 
-    def __init__(self, *, session_id: str, model: str | None, cwd: Path | None = None, mcp: list[str] | None = None):
+    def __init__(self, *, session_id: str, model: str | None, cwd: Path | None = None,
+                 mcp: list[str] | None = None, engine: str = "axon"):
+        self.engine = engine
         self.session_id = session_id
         self.model = model
         self.cwd = cwd
@@ -191,7 +201,7 @@ class PiToClaude:
     def _init(self) -> dict:
         self._init_sent = True
         return {"type": "system", "subtype": "init", "session_id": self.session_id, "model": self.model,
-                "engine": "axon", "mcp_servers": [{"name": n, "status": "registered"} for n in self.mcp]}
+                "engine": self.engine, "mcp_servers": [{"name": n, "status": "registered"} for n in self.mcp]}
 
     def feed(self, ev: dict) -> list[dict]:
         t = ev.get("type")
@@ -250,7 +260,7 @@ class PiToClaude:
         err = error or self.error or ("" if self.settled else "the Pi stream ended without agent_settled "
                                                              "(crashed, killed or truncated)")
         return {"type": "result", "subtype": "success" if not err else "error_during_execution",
-                "is_error": bool(err), "session_id": self.session_id, "engine": "axon", "model": self.model,
+                "is_error": bool(err), "session_id": self.session_id, "engine": self.engine, "model": self.model,
                 "total_cost_usd": round(self.cost if cost is None else cost, 6), "num_turns": self.turns,
                 "result": err or self.final_text, "usage": dict(self.usage)}
 
@@ -270,8 +280,10 @@ def pi_tools(spec_tools, mcp_tools: list[str]) -> list[str]:
 
 
 def build_argv(*, bin: str, provider: str, model: str | None, thinking: str | None, tools: list[str],
-               session_dir: Path, session_id: str, resume_file: Path | None, name: str) -> list[str]:
-    argv = [bin, "pi", "--mode", "json", "-p", *HERMETIC_FLAGS, "-e", str(GUARD_JS), "-e", str(RFC_TOOLS_JS)]
+               session_dir: Path, session_id: str, resume_file: Path | None, name: str,
+               engine: str = "axon") -> list[str]:
+    argv = [bin, *(["pi"] if engine == "axon" else []), "--mode", "json", "-p",
+            *HERMETIC_FLAGS, "-e", str(GUARD_JS), "-e", str(RFC_TOOLS_JS)]
     if provider:
         argv += ["--provider", provider]
     if model:
@@ -287,7 +299,7 @@ def build_argv(*, bin: str, provider: str, model: str | None, thinking: str | No
 
 
 def build_env(*, run_dir: Path, spec, counter: Path, tools_cfg: Path, denials: Path, granted: list[str],
-              hook_env: dict[str, str]) -> dict[str, str]:
+              hook_env: dict[str, str], engine: str = "axon", agent_dir: str = "~/.pi/agent") -> dict[str, str]:
     env = {**os.environ, **hook_env}
     env["RFC_TOOLS_CONFIG"] = str(tools_cfg)
     env["HARNESS_POLICY_CMD"] = json.dumps(policy_cmd())
@@ -302,20 +314,31 @@ def build_env(*, run_dir: Path, spec, counter: Path, tools_cfg: Path, denials: P
     env["PYTHONPATH"] = os.pathsep.join(str(Path(p).resolve()) for p in parts)
     for k in ("CLAUDE_CODE_EFFORT_LEVEL", "PI_OFFLINE", "PI_CODING_AGENT_DIR"):
         env.pop(k, None)
+    if engine == "pi":
+        # Nested inside Axon, vanilla Pi must use its own login, not Axon's home or relay capability.
+        if env.get("PI_AXON_AUTH_RELAY_URL"):
+            for k in ("LITELLM_API_KEY", "LITELLM_BASE_URL", "PI_WEB_SEARCH_API_KEY",
+                      "PI_MODEL_RECOMMENDER_API_KEY"):
+                env.pop(k, None)
+        for k in list(env):
+            if k.startswith("PI_AXON_") or k.startswith("PI_ORG_OTEL_MANAGED_"):
+                env.pop(k, None)
+        env["PI_CODING_AGENT_DIR"] = str(Path(agent_dir).expanduser())
     return env
 
 
 def run(spec, prompt: str, run_dir: Path, cfg, *, resume: str | None = None, on_event=None,
-        stage: str = "investigate", step: str | None = None, trace_step: str | None = None):
-    """`investigate.agent.run` on Axon. Same arguments, same AgentResult, same log files."""
-    from . import observe
+        stage: str = "investigate", step: str | None = None, trace_step: str | None = None,
+        engine: str = "axon"):
+    """`investigate.agent.run` on Axon or vanilla Pi. Same AgentResult, hooks and log files."""
+    from . import llm_metrics, observe
     from .investigate import agent as ag
 
     run_dir = run_dir.resolve()
-    s = settings(cfg)
-    if os.environ.get("RFC_AGENT_NO_REAL_CLAUDE") and Path(s["bin"]).name == "axon" and not Path(s["bin"]).is_file():
-        raise RuntimeError("test guard: refusing to start the real `axon` (RFC_AGENT_NO_REAL_CLAUDE is set) — "
-                           "set AGENT.AXON.BIN to a fake")
+    s = settings(cfg, engine=engine)
+    if os.environ.get("RFC_AGENT_NO_REAL_CLAUDE") and Path(s["bin"]).name == engine and not Path(s["bin"]).is_file():
+        raise RuntimeError(f"test guard: refusing to start the real `{engine}` (RFC_AGENT_NO_REAL_CLAUDE is set) — "
+                           f"set AGENT.{engine.upper()}.BIN to a fake")
     logs = run_dir / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     attempt = step or ("fix" if resume else "run")
@@ -338,7 +361,7 @@ def run(spec, prompt: str, run_dir: Path, cfg, *, resume: str | None = None, on_
         found = _session_file(session_dir, resume)
         if not found.exists():
             # the Claude path fails the same way when a session is gone; every caller then reruns cold
-            res.error = f"axon: no saved Pi session {resume} under {session_dir} — cannot resume"
+            res.error = f"{engine}: no saved Pi session {resume} under {session_dir} — cannot resume"
             stream_path.write_text("", encoding="utf-8")
             return res
         resume_file = found
@@ -353,10 +376,11 @@ def run(spec, prompt: str, run_dir: Path, cfg, *, resume: str | None = None, on_
         hook_cmd=[sys.executable, str(ag.HOOK)],
         threshold_compaction=s["threshold_compaction"],
     )
-    model = gateway_model(spec.model, cfg)
+    model = gateway_model(spec.model, cfg, engine=engine)
     argv = build_argv(bin=s["bin"], provider=s["provider"], model=model, thinking=thinking_for(spec.effort),
                       tools=pi_tools(spec.builtin_tools, granted), session_dir=session_dir,
-                      session_id=session_id, resume_file=resume_file, name=f"{stage}.{spec.label}.{attempt}")
+                      session_id=session_id, resume_file=resume_file, name=f"{stage}.{spec.label}.{attempt}",
+                      engine=engine)
     env = build_env(run_dir=run_dir, spec=spec, counter=counter, tools_cfg=tools_cfg,
                     denials=logs / f"{base}.denials.jsonl", granted=granted, hook_env={
                         "INVESTIGATE_RUN_DIR": str(run_dir),
@@ -364,14 +388,21 @@ def run(spec, prompt: str, run_dir: Path, cfg, *, resume: str | None = None, on_
                         "INVESTIGATE_CHECK_FILES": ",".join(spec.check_files),
                         "INVESTIGATE_COUNTER": str(counter),
                         "INVESTIGATE_CALL_BUDGET": str(spec.call_budget),
-                    })
+                    }, engine=engine, agent_dir=s["agent_dir"])
 
-    trace = observe.agent_started(spec.label, stage=stage, step=trace_step or attempt, model=model, prompt=prompt)
-    shim = PiToClaude(session_id=session_id, model=model, cwd=run_dir, mcp=[ag.SERVER] if mcp_spec else [])
+    trace = observe.agent_started(spec.label, stage=stage, step=trace_step or attempt, model=model, prompt=prompt,
+                                  per_call=llm_metrics.enabled(cfg))
+    shim = PiToClaude(session_id=session_id, model=model, cwd=run_dir, mcp=[ag.SERVER] if mcp_spec else [],
+                      engine=engine)
+    calls = (llm_metrics.CallRecorder(stream_path, engine=engine, model=model, label=spec.label,
+             stage=stage, step=attempt, trace=trace, requested_model=spec.model)
+             if llm_metrics.enabled(cfg) else None)
     try:
         _run_proc(argv, prompt, run_dir, env, spec, stream_path, res, shim, session_dir, on_event, trace,
-                  fresh=resume_file is None)
+                  fresh=resume_file is None, calls=calls)
     finally:
+        if calls is not None:
+            res.extra["llm_metrics"] = calls.finish()
         if on_event:
             on_event(spec.label, "end", {"ok": res.ok, "error": res.error, "session_id": res.session_id,
                                          "tool_calls": res.tool_calls, "seconds": res.seconds,
@@ -386,14 +417,15 @@ def run(spec, prompt: str, run_dir: Path, cfg, *, resume: str | None = None, on_
                 usage=res.extra.get("usage"),
                 metadata={"session_id": res.session_id, "seconds": res.seconds, "turns": res.turns,
                           "tool_calls": res.tool_calls, "rate_limited": res.rate_limited, "resumed": bool(resume),
-                          "effort": spec.effort, "stream": res.stream, "engine": "axon",
-                          "requested_model": spec.model},
+                          "effort": spec.effort, "stream": res.stream, "engine": engine,
+                          "requested_model": spec.model,
+                          **({"llm_metrics": res.extra["llm_metrics"]} if calls is not None else {})},
             )
     return res
 
 
 def _run_proc(argv, prompt, run_dir, env, spec, stream_path, res, shim: PiToClaude, session_dir, on_event,
-              trace, *, fresh: bool = True) -> None:
+              trace, *, fresh: bool = True, calls=None) -> None:
     import subprocess
 
     from .investigate import agent as ag
@@ -410,7 +442,7 @@ def _run_proc(argv, prompt, run_dir, env, spec, stream_path, res, shim: PiToClau
         line = json.dumps(ev, ensure_ascii=False)
         out.write(line + "\n")
         out.flush()
-        ag._consume(line, res, on_event, trace, run_dir)
+        ag._consume(ev, res, on_event, trace, run_dir)
 
     with open(err_path, "w", encoding="utf-8") as err, open(stream_path, "w", encoding="utf-8") as out, \
             open(raw_path, "w", encoding="utf-8") as raw:
@@ -418,8 +450,11 @@ def _run_proc(argv, prompt, run_dir, env, spec, stream_path, res, shim: PiToClau
             proc = subprocess.Popen(argv, cwd=run_dir, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err,
                                     env=env, start_new_session=True)
         except FileNotFoundError:
-            res.error = (f"`{argv[0]}` not found — install Axon (curl --proto '=https' --tlsv1.2 -fsSL "
-                         f"https://deputydev.ai/axon/install.sh | sh) or set AGENT.AXON.BIN")
+            install = ("curl --proto '=https' --tlsv1.2 -fsSL https://deputydev.ai/axon/install.sh | sh"
+                       if shim.engine == "axon" else
+                       "npm install -g --ignore-scripts @earendil-works/pi-coding-agent")
+            res.error = (f"`{argv[0]}` not found — install {shim.engine.capitalize()} with `{install}` or set "
+                         f"AGENT.{shim.engine.upper()}.BIN")
             emit(out, shim.result(error=res.error))
             res.seconds = round(time.monotonic() - t0, 1)
             return
@@ -443,6 +478,8 @@ def _run_proc(argv, prompt, run_dir, env, spec, stream_path, res, shim: PiToClau
                     ev = json.loads(text)
                 except ValueError:
                     continue
+                if calls is not None:
+                    calls.feed(ev)
                 for cev in shim.feed(ev):
                     emit(out, cev)
         finally:
@@ -466,12 +503,12 @@ def _run_proc(argv, prompt, run_dir, env, spec, stream_path, res, shim: PiToClau
                      f"{err_path.name}: {stderr_tail.strip().splitlines()[-1][:300]}")
         elif not shim.settled and not shim.error:
             last = stderr_tail.strip().splitlines()[-1][:300] if stderr_tail.strip() else "no stderr"
-            error = f"axon exited {proc.returncode} without finishing: {last}"
+            error = f"{shim.engine} exited {proc.returncode} without finishing: {last}"
         elif exit_code and not shim.error:
             # a finished turn, but the process failed afterwards (Pi exits 0 in --mode json even when the agent
             # errored, so a non-zero code here is the launcher or Pi itself); as the Claude path does, it fails
             last = stderr_tail.strip().splitlines()[-1][:300] if stderr_tail.strip() else "no stderr"
-            error = f"axon exited {exit_code} after the turn finished: {last}"
+            error = f"{shim.engine} exited {exit_code} after the turn finished: {last}"
         # the session file is authoritative (survives a torn pipe, includes compaction spend) but holds EVERY
         # turn of the session: on a resume it would re-bill the earlier invocations, so there the stream sum
         # of this invocation's messages is the honest number
@@ -480,7 +517,7 @@ def _run_proc(argv, prompt, run_dir, env, spec, stream_path, res, shim: PiToClau
         emit(out, shim.result(cost=total, error=error))
     res.seconds = round(time.monotonic() - t0, 1)
     res.session_id = shim.session_id
-    res.extra["engine"] = "axon"
+    res.extra["engine"] = shim.engine
     if not res.error and res.extra.get("result_is_error"):
         res.error = str(res.final_text or "the agent failed")[:400]
     res.ok = not res.error
@@ -497,7 +534,7 @@ def add_engine_args(p) -> None:
 # ---- doctor ----------------------------------------------------------------------------------------
 
 # every model the pipeline's stages name by default (investigate/config.py, review, summarize, scope)
-_STAGE_MODELS = ("claude-opus-5-5[1m]", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5-20251001")
+_STAGE_MODELS = ("claude-opus-5-5[1m]", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")
 
 
 def list_models(bin: str, timeout: int = 120) -> set[str] | None:

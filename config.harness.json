@@ -2,7 +2,7 @@
   "_comment": "The harness's own working values — models, timeouts, tracing behaviour — each with a note. Ships with the plugin and is read-only: don't edit it (a plugin update replaces it). To change one, set the same key in ~/.config/rfc-agent/config.json, which wins. Precedence: env var > config.json > this file.",
   "AGENT": {
     "_DEFAULT_MODEL_note": "The [1m] suffix requests the 1M-token context window. Needed headroom, not luxury: stage agents start with a large fixed manifest (builtin tools + MCP schemas + any claude.ai connectors the account has).",
-    "DEFAULT_MODEL": "claude-sonnet-5[1m]",
+    "DEFAULT_MODEL": "claude-sonnet-5-5[1m]",
     "_STAGE_MODELS_note": "Per-stage model override, {stage name: model}; a stage not listed uses DEFAULT_MODEL. Read by the shared engine (the `harness run testing` stages). The RFC pipeline (Scope -> Summarize) picks its own models (e.g. rfc_agent/investigate/config.py).",
     "STAGE_MODELS": {},
     "RUN_TIMEOUT": 2400,
@@ -16,6 +16,8 @@
     "_comment": "Tracing behaviour. HOST, keys and ENVIRONMENT are yours: they go in ~/.config/rfc-agent/config.json.",
     "_VERBOSE_note": "false (default): one node per agent (model, tokens, cost, time) plus gates and your pause answers. true: also one span per tool call (input and output clipped to 2K). Env RFC_AGENT_LANGFUSE_VERBOSE; flag `--langfuse-verbose true|false`.",
     "VERBOSE": false,
+    "_PER_CALL_note": "Opt-in per-visible-assistant-response metrics: local *.llm-calls.jsonl and *.llm-metrics.json plus Langfuse generations. Timing boundaries are explicit, NOT provider HTTP latency. Hidden retries/compaction calls may be unobservable. Env RFC_AGENT_LLM_CALLS.",
+    "PER_CALL": false,
     "_MASK_SECRETS_note": "Client-side secret redaction (privacy.py): every exported span attribute passes a gitleaks-derived ruleset before leaving the machine (AWS/GitHub/Slack/Atlassian/OpenAI/Anthropic keys, JWTs, PEM blocks, connection-string credentials, bearer tokens, keyword=value secrets). Fail-closed. Disable ONLY for local debugging.",
     "MASK_SECRETS": true
   }

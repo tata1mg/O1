@@ -14,7 +14,7 @@ FAKE = r'''#!/usr/bin/env python3
 import json, os, sys
 prompt = sys.stdin.read()
 mode = os.environ.get("FAKE_MODE", "ok")
-if "stream-json" in sys.argv:  # the discovery agent
+if "stream-json" in sys.argv and "--mcp-config" in sys.argv:  # the discovery agent
     open(os.environ["FAKE_PROMPT"] + ".disc", "w").write(prompt)
     open(os.environ["FAKE_PROMPT"] + ".argv", "w").write(json.dumps(sys.argv[1:]))
     mcp = json.load(open(sys.argv[sys.argv.index("--mcp-config") + 1]))
@@ -36,6 +36,7 @@ if "stream-json" in sys.argv:  # the discovery agent
         print(json.dumps(ev))
     sys.exit(0)
 open(os.environ["FAKE_PROMPT"], "w").write(prompt)
+open(os.environ["FAKE_PROMPT"] + ".summary.argv", "w").write(json.dumps(sys.argv[1:]))
 if mode in ("ok", "nojson"):
     summary = "Consumer web checkout lets users pick an existing patient; patient service checks similar names."
     res = {"result": json.dumps({"summary": summary, "surfaces": ["consumer_web", "phlebo_app", "nope"]}),
@@ -44,6 +45,9 @@ elif mode == "limit":
     res = {"is_error": True, "result": "You've hit your weekly limit"}
 else:
     res = {"result": "sorry, no json"}
+if "stream-json" in sys.argv:
+    print(json.dumps({"type": "system", "subtype": "init", "session_id": "summary-session"}))
+    res["type"] = "result"
 print(json.dumps(res))
 '''
 
@@ -72,9 +76,14 @@ def _fake(tmp_path, monkeypatch, mode="ok"):
     return Cfg(**{"AGENT.CLAUDE_BIN": str(fake), "SCOPE.SURFACES": SURFACES})
 
 
-def test_summary_and_known_surfaces_only(tmp_path, monkeypatch):
+@pytest.mark.parametrize("override", [None, "custom-summary-model"])
+def test_summary_and_known_surfaces_only(tmp_path, monkeypatch, override):
     cfg = _fake(tmp_path, monkeypatch)
+    if override:
+        cfg.d["SCOPE.SUMMARY_MODEL"] = override
     s = c.summarise(PRD, cfg)
+    argv = json.loads((tmp_path / "prompt.txt.summary.argv").read_text())
+    assert argv[argv.index("--model") + 1] == (override or "claude-haiku-5-5")
     assert s["ok"] and s["summary"].startswith("Consumer web checkout") and s["cost_usd"] == 0.012
     assert s["surfaces"] == ["consumer_web", "phlebo_app"]  # unknown names dropped
     prompt = (tmp_path / "prompt.txt").read_text()
@@ -100,8 +109,11 @@ def test_surface_table_from_config_and_unmapped():
     assert c.surfaces_of(None) == {}, "no org table -> no surfaces (nothing org-specific in the code)"
 
 
-def test_discovery_agent_is_isolated_and_parsed(tmp_path, monkeypatch):
+@pytest.mark.parametrize("override", [None, "custom-discovery-model"])
+def test_discovery_agent_is_isolated_and_parsed(tmp_path, monkeypatch, override):
     cfg = _fake(tmp_path, monkeypatch)
+    if override:
+        cfg.d["SCOPE.DISCOVERY_MODEL"] = override
     spec = {"type": "http", "url": "http://fl/mcp", "headers": {"Authorization": "Bearer t"}}
     d = c.discover(PRD, cfg, spec, log_dir=tmp_path / "logs")
     assert d["ok"] and d["cost_usd"] == 0.42 and d["tool_calls"] == 1 and d["error"] is None
@@ -109,6 +121,7 @@ def test_discovery_agent_is_isolated_and_parsed(tmp_path, monkeypatch):
                              {"service": "svc_a", "why": "owns the order patient name"},
                              {"service": "svc_a_admin_service", "why": "same repo"}], "the LAST services JSON wins"
     argv = json.loads((tmp_path / "prompt.txt.argv").read_text())
+    assert argv[argv.index("--model") + 1] == (override or "claude-sonnet-5-5")
     assert argv[argv.index("--tools") + 1] == "" and "--strict-mcp-config" in argv, "no built-ins, no other MCP"
     grants = argv[argv.index("--allowedTools") + 1].split(",")
     assert grants and all(g.startswith("mcp__fleetlens__") for g in grants)

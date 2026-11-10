@@ -178,7 +178,8 @@ def test_patch_mode_prompt_and_model_override(tmp_path, monkeypatch):
     """Patch revisions carry the one-Edit-per-failure contract and honor AGENT.STAGE_MODELS['patch']."""
     class _PatchCfg:
         def get(self, dotted, default=None):
-            return {"AGENT.RUN_TIMEOUT": 60, "AGENT.STAGE_MODELS": {"patch": "claude-haiku-4-5"}}.get(dotted, default)
+            return {"AGENT.RUN_TIMEOUT": 60,
+                    "AGENT.STAGE_MODELS": {"patch": "claude-haiku-5-5"}}.get(dotted, default)
 
     ctx = RunContext(run_dir=tmp_path, inputs={"repos_root": str(tmp_path)}, config=_PatchCfg())
     (tmp_path / "logs").mkdir(exist_ok=True)
@@ -203,7 +204,7 @@ def test_patch_mode_prompt_and_model_override(tmp_path, monkeypatch):
     assert "PATCH MODE" in seen["prompt"]
     assert "one Edit per" in seen["prompt"].replace("roughly one Edit per", "one Edit per")
     assert seen["resume"] == "sid-9"
-    assert seen["model"] == "claude-haiku-4-5"
+    assert seen["model"] == "claude-haiku-5-5"
 
 
 def test_cold_patch_revision_uses_slim_prompt(tmp_path, monkeypatch):

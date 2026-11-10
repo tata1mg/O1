@@ -118,8 +118,10 @@ def test_every_stage_cli_and_the_pipeline_accept_the_engine_flags():
     ("claude-opus-5-5[1m]", "anthropic/claude-opus-5.5"),
     ("claude-opus-5-5", "anthropic/claude-opus-5.5"),
     ("claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"),
-    ("claude-sonnet-5[1m]", "anthropic/claude-sonnet-5.5"),
-    ("claude-haiku-4-5-20251001", "gemini-3.8-flash"),
+    ("claude-sonnet-5-5[1m]", "anthropic/claude-sonnet-5.5"),
+    ("anthropic/claude-haiku-5.5", "anthropic/claude-haiku-5.5"),
+    ("haiku", "anthropic/claude-haiku-5.5"),
+    ("claude-haiku-5-5", "anthropic/claude-haiku-5.5"),
     ("openai/gpt-6-luna", "openai/gpt-6-luna"),  # already a gateway id: untouched
 ])
 def test_claude_models_map_to_gateway_models(claude, gateway):
