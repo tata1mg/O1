@@ -104,27 +104,30 @@ TASK="testing · <R folder name>" uv run --project <PROJ> harness run testing --
 In the same turn, start a **Monitor** (`timeout_ms` 1800000, description `testing run events`):
 
 ```
-cd "<R>/logs" && touch activity.log && tail -n +1 -F activity.log | grep --line-buffered -E '\] (STAGE started|gate PASSED|gate FAILED|ENGINE FAILURE|inputs changed)'
+uv run --project <PROJ> python -m workflows.testing.progress <R> --watch
 ```
 
 Don't poll and don't read its `run.<kind>.out` while the run is live (its progress spinner is one endless line).
 
 ## 4. Relay progress
 
-Each Monitor event is one activity line `[hh:mm:ss] [<stage>] …`:
+Each Monitor event is an activity line `[hh:mm:ss] [<stage>] …`, a `PROGRESS …` line, or `WATCH rearm …`:
 
 - `STAGE started` → one line: `▶ <stage>` with what it does (sources: collecting inputs · generate_cases:
-  writing the suite, the long one, ~20 min · render_xlsx: workbook · evaluate: scoring against the rubric
-  and 14 compliance checks · store_cases: uploading to Kiwi · prerequisites: what prestag needs).
+  writing the suite, the long one, ~20 min · render_xlsx: workbook · store_cases: uploading to Kiwi · prerequisites: what prestag needs).
+- `PROGRESS <stage> · …` → post the rest of the line as it is, with ⏳ in front, e.g. `⏳ generate_cases · 14m
+  of usually 19–22m · writing cases: 61 so far · “Now batch 4: VALSVC module (19 cases)”`. Never add a guess
+  of your own about how far along it is. A line that says "no output for … look at logs/<stage>.stderr" is
+  the one to act on: read the last 20 lines of that file and say in one line what it shows.
 - `gate PASSED` → run `… status <R> --milestone <stage>` and post its line with ✓ in front.
 - `gate FAILED … automatic revision next` → `↻ <stage> gate failed (<n> failures) — revising once
   automatically`. Not an error yet.
 - `ENGINE FAILURE` / a `gate FAILED` with no retry left → wait for the background shell to exit (section 4a).
 
-Group events that arrive together into one message. A Monitor lives 30 min and phase A takes longer: when it
-expires and the run is still going, re-arm it with `tail -n 0 -F` (not `+1`) and, in the same turn, read the
-last 20 lines of `<R>/logs/activity.log` yourself so nothing between the two monitors is missed. Stop the
-Monitor (TaskStop) when the run exits.
+Group events that arrive together into one message. A Monitor lives 30 min and phase A takes longer, so the
+watcher ends itself after 25 with `WATCH rearm --from <offset>`: if the run is still going, start a new
+Monitor with the same command plus `--from <offset>` (nothing is missed or repeated). Say nothing about the
+re-arm. Stop the Monitor (TaskStop) when the run exits.
 
 ### 4a. The run exited
 

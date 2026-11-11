@@ -41,12 +41,14 @@ Execute cases for: `$ARGUMENTS`
    and in the same turn a **Monitor** (`timeout_ms` 1800000) on the run's activity log:
 
    ```
-   cd "<run dir>/logs" && touch activity.log && tail -n 0 -F activity.log | grep --line-buffered -E '\] (STAGE started|gate PASSED|gate FAILED|ENGINE FAILURE)'
+   uv run --project <PROJ> python -m workflows.testing.progress <run dir> --watch
    ```
 
    On each `gate PASSED`, post `… python -m workflows.testing.status <run dir> --milestone <stage>` with ✓
-   (after derive_ui, also the cases it skipped, from `status --json` → `ui_plan.skipped`). Stop the Monitor
-   when the command exits.
+   (after derive_ui, also the cases it skipped, from `status --json` → `ui_plan.skipped`). Post each
+   `PROGRESS <stage> · …` line as it is with ⏳ in front (derive_ui's says how many tests it has written).
+   On `WATCH rearm --from <offset>`, if the command is still running, start the same Monitor again with
+   `--from <offset>`. Stop the Monitor when the command exits.
 
 5. **Report** from `… python -m workflows.testing.status <run dir> --json` (`results_web` / `results`): the
    tally, the Kiwi run link, each case that did not pass (id, status, one-line detail; for web, the failed

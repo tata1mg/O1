@@ -96,7 +96,11 @@ this workflow from Claude Code with Claude as the progress view and the question
    is a question, not a stop: retry after the VPN, or generate now with `--disable testing.store` and upload
    later (`--stages store_cases,prerequisites`).
 2. **Phase A** in the background, one chat line per stage (`python -m workflows.testing.status <run>
-   --milestone <stage>`).
+   --milestone <stage>`). In between, `python -m workflows.testing.progress <run> --watch` (the command's
+   Monitor) posts what a long stage is doing — elapsed time against that stage's past runs, the phase read
+   from the activity log, the count of cases written so far, the model's latest note — when the phase changes
+   and as a heartbeat (4 minutes, then spacing out to 10). It hands over to the next Monitor with
+   `WATCH rearm --from <offset>`.
 3. **The handoff**: case counts, the evaluator's verdict, the Kiwi plan link, the prerequisites and their top
    blockers, the workbook and checklist as files, and the instruction to set approved cases to CONFIRMED.
 4. **Phase B** only when the user says so, for the kinds they pick, each only once `status --kiwi` shows
