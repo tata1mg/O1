@@ -101,18 +101,23 @@ One workflow is discovered today:
 
 ```
 $ uv run harness workflows
-WORKFLOW  PIPELINE                                                                            DESCRIPTION
---------  ----------------------------------------------------------------------------------  ------------------------------------------------------------
-testing   sources -> generate_cases -> render_xlsx -> evaluate -> store_cases -> derive_spec  QA suite generation, evaluation, storage and backend executi
+WORKFLOW  PIPELINE                                                                  DESCRIPTION
+--------  ------------------------------------------------------------------------  ------------------------------------------------------------
+testing   sources -> generate_cases -> render_xlsx -> store_cases -> prerequisites  QA suite generation, evaluation, storage, and backend / web
 ```
+
+That is the default: generate the suite, upload it to Kiwi as PROPOSED for review, and list what prestag needs.
+The rest is opt-in and runs on the same run dir: `evaluate` scores the suite on demand, and after review
+`derive_spec -> execute_be` (backend), `derive_ui -> execute_web` (web UI, Playwright) and `publish_app`
+(app UI, a Maestro report) run the CONFIRMED cases. See src/workflows/testing/README.md.
 
 ### Worked examples
 
 Swapping the engine, globally or per stage — an argument, never a code edit:
 
 ```bash
-# every stage on Pi; evaluate stays on Claude Code
-uv run harness run testing --feature TASK-29354 --rfc-run-dir ~/rfc-runs/TASK-29354 --engine pi --stage-engine evaluate=claude-code
+# every stage on Pi; generate_cases stays on Claude Code
+uv run harness run testing --feature TASK-29354 --rfc-run-dir ~/rfc-runs/TASK-29354 --engine pi --stage-engine generate_cases=claude-code
 ```
 
 Turning a stage off and choosing a storage backend, for the testing workflow:
@@ -120,6 +125,13 @@ Turning a stage off and choosing a storage backend, for the testing workflow:
 ```bash
 # skip the xlsx render (the JSON artifact is canonical), and upsert into Kiwi instead of local JSON
 uv run harness run testing --feature TASK-29354 --rfc-run-dir ~/rfc-runs/TASK-29354     --disable-stage render_xlsx --set testing.storage=kiwi
+```
+
+Running an opt-in stage on an existing run — score the suite, then, after review, the confirmed backend cases:
+
+```bash
+uv run harness run testing --feature TASK-29354 --run-dir ~/rfc-runs/2026-11-03-testing-TASK-29354 --stages evaluate --enable testing.evaluate
+uv run harness run testing --feature TASK-29354 --run-dir ~/rfc-runs/2026-11-03-testing-TASK-29354 --stages derive_spec,execute_be --enable testing.execute --curl ~/.secrets/curls/prestag.txt --env prestag --build <sha>
 ```
 
 Asking the harness what it can be told to do — the surface an agent drives:
@@ -185,10 +197,14 @@ config.json survives updates; a git-installed plugin cache is wiped on update):
 ```
 
 The same marketplace also lists **test-agent** (`plugins/test-agent/`): `/plugin install
-test-agent@rfc-agent-marketplace`, then `/test-agent:test` turns a finished RFC run into a QA suite in
-Kiwi, tells you what prestag needs, and once you have confirmed the cases runs them: backend cases over
-HTTP, web UI cases in Playwright, app UI cases from a Maestro run (src/workflows/testing/README.md, "From
-chat").
+test-agent@rfc-agent-marketplace`. Three commands (src/workflows/testing/README.md, "From chat"):
+
+- `/test-agent:test` turns a finished RFC run into a QA suite in Kiwi, tells you what prestag needs, and once
+  you have confirmed the cases runs them: backend cases over HTTP, web UI cases in Playwright, app UI cases
+  from a Maestro run.
+- `/test-agent:execute [web|backend|all]` runs the CONFIRMED cases of an existing run again, on any
+  environment; `--only-existing` starts the web tests already written at once, without the model.
+- `/test-agent:evaluate` scores a suite against the rubric and the 14 compliance checks, on demand.
 
 Then `/rfc-agent:setup` once, and `/rfc-agent:rfc --prd <url>` per RFC (deliverables land in
 `$RUNS_ROOT/<jira-key-or-slug>/`, default `~/rfc-runs/`). `/rfc-agent:doctor` preflights
