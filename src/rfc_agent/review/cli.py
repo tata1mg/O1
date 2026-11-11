@@ -119,7 +119,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--yes", action="store_true", help="with --ask-review: accept the default triage")
     p.add_argument("--confirm-file", action="store_true", help="pause through files (what /rfc-agent:review uses)")
     p.add_argument("--fresh", action="store_true", help="review again even if reviews exist")
+    from ..axon_agent import add_engine_args, apply_engine_args
+
+    add_engine_args(p)
     args = p.parse_args(argv)
+    apply_engine_args(args.engine, args.stage_engine)
     run_dir = Path(args.run_dir).expanduser().resolve()
     migrate_run_dir(run_dir)
     if not (run_dir / "out" / "rfc.md").exists():
@@ -235,6 +239,7 @@ def main(argv: list[str] | None = None) -> int:
     total = {sev: sum(review.counts(m["findings"])[sev] for m in merged.values()) for sev in review.SEVERITIES}
 
     triage = None
+    triage_wait = None
     if s["ASK"]:
         items, ids = [], {}
         for rid in sorted(merged, key=lambda x: (x != "R-X", x)):
@@ -256,6 +261,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"Review: {total['BLOCKER']} blocker, {total['MAJOR']} major, {total['MINOR']} "
                 "minor — waiting for your triage",
             )
+            t_ask = time.monotonic()
             ans = pauses.ask(
                 3,
                 run_dir,
@@ -264,6 +270,7 @@ def main(argv: list[str] | None = None) -> int:
                 file_mode=args.confirm_file,
                 accept_defaults=args.yes,
             )
+            triage_wait = round(time.monotonic() - t_ask, 1)  # the person's time, not the stage's
             notes = dict(ans.get("notes") or {})
             if ans["feedback"]:
                 notes["_all"] = ans["feedback"]
@@ -294,6 +301,7 @@ def main(argv: list[str] | None = None) -> int:
                 "counts": total,
                 "reviewers": done,
                 "triage": bool(triage),
+                **({"triage_wait_s": triage_wait} if triage_wait is not None else {}),
             },
             indent=2,
         ),

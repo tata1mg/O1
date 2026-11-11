@@ -1,4 +1,5 @@
-"""The one interactive checkpoint of the run: repos, extra pages, Jira, Figma sections, branches.
+"""The one interactive checkpoint of the run: repos, extra pages, Jira, Figma sections, branches — and,
+when no design came through, whether to go on without one.
 
 Everything is numbered; the operator toggles numbers, adds repos, overrides branches, then presses Enter.
 After this nothing in the run asks a human anything.
@@ -68,7 +69,14 @@ def apply(items: list[Item], answer: str, add_repo) -> str | None:
     return None
 
 
-def ask(items: list[Item], add_repo, header: str) -> list[Item]:
+def no_design_stop(reason: str) -> SystemExit:
+    return SystemExit(f"scope: STOP: no design available ({reason}) — add the Figma link to the PRD and rerun, "
+                      "or rerun with --no-figma to go on without one")
+
+
+def ask(items: list[Item], add_repo, header: str, no_design: str | None = None) -> list[Item]:
+    """`no_design`: why no Figma screens are available (None when there are some, or Figma was skipped on
+    purpose) — the operator is asked whether to go on without a design before the run continues."""
     if not sys.stdin.isatty():
         raise SystemExit("scope: the confirm step needs a terminal — rerun interactively, or pass --yes "
                          "to accept the proposal as shown")
@@ -84,6 +92,13 @@ def ask(items: list[Item], add_repo, header: str) -> list[Item]:
             if not any(it.kind == "repo" and it.include for it in items):
                 print("  ! at least one repo is needed", file=sys.stderr)
                 continue
+            if no_design:
+                try:
+                    go = input(f"  No design available ({no_design}). Continue without a design? [y/N] ")
+                except EOFError:
+                    go = ""
+                if go.strip().lower() not in ("y", "yes"):
+                    raise no_design_stop(no_design)
             return items
         err = apply(items, answer, add_repo)
         if err:
@@ -96,13 +111,16 @@ PROPOSAL = "confirm/proposal.json"
 ANSWERS = "confirm/answers.json"
 
 
-def via_file(items: list[Item], add_repo, header: str, run_dir, timeout_s: int = 3600) -> list[Item]:
+def via_file(items: list[Item], add_repo, header: str, run_dir, timeout_s: int = 3600,
+             no_design: str | None = None) -> list[Item]:
     """Write the proposal, wait for the answers file, apply it.
 
-    proposal.json: {"header", "items": [{"n", "kind", "key", "label", "note", "include"}]}
+    proposal.json: {"header", "items": [{"n", "kind", "key", "label", "note", "include"}],
+                    "no_design": "why"}                   only when no design is available
     answers.json:  {"selected": [n, ...],                 every item number to KEEP (repos/pages/jira/figma)
                     "add_repos": ["name", ...],           optional — repos to add (kept unless Bitbucket lacks them)
-                    "branches": {"repo": "branch"}}       optional — branch overrides
+                    "branches": {"repo": "branch"},       optional — branch overrides
+                    "proceed_without_design": true}       required to go on when the proposal has `no_design`
     The orchestrating Claude session renders the proposal as AskUserQuestion multi-selects and writes the
     answers; a human can also edit the file by hand."""
     import json
@@ -114,9 +132,12 @@ def via_file(items: list[Item], add_repo, header: str, run_dir, timeout_s: int =
     prop.parent.mkdir(parents=True, exist_ok=True)
     ans.unlink(missing_ok=True)
     tmp = prop.with_suffix(".tmp")  # atomic: a reader never sees a half-written proposal
-    tmp.write_text(json.dumps({"header": header, "items": [
+    proposal = {"header": header, "items": [
         {"n": i, "kind": it.kind, "key": it.key, "label": it.label, "note": it.note, "include": it.include}
-        for i, it in enumerate(items, 1)]}, indent=2, ensure_ascii=False), encoding="utf-8")
+        for i, it in enumerate(items, 1)]}
+    if no_design:
+        proposal["no_design"] = no_design
+    tmp.write_text(json.dumps(proposal, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp.replace(prop)
     print(f"  [scope] WAITING FOR SELECTION: proposal at {prop} — answers expected at {ans}", file=sys.stderr,
           flush=True)
@@ -127,6 +148,8 @@ def via_file(items: list[Item], add_repo, header: str, run_dir, timeout_s: int =
         time.sleep(1)
     time.sleep(0.3)  # let the writer finish
     data = json.loads(ans.read_text(encoding="utf-8"))
+    if no_design and data.get("proceed_without_design") is not True:
+        raise no_design_stop(no_design)
     keep = {int(n) for n in data.get("selected") or []}
     for i, it in enumerate(items, 1):
         it.include = i in keep

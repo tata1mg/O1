@@ -11,6 +11,8 @@ import contextlib
 import json
 from pathlib import Path
 
+from . import run_metrics
+
 
 def _json(path: Path):
     with contextlib.suppress(OSError, json.JSONDecodeError):
@@ -26,7 +28,8 @@ def collect(run_dir: Path, prd_ref: str | None = None) -> dict:
     """`prd_ref` is the original --prd argument (scope.json only keeps the local copy's path)."""
     out: dict = {}
     with contextlib.suppress(Exception):
-        scope = _json(run_dir / "scope.json") or {}
+        scope = _json(run_dir / "scope.json")
+        scope = scope if isinstance(scope, dict) else {}  # valid JSON that is not an object is no scope
         out["prd"] = prd_ref or scope.get("prd")
         out["jira"] = scope.get("jira")
         out["repos"] = _names(scope.get("repos"), "repo") or None
@@ -42,5 +45,11 @@ def collect(run_dir: Path, prd_ref: str | None = None) -> dict:
             out["review_unresolved"] = sum(1 for r in recs if r.get("status") in ("unresolved", "not_reviewed"))
         run = _json(run_dir / "logs" / "run.json") or {}
         out["cost_usd"] = run.get("cost_usd_total")
-        out["duration_s"] = sum(s.get("seconds") or 0 for s in run.get("stages") or [] if isinstance(s, dict)) or None
+        # every attempt's time when the run records it; before that, only the stages of the last attempt
+        out["duration_s"] = run.get("seconds_all_attempts") or (
+            sum(s.get("seconds") or 0 for s in run.get("stages") or [] if isinstance(s, dict)) or None
+        )
+        out["attempts"], out["resumes"], out["status"] = run.get("attempts"), run.get("resumes"), run.get("status")
+    with contextlib.suppress(Exception):  # its own failure boundary: one unreadable file above must not drop these
+        out |= run_metrics.collect(run_dir)  # input size, tokens, coverage counts, context layer, waits
     return {k: v for k, v in out.items() if v is not None}

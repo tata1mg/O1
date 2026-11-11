@@ -110,6 +110,7 @@ def test_draft_end_to_end_with_fake_claude(tmp_path, monkeypatch):
     summary = json.loads((run / "logs" / "draft.json").read_text())
     assert summary["statuses"]["covered"] == 1
     assert [r["step"] for r in summary["runs"]] == ["write", "gate-fix"]
+    assert summary["cost_usd"] == 0.04  # both agent runs
     check = json.loads((run / "out" / "check.json").read_text())
     assert "coverage" in check["must_fix_before_fix"] and "coverage" not in check["known_issues"]
     assert check["status"] == "known_issues"  # the minimal test RFC lacks §3/§5/§7 → structure stays known
@@ -118,6 +119,11 @@ def test_draft_end_to_end_with_fake_claude(tmp_path, monkeypatch):
     # rerun: nothing to write again; the gate's fix round already ran for this content → no agent call
     assert cli.main(["--run-dir", str(run)]) == 0
     assert len(log.read_text().splitlines()) == 2
+    # that rerun is what Revise does after every round: it must not wipe the stage's cost or its agent time
+    again = json.loads((run / "logs" / "draft.json").read_text())
+    assert again["cost_usd"] == 0.04
+    assert again["agent_seconds"] == summary["agent_seconds"]
+    assert [r["step"] for r in again["runs"]] == ["write", "gate-fix"]
 
 
 def test_draft_needs_investigate(tmp_path):

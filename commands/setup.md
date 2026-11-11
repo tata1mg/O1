@@ -171,20 +171,20 @@ inventory lives) are team values that help Scope propose repos. If either is mis
 placeholder, ask whether a teammate can share them; if so, open `CFG` and have the user paste them in, else mark
 `skipped`: "Scope proposes fewer repos; add them with --repos".
 
-## 8. Langfuse tracing — CRITICAL unless turned off
+## 8. Langfuse tracing — CRITICAL
 
-Every run is traced to Langfuse by default (`LANGFUSE.ENABLED: true`), and a traced run with no keys stops
-before it starts.
+Every run is traced to Langfuse, and a run with no keys stops before it starts. Tracing is required: there is no
+setting or flag to turn it off.
 
-**Check:** `uv run --project "$PROJ" python -c "from rfc_agent import observe; raise SystemExit(observe.preflight())"` prints `langfuse=off` or `langfuse=on keys=ok` (exit 0). It never prints a key.
+**Check:** `uv run --project "$PROJ" python -c "from rfc_agent import observe; raise SystemExit(observe.preflight())"` prints `langfuse=on keys=ok` (exit 0), or `langfuse=on keys=MISSING` (exit 2). It never prints a key.
 
 **If `keys=MISSING`:** the keys are in the team vault. Tell the user to copy the Langfuse public and secret keys
 from the vault, open `CFG`, and tell them to paste them into `LANGFUSE.PUBLIC_KEY` and `LANGFUSE.SECRET_KEY`. Then
 ask (AskUserQuestion) "Langfuse keys pasted?":
 - Done (Recommended) → re-check. The host is a team value: if the team's isn't `https://cloud.langfuse.com`, set `LANGFUSE.HOST` in
   `CFG` too.
-- No vault access, run without tracing → set `LANGFUSE.ENABLED` to `false` with a Python edit (rule 5), re-check
-  (`langfuse=off`), and mark the step `skipped`: "runs aren't traced; set LANGFUSE.ENABLED true once you have keys".
+- No vault access → this step stays BLOCKED and setup ends BLOCKED: tracing is required, so ask the team for access
+  to the Langfuse keys, then run `/rfc-agent:setup` again.
 
 `LANGFUSE.VERBOSE` (default `false`) adds one span per tool call. Leave it unless the user asks.
 

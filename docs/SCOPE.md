@@ -214,6 +214,12 @@ One numbered list, in four groups:
 
 At least one repo must be selected.
 
+**No design.** When Figma isn't skipped (`--no-figma`) but no design is available — the PRD links no Figma
+design, or none of its links gave readable screens — the same checkpoint asks *"No design is available. Do you
+want to proceed as it is?"*. Proceed → the run goes on without a design (recorded as `no_design` in
+`scope.json`); Stop → Scope exits with `STOP: no design available …`. In file mode the proposal carries
+`"no_design": "<why>"` and the answers must say `"proceed_without_design": true`. `--yes` goes on with a warning.
+
 ### 6a. Repo snapshots
 
 Each selected repo becomes a **read-only, detached git worktree** at `<run>/_snap/<repo>`, pinned to the
@@ -339,8 +345,10 @@ printed summary. See [Output](#output).
 
 ## Output
 
-The run folder is `RUNS_ROOT/<jira-key>` or `RUNS_ROOT/prd-<page id>` (e.g.
-`~/rfc-runs/prd-5541855972/`), unless `--run-dir` is given.
+The run folder is new every time: `RUNS_ROOT/<jira-key>-<timestamp>` or `RUNS_ROOT/prd-<page id>-<timestamp>` (e.g.
+`~/rfc-runs/prd-5541855972-20261030-143502/`), unless `--run-dir` is given with `--prd`, which must then name a
+folder that does not hold a run yet (a fixed folder is refused the second time; `make smoke` gives each run a
+timestamped one). A PRD that was run before gets a second folder, never the first one reused.
 
 | Path | Contents |
 |---|---|

@@ -1,4 +1,19 @@
-# rfc_agent
+# O1
+
+Tata 1mg's agent toolkit for the software lifecycle: from a PRD to a grounded tech RFC, test cases and code,
+with every claim about existing code cited to a file and line.
+
+| Component | What it does | Status |
+|---|---|---|
+| **rfc-agent** | PRD → grounded tech RFC (Scope → Summarize). A Claude Code plugin | Pilot (0.1.0) |
+| **Harness** | Agent-agnostic run loop, engines, contracts and policy that the agents share (`src/harness`) | In progress |
+| **Testing agent** | Tech RFC → QA test cases (`src/workflows/testing`) | In progress |
+| **Context layer** | Finds and traces code across repos, to ground every agent | Planned |
+| **Coding agent** | Tech RFC → implementation | Planned |
+
+Today the repo ships **rfc-agent**. The rest of this README covers it.
+
+## rfc-agent
 
 > **Pipeline (Scope → Summarize, `uv run rfc`)** — architecture and flow diagrams: **[docs/HLD.md](docs/HLD.md)**.
 >
@@ -14,8 +29,9 @@ tightly scoped tool set; deterministic Python gates check the output between sta
 uv run rfc --prd <confluence url> [--jira KEY]         # in a terminal
 ```
 
-Runs Scope → Summarize in order (scope · plan, trace, integrate · write + gate · review · fix · readable copy). Rerunning
-the same command resumes; `--from N` restarts at a stage. Read **`out/rfc.readable.md`** first; `out/rfc.md` is the
+Runs Scope → Summarize in order (scope · plan, trace, integrate · write + gate · review · fix · readable copy). Every
+`--prd` starts a new run in its own folder, even for a PRD you ran before. A run that stopped is continued with
+`uv run rfc --run-dir <that folder>` (no `--prd`); `--from <stage>` restarts at a stage. Read **`out/rfc.readable.md`** first; `out/rfc.md` is the
 full RFC with citations. Options: `uv run rfc --help`. The stages, one by one:
 
 ## How it works
@@ -207,7 +223,8 @@ test-agent@rfc-agent-marketplace`. Three commands (src/workflows/testing/README.
 - `/test-agent:evaluate` scores a suite against the rubric and the 14 compliance checks, on demand.
 
 Then `/rfc-agent:setup` once, and `/rfc-agent:rfc --prd <url>` per RFC (deliverables land in
-`$RUNS_ROOT/<jira-key-or-slug>/`, default `~/rfc-runs/`). `/rfc-agent:doctor` preflights
+`$RUNS_ROOT/<jira-key-or-slug>-<timestamp>/`, default `~/rfc-runs/`; continue a stopped run with
+`/rfc-agent:rfc --run-dir <folder>`). `/rfc-agent:doctor` preflights
 config/binaries/MCP/repos. Installed from a **directory** source, the plugin serves the checkout live — but
 Claude Code caches the manifest, so after a version bump reload the session (or re-add the marketplace).
 

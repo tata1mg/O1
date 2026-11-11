@@ -14,8 +14,6 @@
   },
   "LANGFUSE": {
     "_comment": "Tracing behaviour. HOST, keys and ENVIRONMENT are yours: they go in ~/.config/rfc-agent/config.json.",
-    "_ENABLED_note": "true (default): every run is traced, and a run with no PUBLIC_KEY/SECRET_KEY stops before it starts. false: no tracing, keys not needed. Env RFC_AGENT_LANGFUSE wins; the CLI flag `--langfuse true|false` wins over both.",
-    "ENABLED": true,
     "_VERBOSE_note": "false (default): one node per agent (model, tokens, cost, time) plus gates and your pause answers. true: also one span per tool call (input and output clipped to 2K). Env RFC_AGENT_LANGFUSE_VERBOSE; flag `--langfuse-verbose true|false`.",
     "VERBOSE": false,
     "_MASK_SECRETS_note": "Client-side secret redaction (privacy.py): every exported span attribute passes a gitleaks-derived ruleset before leaving the machine (AWS/GitHub/Slack/Atlassian/OpenAI/Anthropic keys, JWTs, PEM blocks, connection-string credentials, bearer tokens, keyword=value secrets). Fail-closed. Disable ONLY for local debugging.",

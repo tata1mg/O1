@@ -15,7 +15,7 @@ parity:
 # Usage: make smoke PRD=<path-or-url>
 smoke:
 	@test -n "$(PRD)" || { echo "usage: make smoke PRD=<path-or-url>"; exit 1; }
-	uv run rfc --prd "$(PRD)" --run-dir runs/smoke --yes
+	uv run rfc --prd "$(PRD)" --run-dir "runs/smoke-$$(date +%Y%m%d-%H%M%S)" --yes
 
 .PHONY: bench bench-json bench-after
 

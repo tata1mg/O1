@@ -1,6 +1,6 @@
 ---
 description: The scope stage — fetch the PRD, pick repos / pages / Figma sections with selection questions, snapshot the repos
-argument-hint: --prd <confluence-url | page-id | file> [--jira KEY] [--repos a,b] [--no-figma] [--fresh-clone]
+argument-hint: --prd <confluence-url | page-id | file> [--jira KEY] [--repos a,b] [--no-figma] [--fresh-clone] [--engine claude-code|axon] [--stage-engine STAGE=ENGINE]
 ---
 
 Run rfc-agent's Scope for: `$ARGUMENTS`
@@ -32,7 +32,7 @@ The terminal's task list (`/tasks`) names a background shell by the **start of i
 one command that begins with the `TASK="…"` label: write `$PROJ` and `$RUN` out as literal paths, and put
 no `cd`, `PROJ=` or other assignment in front of it.
 
-If it exits 2 with `Langfuse observability is ON but the Langfuse keys are missing`, nothing ran: relay the message (add the keys to the config, or rerun with `--langfuse false`). Never pick `false` for the user.
+If it exits 2 with `Langfuse tracing is required but the Langfuse keys are missing`, nothing ran: relay the message (add the keys to the config; `/rfc-agent:setup` fills them in).
 
 Run it with `run_in_background`. Don't poll its output — the background shell only notifies you when scope
 exits, and the selection happens mid-run. Right after the launch (same turn), start a **Monitor**
@@ -58,8 +58,9 @@ last ~20 lines of `scope.out` yourself in the same turn. Stop it (TaskStop) when
 
 ## 3. Ask the selection (AskUserQuestion)
 
-Read `$RUN/confirm/proposal.json`: `{"header", "items": [{n, kind, key, label, note, include}]}`.
-`kind` is `repo` | `page` | `jira` | `figma`; `include` is scope's proposal.
+Read `$RUN/confirm/proposal.json`: `{"header", "items": [{n, kind, key, label, note, include}], "no_design"?}`.
+`kind` is `repo` | `page` | `jira` | `figma`; `include` is scope's proposal. `no_design` is present only when
+no Figma design is available (the PRD links none, or no screens could be read) — its value says why.
 
 Show the header's context line first (one sentence, e.g. "Context layer ok — 5 repos proposed").
 Then ask, in this order, skipping a kind with no items:
@@ -72,6 +73,10 @@ Then ask, in this order, skipping a kind with no items:
 3. **Figma sections** — label = section name, description = screen count + PRD overlap. If there are
    more than 8 sections, first ask one single-select: *Keep the proposed N sections (list them)* /
    *Pick sections myself* / *Skip Figma* — and only chunk the sections out on "Pick sections myself".
+
+4. **No design** — only when the proposal has `no_design`: one single-select, header `Design`,
+   *"No design is available (<no_design>). Do you want to proceed as it is?"* with options
+   `Proceed without design` / `Stop`. Never answer it for the user.
 
 AskUserQuestion limits: 2-4 options per question, 4 questions per call, header ≤ 12 chars. Chunk a kind
 into questions of up to 4 options (headers like `Repos 1/2`) and use several calls when needed. A chunk
@@ -90,6 +95,9 @@ Map every picked label back to its item `n` and write `$RUN/confirm/answers.json
   no figma items.
 - From "Other" text: bare names → `add_repos`; `repo=branch` → `branches`.
 - At least one repo must be selected or added; if none, ask again instead of writing the file.
+- With `no_design`: "Proceed without design" → add `"proceed_without_design": true`. "Stop" → write
+  `"proceed_without_design": false`; scope exits with `STOP: no design available …` — relay it (add the Figma
+  link to the PRD and rerun, or rerun with `--no-figma`) and stop.
 
 ## 5. Finish
 

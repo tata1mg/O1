@@ -122,6 +122,7 @@ def test_review_end_to_end_with_retry(tmp_path, monkeypatch):
     summary = json.loads((run / "logs" / "review.json").read_text())
     assert summary["counts"] == {"BLOCKER": 1, "MAJOR": 1, "MINOR": 1}
     assert len(summary["reviewers"]["R-F2"]["runs"]) == 2
+    assert "triage_wait_s" not in summary  # no triage prompt, no person to wait on
     kinds = [json.loads(x)["kind"] for x in (run / "logs" / "progress.jsonl").read_text().splitlines()]
     assert kinds[0] == "start" and "retry" in kinds and kinds[-1] == "done" and kinds.count("reviewer_done") == 3
     # rerun: everything reviewed → no agent call
@@ -144,6 +145,8 @@ def test_review_triage_pause_file_mode(tmp_path, monkeypatch):
 
     threading.Thread(target=answer, daemon=True).start()
     assert cli.main(["--run-dir", str(run), "--ask-review", "--confirm-file"]) == 0
+    summary = json.loads((run / "logs" / "review.json").read_text())
+    assert summary["triage"] is True and summary["triage_wait_s"] >= 0  # the person's time, kept apart
     triage = json.loads((run / "review" / "triage.json").read_text())["findings"]
     assert triage["R-F1.1"]["action"] == "fix" and triage["R-F1.2"] == {
         "action": "ignore", "severity": "MAJOR", "note": "disagree: svc_a never edits"}

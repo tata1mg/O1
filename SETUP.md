@@ -11,7 +11,7 @@ checks every item below and fills the missing config by asking. Run `/rfc-agent:
 - [ ] `REPOS_ROOT` holds your repo checkouts; `RUNS_ROOT` is OUTSIDE it
 - [ ] Atlassian ✔ Connected in `claude mcp list` (claude.ai connector or a user-scope `atlassian` server)
 - [ ] (recommended) `MCP.mcpServers.fleetlens` reachable (VPN if internal)
-- [ ] Langfuse keys, or tracing turned off (`LANGFUSE.ENABLED: false`)
+- [ ] Langfuse keys (required: runs are always traced)
 - [ ] Figma desktop app installed and signed in, with the rfc-agent snapshot plugin imported (required)
 
 ## 1. Host toolchain
@@ -119,9 +119,8 @@ mapping falls back to `STEERING.REPO_ALIASES`.
 
 ## 6. Observability
 
-- Tracing is **on by default**, and a run with no keys refuses to start. The keys are in the team vault. Set `LANGFUSE.PUBLIC_KEY` /
-  `SECRET_KEY` / `HOST` (or the standard env vars, which win), or turn it off with `LANGFUSE.ENABLED: false`
-  (one run: `--langfuse false`).
+- Tracing is **required**, and a run with no keys refuses to start. The keys are in the team vault. Set `LANGFUSE.PUBLIC_KEY` /
+  `SECRET_KEY` / `HOST` (or the standard env vars, which win). There is no setting or flag to turn tracing off.
 - Trace identity: `OBS.USER_ID` (set explicitly on CI/shared boxes) > `git config user.email` > `$USER`. On a
   shared Claude subscription the Claude account email is meaningless — make sure each operator's
   `git config user.email` is their own.
@@ -143,4 +142,4 @@ press one shortcut per link.
 | `unknown key(s) [...] are ignored` | a typo, or a key left from an older version | fix or delete it |
 | Scope stops: `ATLASSIAN.SITE is not set` | team values missing | add them to your config.json (ask a teammate), or run `/rfc-agent:setup` |
 | Scope says Atlassian is not connected | no logged-in Atlassian server | section 4, then re-run |
-| run refuses to start: Langfuse keys missing | tracing is on by default | add the keys, or `LANGFUSE.ENABLED: false` |
+| run refuses to start: Langfuse keys missing | tracing is required | add the keys |

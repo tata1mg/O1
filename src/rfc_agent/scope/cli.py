@@ -11,7 +11,8 @@ Steps (timed, written to logs/scope.json):
   2. PRD + child-page list + Jira via the claude.ai Atlassian connector (byte-exact, Haiku, no rewriting)
   3. Figma: per PRD link, open the node in the desktop app and wait for one plugin run (or reuse a cache)
      — scope candidates are computed meanwhile (a fleetlens discovery agent + a Haiku PRD summary)
-  4. ONE confirm screen: repos (+branch), extra pages, Jira, Figma sections
+  4. ONE confirm screen: repos (+branch), extra pages, Jira, Figma sections — or, with no design, whether
+     to go on without one
   5. in parallel: repo snapshots pinned to the default branch, and the ticked pages/Jira
   6. scope.json + findings/scope_approved.json + raw/figma_index.md
 """
@@ -81,19 +82,34 @@ def _slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:60] or "page"
 
 
+_FRESH: dict[tuple[str, str], Path] = {}  # one new folder per (root, name) per process, so every caller agrees
+
+
 def _run_dir(args, cfg) -> Path:
+    """The run folder: the given one, or a NEW `<name>-<timestamp>` folder (never an earlier run's).
+
+    A PRD run always starts fresh, so rerunning the same PRD never mixes into or overwrites a previous run, and each
+    run is its own Langfuse session. Continuing a stopped run is `--run-dir` without `--prd`. The name is chosen once
+    per process: tracing, the whole-run entry and Scope all ask, and they must land in the same folder."""
     if args.run_dir:
         return Path(args.run_dir).expanduser()
     root = Path(args.out or cfg.get("RUNS_ROOT") or "~/rfc-runs").expanduser()
     key = at.jira_key_of(args.jira) if args.jira else None
     pid = at.page_id_of(args.prd)
     name = key.lower() if key else (f"prd-{pid}" if pid else _slugify(Path(args.prd).stem))
-    return root / name
+    if (str(root), name) not in _FRESH:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path, n = root / f"{name}-{stamp}", 2
+        while path.exists():
+            path, n = root / f"{name}-{stamp}-{n}", n + 1
+        _FRESH[(str(root), name)] = path
+    return _FRESH[(str(root), name)]
 
 
-def _write_page(path: Path, page: dict) -> None:
+def _write_page(path: Path, page: dict, site: str | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(at.provenance(page["url"] or f"confluence page {page['id']}", page["title"], _now(),
+    url = page["url"] or (f"{site.rstrip('/')}/wiki/pages/viewpage.action?pageId={page['id']}" if site else "")
+    path.write_text(at.provenance(url or f"confluence page {page['id']}", page["title"], _now(),
                                   {"page_id": page["id"], "last_modified": page["last_modified"]})
                     + page["body"], encoding="utf-8")
 
@@ -107,16 +123,33 @@ def _blob_images(text: str) -> int:
     return len(re.findall(r"!\[[^\]]*\]\(blob:", text))
 
 
+def _axon_atlassian(cfg, model: str, run_dir: Path):
+    """On Axon (D-22) the PRD comes through Axon's own Atlassian sign-in; None keeps Claude's connector."""
+    if not context._on_axon(cfg):
+        return None
+    from ..axon_agent import gateway_model, settings
+    from .atlassian_axon import AxonConnectorSession
+
+    ax = settings(cfg)
+    log = run_dir / "logs" / "scope.atlassian.stream.jsonl"
+    return lambda: AxonConnectorSession(log, axon_bin=ax["bin"], model=gateway_model(model, cfg),
+                                        provider=ax["provider"], server=ax["atlassian_server"])
+
+
 @observe.entry("scope")
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv[:1] == ["run-dir"]:  # where a run for these args lands — used by /rfc-agent:scope before it starts
+    if argv[:1] == ["run-dir"]:  # where a run for these args lands — used by the commands before they start
         rp = argparse.ArgumentParser(prog="python -m rfc_agent.scope run-dir")
-        rp.add_argument("--prd", required=True)
+        rp.add_argument("--prd")
         rp.add_argument("--jira")
         rp.add_argument("--run-dir")
         rp.add_argument("--out")
-        print(_run_dir(rp.parse_known_args(argv[1:])[0], get_config()))  # ignores other stages' options
+        ns = rp.parse_known_args(argv[1:])[0]  # ignores other stages' options
+        if not ns.prd and not ns.run_dir:
+            print("run-dir: pass --prd (a new folder) or --run-dir (the folder to continue)", file=sys.stderr)
+            return 2
+        print(_run_dir(ns, get_config()))
         return 0
     if argv[:1] == ["cleanup"]:
         if len(argv) != 2:
@@ -131,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--jira", help="Jira key or url")
     p.add_argument("--repos", default="", help="repos you already know are in scope, comma list")
     p.add_argument("--repos-root", help="local checkouts root (default: config REPOS_ROOT)")
-    p.add_argument("--run-dir", help="run directory (default: RUNS_ROOT/<jira-key or prd-id>)")
+    p.add_argument("--run-dir", help="run directory (default: a new RUNS_ROOT/<jira-key or prd-id>-<timestamp>)")
     p.add_argument("--out", help="parent for the auto-named run dir (default: config RUNS_ROOT)")
     p.add_argument("--yes", action="store_true", help="accept the proposal without the confirm screen")
     p.add_argument("--confirm-file", action="store_true",
@@ -145,7 +178,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="never touch your checkouts: take every repo from the repo cache "
                         "(~/.cache/rfc-agent/repos, shallow-cloned once, fetched on later runs)")
     p.add_argument("--model", default=at.DEFAULT_MODEL, help="model that makes the connector calls")
+    from ..axon_agent import add_engine_args, apply_engine_args
+
+    add_engine_args(p)
     args = p.parse_args(argv)
+    apply_engine_args(args.engine, args.stage_engine)
 
     cfg = get_config()
     timer = _Timer()
@@ -187,7 +224,8 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     session, paid = at.open_session(stack, run_dir / "logs" / "scope.atlassian.stream.jsonl", site,
                                                     claude_bin=cfg.get("AGENT.CLAUDE_BIN", "claude"),
-                                                    model=args.model, cwd=run_dir, say=_say)
+                                                    model=args.model, cwd=run_dir, say=_say,
+                                                    make=_axon_atlassian(cfg, args.model, run_dir))
                     cost += paid
                 except at.AtlassianError as e:
                     _say(f"STOP: {e}")
@@ -202,7 +240,7 @@ def main(argv: list[str] | None = None) -> int:
                     elif c.name == "getConfluencePage" and str(c.input.get("pageId")) == pid:
                         page = at.parse_page(c)
                         if page:
-                            _write_page(run_dir / "raw" / "prd.md", page)
+                            _write_page(run_dir / "raw" / "prd.md", page, site)
                             scope["prd_title"] = page["title"]
                     elif c.name == "getConfluencePageDescendants":
                         descendants = at.parse_descendants(c)
@@ -347,13 +385,23 @@ def main(argv: list[str] | None = None) -> int:
         header = (f"── Scope · confirm ── PRD: {scope.get('prd_title') or prd_path.name}\n"
                   f"  context layer: {'ok' if layer.get('ok') else 'UNAVAILABLE — ' + str(layer.get('why'))}"
                   + (f"\n  surfaces: {', '.join(disc['surfaces'])}" if disc.get("surfaces") else ""))
+        # no design to read (and Figma not skipped on purpose): the operator decides whether to go on
+        no_design = None
+        if not args.no_figma and not any(it.kind == "figma" for it in items):
+            errs = [ex["error"] for ex in exports if ex.get("error")]
+            no_design = ("the PRD links no Figma design" if not exports
+                         else "no Figma screens could be read: " + "; ".join(errs or ["no sections found"]))
+            _say(f"no design available — {no_design}")
+        scope["no_design"] = no_design
         with timer.step("confirm_wait"):
             if interactive and (args.confirm_file or not sys.stdin.isatty()):
-                items = confirm.via_file(items, repo_item, header, run_dir)
+                items = confirm.via_file(items, repo_item, header, run_dir, no_design=no_design)
             elif interactive:
-                items = confirm.ask(items, repo_item, header)
+                items = confirm.ask(items, repo_item, header, no_design=no_design)
             else:
                 print(f"\n{header}{confirm.render(items)}\n", file=sys.stderr)
+                if no_design:
+                    _say("WARNING: going on without a design (--yes)")
         for name in _dropped_added_repos(items):  # never silent: file mode has no second screen to show it
             _say(f"WARNING: '{name}' is NOT on Bitbucket (wrong name, or no access) — dropped. "
                  "Rerun scope with the exact repo name.")
@@ -393,7 +441,8 @@ def main(argv: list[str] | None = None) -> int:
                     elif c.name == "getConfluencePage":
                         page = at.parse_page(c)
                         if page:
-                            _write_page(run_dir / "raw" / "linked" / f"{page['id']}-{_slugify(page['title'])}.md", page)
+                            _write_page(run_dir / "raw" / "linked" / f"{page['id']}-{_slugify(page['title'])}.md", page,
+                                        cfg.get("ATLASSIAN.SITE"))
                             fetched_pages.append({"id": page["id"], "title": page["title"]})
                     elif c.name == "getJiraIssue":
                         k = str(c.input.get("issueIdOrKey"))

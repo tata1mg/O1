@@ -9,6 +9,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+import pytest
+
 from rfc_agent import figma_snapshot as fs
 from rfc_agent.scope import atlassian as at
 from rfc_agent.scope import confirm, figma, repos
@@ -276,6 +278,37 @@ def test_confirm_via_file_applies_selection(tmp_path):
     kept = {(it.kind, it.key) for it in out if it.include}
     assert kept == {("page", "1"), ("repo", "torpedo"), ("repo", "lab_buddy")}
     assert next(it for it in out if it.key == "torpedo").extra["branch"] == "feature/x"
+
+
+def _answer_no_design(tmp_path, proceed):
+    def answer():
+        prop = tmp_path / confirm.PROPOSAL
+        while not prop.exists():
+            time.sleep(0.01)
+        assert json.loads(prop.read_text())["no_design"] == "the PRD links no Figma design"
+        (tmp_path / confirm.ANSWERS).write_text(json.dumps({"selected": [1], "proceed_without_design": proceed}))
+
+    t = threading.Thread(target=answer, daemon=True)
+    t.start()
+    return confirm.via_file(_items(), lambda n: confirm.Item("repo", n, n, extra={}), "hdr", tmp_path,
+                            timeout_s=10, no_design="the PRD links no Figma design")
+
+
+def test_confirm_via_file_without_design_goes_on_only_when_the_user_says_so(tmp_path):
+    out = _answer_no_design(tmp_path, True)
+    assert [it.key for it in out if it.include] == [_items()[0].key]
+    with pytest.raises(SystemExit, match="STOP: no design available"):
+        _answer_no_design(tmp_path, False)
+
+
+def test_confirm_ask_without_design_stops_on_no(monkeypatch):
+    monkeypatch.setattr(confirm.sys.stdin, "isatty", lambda: True)
+    replies = iter(["", "n"])  # Enter accepts the proposal, then "n" to going on without a design
+    monkeypatch.setattr("builtins.input", lambda *_: next(replies))
+    with pytest.raises(SystemExit, match="STOP: no design available"):
+        confirm.ask(_items(), None, "hdr", no_design="the PRD links no Figma design")
+    replies = iter(["", "y"])
+    assert confirm.ask(_items(), None, "hdr", no_design="the PRD links no Figma design")
 
 
 def test_plugin_code_synced_into_the_folder_figma_loads(tmp_path, monkeypatch):
