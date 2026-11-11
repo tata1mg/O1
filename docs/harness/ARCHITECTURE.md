@@ -17,7 +17,7 @@ graph TD
   end
 
   subgraph WF["workflows/ (what the work IS)"]
-    TST["workflows/testing<br/>sources, generate_cases, render_xlsx, evaluate, store_cases, derive_spec"]
+    TST["workflows/testing<br/>sources, generate_cases, render_xlsx, store_cases, prerequisites<br/>(on demand: evaluate · after review: derive_spec, execute_be, derive_ui, execute_web, publish_app)"]
     NEW["workflows/&lt;yours&gt;"]
   end
 
@@ -215,7 +215,7 @@ An engine is a **name**, resolved through flags, never a code edit:
 ```bash
 harness run testing --feature F                               # flag `engine` default: claude-code
 harness run testing --feature F --engine pi                   # whole run on pi
-harness run testing --feature F --stage-engine evaluate=claude-code
+harness run testing --feature F --stage-engine generate_cases=claude-code
 harness run testing --feature F --engine replay --set replay.recording=<path>
 ```
 
@@ -327,7 +327,7 @@ harness run testing --feature F --disable-stage render_xlsx
 
 # swap the engine, globally or for one stage
 harness run testing --feature F --engine pi
-harness run testing --feature F --stage-engine evaluate=claude-code
+harness run testing --feature F --stage-engine generate_cases=claude-code
 
 # disable a hook (benchmarks only) or the whole transport
 harness run testing --feature F --set hooks_off=byte_budget,doc_lints
@@ -384,12 +384,16 @@ Recipe:
 
 ### Worked example: the testing workflow
 
-`src/workflows/testing/__init__.py` declares a pipeline of `sources → generate_cases → render_xlsx → evaluate →
-store_cases → derive_spec` (and `execute_be` behind a flag). Every rule that would otherwise be prose in a
-persona becomes a deterministic gate — ID patterns, scenario ↔ case linkage, mandatory columns, enum values,
-module coverage — and the evaluator's rubric stays model-side (a hybrid gate). Storage is a `CaseStore`
-protocol with `kiwi` and `json` backends chosen by `testing.storage`, so the workflow is testable without a
-running Kiwi. Details: [src/workflows/testing/README.md](../../src/workflows/testing/README.md).
+`src/workflows/testing/__init__.py` declares a default pipeline of `sources → generate_cases → render_xlsx →
+store_cases → prerequisites`. Cases are stored PROPOSED and a human approves them, so the executors — which read
+only CONFIRMED cases — are opt-in and run after review on the same run dir: `derive_spec → execute_be` (backend,
+HTTP), `derive_ui → execute_web` (web UI, Playwright) and `publish_app` (app UI, a Maestro report). `evaluate`
+(the rubric and the 14 compliance checks) is opt-in too and runs on demand, since nothing downstream reads it.
+The workflow supplies that composition through `Workflow.compose_pipeline`, from its `testing.*` flags. Every
+rule that would otherwise be prose in a persona becomes a deterministic gate — ID patterns, scenario ↔ case
+linkage, mandatory columns, enum values, module coverage — and the evaluator's rubric stays model-side (a hybrid
+gate). Storage is a `CaseStore` protocol with `kiwi` and `json` backends chosen by `testing.storage`, so the
+workflow is testable without a running Kiwi. Details: [src/workflows/testing/README.md](../../src/workflows/testing/README.md).
 
 ---
 
