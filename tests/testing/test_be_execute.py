@@ -215,3 +215,42 @@ def test_a_timeout_is_error_with_no_http_status():
     with mock.patch.object(be_execute.subprocess, "run", fake_run):
         r = run_case({"extid": "T", "path": "/s"}, ENV)
     assert r["status"] == "ERROR" and r["detail"] == "request timed out" and "http" not in r
+
+
+# ---- phase 0 (2026-11-05): the body is the case's, never the captured curl's ----------------------------
+def _cmd_for(case, env):
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+
+        class R:
+            stdout = '{"ok":true}\n__STATUS__200'
+        return R()
+
+    with mock.patch.object(be_execute.subprocess, "run", fake_run):
+        run_case({"extid": "T", "path": "/s", **case}, env)
+    return seen["cmd"]
+
+
+def test_captured_curl_body_is_never_sent():
+    env = {**ENV, "body": '{"order_id":"PO-1"}'}
+    cmd = _cmd_for({"method": "GET", "expect_status": 200}, env)
+    assert "--data-raw" not in cmd
+
+
+def test_case_body_is_sent_as_json():
+    cmd = _cmd_for({"method": "POST", "body": '{"a":1}', "expect_status": 200}, ENV)
+    assert cmd[cmd.index("--data-raw") + 1] == '{"a":1}'
+    assert "content-type: application/json" in cmd
+
+
+def test_dict_body_from_a_hand_written_spec_is_serialised():
+    cmd = _cmd_for({"method": "POST", "body": {"a": 1}, "expect_status": 200}, ENV)
+    assert cmd[cmd.index("--data-raw") + 1] == '{"a":1}'
+
+
+def test_envelope_content_type_is_not_duplicated():
+    env = {**ENV, "headers": {"content-type": "application/vnd.x+json"}}
+    cmd = _cmd_for({"method": "POST", "body": '{"a":1}', "expect_status": 200}, env)
+    assert "content-type: application/json" not in cmd

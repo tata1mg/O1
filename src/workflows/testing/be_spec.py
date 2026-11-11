@@ -21,6 +21,7 @@ proving nothing.
 from __future__ import annotations
 
 import html
+import json
 import re
 
 # ---------------------------------------------------------------- step grammar
@@ -79,6 +80,13 @@ RE_REQUIRE = re.compile(r"^\s*(?:\d+\.\s*)?Require\b", re.I)
 RE_WITH_PARAMS = re.compile(r"\bwith\s+(.+)$", re.I)
 RE_KV = re.compile(r"([A-Za-z_][\w.]*)\s*=\s*([^,]+?)(?=\s*,\s*[A-Za-z_][\w.]*\s*=|\s*$)")
 
+# "Send POST /x with body {...}" — the request body, stated as JSON after the route. Before this was parsed
+# the body was silently dropped and the executor sent the captured curl's body (or none) instead, so a POST
+# case tested a request it never described. The JSON may span several lines; `parse_case` joins them.
+#   also "... with header X-Sig: <hmac> and body {...}" (NR-DIGICHEM's phrasing).
+RE_WITH_BODY = re.compile(
+    r"\b(?:with|and)\s+(?:a\s+|the\s+)?(?:JSON\s+|request\s+)?(?:body|payload)\b\s*[:=]?\s*", re.I)
+
 
 def _clean(line: str) -> str:
     """Drop the leading number, markdown emphasis, the trailing period and trailing parens."""
@@ -126,15 +134,23 @@ def _literal(raw: str):
 _ROOTS = ("response.", "resp.", "body.", "payload.", "json.")
 
 
-def _normalise_path(tok: str) -> str | None:
+#: Roots that name the response BODY explicitly. A field under one of them is payload, whatever it is called.
+_BODY_ROOTS = ("body.", "payload.", "json.")
+
+
+def _normalise_path(tok: str, *, explicit_body: bool = False) -> str | None:
     """`response.slots[0].available` -> `slots.0.available`. None when it is transport, not payload."""
     low = tok.lower()
     for r in _ROOTS:
         if low.startswith(r):
             tok = tok[len(r):]
+            explicit_body = explicit_body or r in _BODY_ROOTS
             break
-    # `response.status_code` is the HTTP status, handled by RE_STATUS — never a body field.
-    if tok.lower().split(".", 1)[0] in ("status_code", "status", "http_status", "code"):
+    # `response.status_code` is the HTTP status, handled by RE_STATUS — never a body field. But
+    # `body.status` IS a body field: many APIs return {"status": "SUCCESS"}. Treating it as transport
+    # silently dropped the assertion (measured 2026-11-05: TC-HDPO-INTAKE-FUNC-01 derived 3 of its 4
+    # checks), so only an un-rooted or `response.`-rooted name is read as the HTTP status.
+    if not explicit_body and tok.lower().split(".", 1)[0] in ("status_code", "status", "http_status", "code"):
         return None
     tok = tok.replace("[", ".").replace("]", "").strip(".")
     return tok or None
@@ -148,7 +164,7 @@ def _json_path(line: str) -> str | None:
         return ".".join(segs) if segs else None
     m = RE_BODYPATH.search(line)
     if m:
-        return _normalise_path(m.group(1))
+        return _normalise_path(m.group(1), explicit_body=True)
     m = RE_BAREPATH.search(line)
     if m:
         tok = m.group(1)
@@ -159,10 +175,56 @@ def _json_path(line: str) -> str | None:
     return None
 
 
+def _depth(s: str) -> int:
+    """Open-bracket balance of `s`, ignoring brackets inside JSON strings."""
+    depth, in_str, esc = 0, False, False
+    for ch in s:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+    return depth
+
+
+def _numbered_steps(text: str) -> list[str]:
+    """The numbered step lines. A step whose request body is still open (a pretty-printed JSON body) takes
+    the following lines until its brackets close, so a multi-line body is not cut at its first line."""
+    steps: list[str] = []
+    for ln in text.splitlines():
+        if re.match(r"^\s*\d+\.", ln):
+            steps.append(ln)
+        elif steps and RE_WITH_BODY.search(steps[-1]) and _depth(steps[-1]) > 0:
+            steps[-1] += " " + ln.strip()
+    return steps
+
+
+def _json_body(s: str) -> tuple[str | None, str]:
+    """The JSON value at the start of `s`, re-serialised compactly -> (body, "") or (None, why)."""
+    s = s.strip()
+    if not s or s[0] not in "{[":
+        return None, ("the step says 'with body' but no JSON object follows it — write the body as JSON "
+                      "on the request step")
+    try:
+        value, _ = json.JSONDecoder().raw_decode(s)
+    except ValueError as exc:
+        return None, f"the request body is not valid JSON ({exc.msg} at char {exc.pos}) — fix it in the case"
+    return json.dumps(value, separators=(",", ":"), ensure_ascii=False), ""
+
+
 def parse_case(extid: str, text: str) -> tuple[dict | None, str]:
     """One case's step text -> one spec entry, or (None, reason it could not be derived)."""
     text = html.unescape(text or "")
-    steps = [ln for ln in text.splitlines() if re.match(r"^\s*\d+\.", ln)]
+    steps = _numbered_steps(text)
     if not steps:
         return None, "no numbered steps"
 
@@ -173,8 +235,21 @@ def parse_case(extid: str, text: str) -> tuple[dict | None, str]:
         m = RE_SEND.search(line)
         if m and "path" not in entry:
             entry["method"], entry["path"] = m.group(1).upper(), m.group(2)
+            rest = line[m.end():]
+            mb = RE_WITH_BODY.search(rest)
+            if mb:
+                body, why = _json_body(rest[mb.end():])
+                if why:
+                    return None, why
+                entry["body"] = body
+                rest = rest[:mb.start()]
+            elif re.search(r"\bbody\b", rest, re.I):
+                # "with the same body as FUNC-01" — a body the step refers to but does not state. Sending
+                # the request without it would test something else, so the case is not derivable.
+                return None, ("the request body is described in prose, not given as JSON — copy the "
+                              "body into the step as `with body {...}`")
             if "?" not in entry["path"]:
-                mp = RE_WITH_PARAMS.search(line[m.end():])
+                mp = RE_WITH_PARAMS.search(rest)
                 if mp:
                     pairs = RE_KV.findall(mp.group(1))
                     # a list or object value has no single unambiguous encoding — do not guess

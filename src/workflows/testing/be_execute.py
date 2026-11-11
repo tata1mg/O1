@@ -91,13 +91,20 @@ def run_case(case: dict, env: dict, timeout: int = DEFAULT_TIMEOUT_S, curl_path:
     url = env["origin"] + case["path"] if case["path"].startswith("/") else case["path"]
     cmd = [curl_path, "-s", "-o", "-", "-w", "\n__STATUS__%{http_code}",
            "-m", str(timeout), "-X", case.get("method", env["method"]), url]
+    # The body is the CASE's, never the captured curl's. The curl is the envelope (host, identity,
+    # headers); its body belongs to whichever request it was captured from. Falling back to it sent that
+    # one body with every POST in the suite (and with GETs too) — a request no case described.
+    body = case.get("body")
+    if isinstance(body, (dict, list)):  # a hand-written spec may give the body as JSON, not a string
+        body = json.dumps(body, separators=(",", ":"), ensure_ascii=False)
     for k, v in env["headers"].items():
         if k in ("content-length",):
             continue
         cmd += ["-H", f"{k}: {v}"]
+    if body and "content-type" not in env["headers"]:
+        cmd += ["-H", "content-type: application/json"]  # curl would otherwise send form-urlencoded
     if env["cookie"]:
         cmd += ["-b", env["cookie"]]
-    body = case.get("body", env.get("body"))
     if body:
         cmd += ["--data-raw", body]
 

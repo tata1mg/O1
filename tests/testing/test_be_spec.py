@@ -207,3 +207,95 @@ def test_require_and_assert_land_in_different_buckets():
 """)
     assert entry["require"] == [{"path": "cohort", "non_empty": True}]
     assert entry["assert"] == [{"path": "value", "equals": 3}]
+
+
+# ---- phase 0 (2026-11-05): the request body, and `body.status` ----------------------------------------
+def test_request_body_is_derived_not_dropped():
+    """`with body {...}` was matched only as prose and thrown away, so the POST went out without it."""
+    entry, why = parse_case("TC-X", "1. Send POST /v4/merchants/nrch/hdpo with body "
+                                    '{"nrch_order_id": "N-1", "address": {"pincode": "110055"}, "salts": [{"q": 10}]}'
+                                    """
+2. Assert status == 200
+""")
+    assert why == ""
+    assert entry["method"] == "POST" and entry["path"] == "/v4/merchants/nrch/hdpo"
+    assert json.loads(entry["body"]) == {"nrch_order_id": "N-1", "address": {"pincode": "110055"},
+                                         "salts": [{"q": 10}]}
+
+
+def test_existing_body_shape_with_trailing_period_still_parses():
+    entry, _ = parse_case("TC-X", """1. POST /pwa-api/api/v4/carts/subscriptions/upsell_data with body {"types":"labs"}.
+2. Assert HTTP 200.
+""")
+    assert entry["body"] == '{"types":"labs"}'
+
+
+def test_multi_line_body_is_joined():
+    entry, why = parse_case("TC-X", """1. Send POST /x with body {
+     "a": 1,
+     "b": {"c": "}"}
+   }
+2. Assert status == 201
+""")
+    assert why == "" and json.loads(entry["body"]) == {"a": 1, "b": {"c": "}"}}
+    assert entry["expect_status"] == 201
+
+
+def test_body_does_not_leak_into_the_query_string():
+    """A body containing `k=v` text must not be folded into the path by the prose-params rule."""
+    entry, _ = parse_case("TC-X", """1. Send POST /x with body {"q": "a=b"}
+2. Assert status == 200
+""")
+    assert entry["path"] == "/x"
+
+
+def test_invalid_json_body_is_dropped_with_a_reason():
+    check("""1. Send POST /x with body {"a": 1,}
+2. Assert status == 200
+""", expect_drop="not valid JSON")
+
+
+def test_prose_body_is_dropped_not_sent_empty():
+    check("""1. Send POST /x with body containing the patient details
+2. Assert status == 200
+""", expect_drop="no JSON object follows")
+
+
+def test_get_without_body_has_no_body_key():
+    entry, _ = parse_case("TC-X", "1. Send GET /x\n2. Assert status == 200\n")
+    assert "body" not in entry
+
+
+def test_body_status_is_a_body_field():
+    """Measured 2026-11-05: `Assert body.status == "SUCCESS"` was silently dropped as transport."""
+    check(
+        """1. Send POST /x with body {"a": 1}
+2. Assert status == 200
+3. Assert body.status == "SUCCESS"
+4. Assert body.data.code is present
+""",
+        status=200,
+        asserts=[{"path": "status", "equals": "SUCCESS"}, {"path": "data.code", "present": True}],
+    )
+
+
+def test_response_status_code_is_still_transport():
+    check("1. Send GET /x\n2. Assert response.status_code == 204.\n3. Assert status == 204\n",
+          status=204, asserts=[])
+
+
+def test_and_body_after_a_header_clause():
+    """NR-DIGICHEM writes the header first: `with header X-Sig: <valid HMAC of body> and body {...}`."""
+    entry, why = parse_case("TC-X", "1. Send POST /v4/merchants/nrch/hdpo with header X-NRCH-Signature: "
+                                    '<valid HMAC-SHA256 of body> and body {"nrch_order_id": "N-1"}'
+                                    """
+2. Assert status == 200
+""")
+    assert why == "" and entry["path"] == "/v4/merchants/nrch/hdpo"
+    assert json.loads(entry["body"]) == {"nrch_order_id": "N-1"}
+
+
+def test_body_by_reference_is_dropped_not_sent_empty():
+    check("""1. Send POST /v1/merchants/nrch/dio-jobs with the same body as DIOJOB-FUNC-01 for merchant_order_id "N-1"
+2. Assert status == 200
+""", expect_drop="described in prose")
