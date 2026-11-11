@@ -2,10 +2,10 @@
 
 Generated from the test code: one line per test function (parametrised tests count once). The sentence is the test's docstring summary when it has one, otherwise its name.
 
-**1000 test functions** in 72 files (rfc: 173, infra: 313, harness: 236, testing: 260, parity: 18).
+**997 test functions** in 72 files (rfc: 170, infra: 313, harness: 236, testing: 260, parity: 18).
 
 
-## tests/rfc/ — 173 tests
+## tests/rfc/ — 170 tests
 
 ### test_activity_feed.py (6)
 
@@ -138,7 +138,7 @@ _scripts/mine_reasons.py pure helpers — the analysis passes over the why-layer
 - uncertainty table counts reasons and digest blocks
 - anchor sweep finds reasons digests and gate outputs
 
-### test_observe.py (23)
+### test_observe.py (22)
 
 _Langfuse tracing for the new pipeline (rfc_agent.observe): config, the no-keys stop, trace shape, verbose._
 
@@ -162,7 +162,6 @@ _Langfuse tracing for the new pipeline (rfc_agent.observe): config, the no-keys 
 - agent untraced when off
 - gate scores and verdict
 - pause answers are recorded
-- scope summary call is recorded
 - preflight
 - The real Investigate (fake claude) under tracing: lead steps named, tracers parallel under the stage, gates.
 
@@ -230,18 +229,16 @@ _Scope: parsing, confirm input, git snapshots against a throwaway remote, receiv
 - missing sign in is not retried
 - The common case: the server connects 10-30 s in, after the warm-up turn. No fresh connection needed.
 
-### test_scope_discovery.py (9)
+### test_scope_discovery.py (7)
 
-_Scope repo discovery: the fleetlens discovery agent, the Haiku PRD summary, the surface table, fallbacks._
+_Scope repo discovery: the Opus discovery agent over fleetlens, PRD mentions, fallbacks._
 
-- summary and known surfaces only
-- summary failures are reported not raised
-- surface table from config and unmapped
 - discovery agent is isolated and parsed
+- discovery model from config
 - discovery failures are reported not raised
 - agent services become repos
 - gather order and meta
-- gather without the layer still uses surfaces
+- gather without the layer has named and mentioned repos
 - discovery timeout kills the agent and closes its card
 
 ### test_scope_main.py (10)

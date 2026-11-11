@@ -161,35 +161,31 @@ Flow arrows, connector lines, text labels, icons, dots and header strips are ski
 
 ### 4b. Repo candidates (meanwhile, in the background)
 
-Two calls run side by side:
+**The discovery agent** (Opus, `SCOPE.DISCOVERY_MODEL`). A headless `claude -p` gets the whole PRD and only the
+context layer's read-only tools: no built-in tools, no other MCP server. It finds entry points
+(`get_service_graph`, `discover_interfaces`, `discover_services` with short queries), follows the code across
+services (`get_endpoint_call_graph`, `get_callers`, `get_callees`, `find_symbol`, `get_source`) and confirms each
+candidate (`list_interfaces`, `get_service_relationships`). It names backend services **and** the frontend repos
+whose screens the PRD changes: up to 10, each with a one-line reason naming the endpoint or code that shows it.
+Expect 20–35 lookups and a few minutes. Its stream is in `logs/scope.discovery.stream.jsonl`, written as it runs;
+it also gets a task card in `/rfc-agent:rfc` (`logs/agents/scope.discovery.log`). If it fails (limit hit,
+timeout, no JSON at the end), Scope says so and you add repos on the confirm screen.
 
-- **The discovery agent** (Sonnet, `SCOPE.DISCOVERY_MODEL`). A headless `claude -p` gets the whole PRD and
-  only the context layer's read-only tools: no built-in tools, no other MCP server. It looks around the index
-  (service graph, endpoints, callers), usually 20–30 lookups, and ends with up to 8 services, each with a
-  one-line reason. It takes about 90 s and $0.50. Its stream is in `logs/scope.discovery.stream.jsonl`,
-  written as it runs; it also gets a task card in `/rfc-agent:rfc` (`logs/agents/scope.discovery.log`). If it
-  fails (limit hit, timeout, no JSON at the end), Scope says so and you add repos on the confirm screen.
-- **One Haiku call** reads the whole PRD and returns a summary of at most 120 words and which **product
-  surfaces** from the surface table it changes. About 10–17 s and $0.01–0.02.
-
-Then four sources, in this order:
+Then three sources, in this order:
 
 1. **`--repos`.** Always proposed, first.
 2. **Context layer.** The agent's services, in its order, each with its reason ("context layer: owns the
    For You surface …"). Service names are mapped to repo names through the repo → service inventory
    (`SERVICES_MAP`); a name the inventory doesn't know is lower-cased (`API-Gateway` → `api-gateway`,
    Bitbucket's slug). See [Decisions](#decisions-and-what-each-one-considers).
-3. **Surface table.** Each surface the PRD changes adds its repos (config `SCOPE.SURFACES`). This is how
-   frontend repos get in. A surface with no repo in the table is reported: *"the PRD changes mobile_app but
-   the surface table names no repo for it"*.
-4. **Repos the PRD names.** Matched against the inventory's repo list, never a directory listing.
+3. **Repos the PRD names.** Matched against the inventory's repo list, never a directory listing.
 
 #### Why an agent, not one search
 
 A single `discover_services` query ranks candidates by similarity, and for a whole PRD the scores come out
 flat: the right services sit anywhere in the top dozen, or not at all. An agent that explores the service
-graph, endpoints and callers finds the owning services reliably, and each answer carries a reason you can
-judge. Frontend services still rank low for any feature, which is what the surface table covers.
+graph, endpoints and callers finds the owning services reliably, including the gateways, orchestrators and
+notification services a request passes through, and each answer carries a reason you can judge.
 
 Then every candidate's remote is **probed** in parallel (`git ls-remote --symref`). The probe gives the
 default branch and whether the repo exists on Bitbucket.
@@ -258,8 +254,7 @@ printed summary. See [Output](#output).
 | Decision | Considers | Rule |
 |---|---|---|
 | **Is the context layer usable?** | MCP `initialize` answers | 3 tries, 2 s apart. Down → continue and let you add repos |
-| **Which services own this feature?** | The discovery agent: the whole PRD plus the context layer's read tools | Up to **8** services, in the agent's order, each with its reason |
-| **Which UI repos?** | Surfaces Haiku says the PRD changes, looked up in `SCOPE.SURFACES` | Each detected surface adds its repos; a surface with none is reported for you to add |
+| **Which services own this feature?** | The discovery agent (Opus): the whole PRD plus the context layer's read tools | Up to **10** services, backend and frontend, in the agent's order, each with its reason |
 | **Service → repo name** | The inventory, then `STEERING.REPO_ALIASES` (your config wins) | `svc_a_background` → `svc_a`. A miss is retried with `_service` appended; the lower-cased name as last resort. Several deployed variants of one repo collapse into one entry |
 | **Does the PRD name a repo?** | Repo names in the inventory, matched in PRD text | Names under 5 characters are ignored. `lab_buddy` matches "lab buddy" / "lab-buddy". Single-word names count only in a repo context: `` `search` ``, "search service", "repo search" |
 | **Which repos are never proposed?** | `REPOS_EXCLUDE` | Keeps repos such as an evals repo (which may hold model answers) and this tool's own repo out of the list. Naming one in `--repos` overrides |
@@ -302,8 +297,8 @@ printed summary. See [Output](#output).
 | Case | Behaviour |
 |---|---|
 | Context layer unreachable | Continues; the confirm screen says so; add repos with `+name`. No repos at all → `STOP` |
-| Context layer proposes no frontend repo | Expected: it ranks frontend services low for any feature. The surface table adds them; if the surface has no repo configured, add it with `+name` |
-| Haiku summary fails (usage limit, timeout, bad JSON) | Scope says why and queries with the PRD's opening; no surfaces are detected, so add UI repos by hand |
+| The agent proposes no frontend repo | Add it with `+name` |
+| The discovery agent fails (usage limit, timeout, no JSON) | Scope says why; only `--repos` and PRD mentions are proposed, so add the rest with `+name` |
 | Service maps to a name Bitbucket lacks | ⚠ NOT FOUND, unticked, so you can fix it with `+right_name` before anything runs |
 | Network down | Probes say "couldn't reach Bitbucket". Local repos are snapshotted from their last fetch and marked `snapshot-of-last-fetch`; uncloned ones become `context-index-only` |
 | Your checkout is on another branch or has uncommitted work | Untouched. The snapshot comes from `origin/<default>` |
@@ -352,7 +347,7 @@ timestamped one). A PRD that was run before gets a second folder, never the firs
 
 | Path | Contents |
 |---|---|
-| `scope.json` | **Start here.** Per repo: `source`, `branch`, `branch_from`, `sha`, `commit_date`, `via`, `fetch`, `error`, `why`. Context-layer status. `repo_discovery`: the summary, surfaces, unmapped surfaces, the query sent and whether it was the summary or the PRD's opening. Pages and Jira included. Figma per link: mode (`new` / `reused` / `failed`), screens found, sections picked. `timings_s` per step. `connector_cost_usd` (includes the summary call) |
+| `scope.json` | **Start here.** Per repo: `source`, `branch`, `branch_from`, `sha`, `commit_date`, `via`, `fetch`, `error`, `why`. Context-layer status. `repo_discovery`: the agent's services with reasons, its tool calls, seconds, cost, any error. Pages and Jira included. Figma per link: mode (`new` / `reused` / `failed`), screens found, sections picked. `timings_s` per step. `connector_cost_usd` (includes the discovery agent) |
 | `raw/prd.md` | The PRD as Confluence returned it, with a provenance header (`source_url`, `fetched_at`, `title`, `page_id`, `last_modified`) |
 | `raw/jira.md` | The `--jira` issue as returned |
 | `raw/linked/` | Ticked child or linked pages (`<id>-<title>.md`) and Jira (`jira-<KEY>.md`) |
@@ -386,10 +381,8 @@ From `~/.config/rfc-agent/config.json` (see [config.example.json](../config.exam
 | `REPOS_EXCLUDE` | Repos never proposed (comma list) | none |
 | `MCP.mcpServers.fleetlens` | Context layer URL and headers (keep the name `fleetlens`) | — (without it, no context-layer proposals) |
 | `STEERING.REPO_ALIASES` | Manual service → repo names; wins over the inventory | `{}` |
-| `SCOPE.SURFACES` | Product surfaces → repos: `{"name": {"what": "one line Haiku reads", "repos": [...]}}` | none |
 | `SERVICES_MAP.REPO` / `PATH` | Where the repo → service inventory lives (an Ansible `group_vars` file) | none |
-| `SCOPE.DISCOVERY_MODEL` | The model of the discovery agent | `claude-sonnet-5` |
-| `SCOPE.SUMMARY_MODEL` | The model that writes the summary | `claude-haiku-4-5-20251001` |
+| `SCOPE.DISCOVERY_MODEL` | The model of the discovery agent | `claude-opus-5-5` |
 | `ATLASSIAN.SITE` | Which Atlassian site to fetch from | none — required for Confluence/Jira |
 | `AGENT.CLAUDE_BIN` | The `claude` binary | `claude` |
 
@@ -397,8 +390,8 @@ Environment: `RFC_AGENT_REPO_CACHE` (repo cache location), `RFC_AGENT_CONFIG` (c
 `ATLASSIAN_SITE` (overrides `ATLASSIAN.SITE`).
 
 Fixed limits (in code): connector turn 180 s · git step 120 s · `ls-remote` 20 s · Figma screen list
-600 s per link (`--figma-wait`) · Figma export 30 min · file confirm 60 min · discovery agent 300 s ·
-summary 120 s · ≤ 8 context repos · screen ≥ 200 px.
+600 s per link (`--figma-wait`) · Figma export 30 min · file confirm 60 min · discovery agent 600 s ·
+≤ 10 context repos · screen ≥ 200 px.
 
 ---
 
@@ -407,8 +400,7 @@ summary 120 s · ≤ 8 context repos · screen ≥ 200 px.
 | Part | Model |
 |---|---|
 | Atlassian connector calls | **Claude Haiku 4.5** (`--model` to change). Calls tools only; writes nothing. About $0.10–0.23 per run |
-| Repo discovery agent | **Claude Sonnet** (`SCOPE.DISCOVERY_MODEL`). About $0.50 and 90 s |
-| PRD summary + surfaces | **Claude Haiku 4.5**, one call, no tools. About $0.01–0.02 |
+| Repo discovery agent | **Claude Opus** (`SCOPE.DISCOVERY_MODEL`). Not yet measured on Opus; Sonnet took about $0.50 and 90–125 s |
 | Everything else in Scope | No model: Python, git, the Figma plugin |
 | `/rfc-agent:scope` | Plus the Claude Code session you run it in, which only shows the questions and relays progress |
 
@@ -451,9 +443,10 @@ summary 120 s · ≤ 8 context repos · screen ≥ 200 px.
 - **Short Confluence links** (`/wiki/x/…`) are not resolved.
 - **The Figma keypress cannot be automated** (Figma does not allow starting plugins from outside).
 - **Opening Figma automatically is macOS-only.**
-- **Frontend repos come from the surface table,** because the discovery agent ranks frontend services low.
-  The table needs the repos for each surface filled in, under their Bitbucket names.
-- The discovery agent costs about $0.50 and 90 s per run (hidden behind the Figma step when the PRD has links).
+- **Frontend repos depend on the agent.** It is asked for them, but fleetlens ranks frontend services low; add a
+  missing one with `+name`.
+- The discovery agent is the slowest and most expensive part of Scope (hidden behind the Figma step when the PRD
+  has links).
 
 ---
 
@@ -463,7 +456,7 @@ summary 120 s · ≤ 8 context repos · screen ≥ 200 px.
 |---|---|
 | [src/rfc_agent/scope/cli.py](../src/rfc_agent/scope/cli.py) | The flow, timings, artifacts, summary; `run-dir` and `cleanup` subcommands |
 | [src/rfc_agent/scope/atlassian.py](../src/rfc_agent/scope/atlassian.py) | Connector session (warm-up, auth check, byte-exact extraction), PRD parsing helpers |
-| [src/rfc_agent/scope/context.py](../src/rfc_agent/scope/context.py) | Context-layer health, the discovery agent, PRD summary + surfaces (Haiku), surface table, service → repo, PRD mentions |
+| [src/rfc_agent/scope/context.py](../src/rfc_agent/scope/context.py) | Context-layer health, the discovery agent (Opus), service → repo, PRD mentions |
 | [src/rfc_agent/scope/repos.py](../src/rfc_agent/scope/repos.py) | Remote probe, default branch, snapshots, repo cache, cleanup |
 | [src/rfc_agent/scope/figma.py](../src/rfc_agent/scope/figma.py) | Link parsing, plugin sync, two-phase export, sections, `figma_index.md` |
 | [src/rfc_agent/scope/confirm.py](../src/rfc_agent/scope/confirm.py) | Terminal confirm and file-based confirm |

@@ -420,29 +420,6 @@ def test_pause_answers_are_recorded(traced, tmp_path):
     assert op.kw["input"]["header"] == "── Investigate · Pause 1 ──"
 
 
-def test_scope_summary_call_is_recorded(traced, tmp_path, monkeypatch):
-    from rfc_agent.scope import context
-
-    fake = tmp_path / "claude"
-    fake.write_text(
-        "#!/usr/bin/env python3\nimport json,sys\nsys.stdin.read()\n"
-        'print(json.dumps({"total_cost_usd": 0.01, "usage": {"input_tokens": 7},'
-        ' "result": json.dumps({"summary": "adds a field", "surfaces": []})}))\n'
-    )
-    fake.chmod(0o755)
-
-    @observe.entry("scope")
-    def main(argv=None):
-        assert context.summarise("# PRD", Cfg(**{"AGENT.CLAUDE_BIN": str(fake)}))["ok"]
-        return 0
-
-    assert main(["--run-dir", str(tmp_path)]) == 0
-    c = traced["client"]
-    gen = c.one("llm:prd-summary")
-    assert c.one("agent:prd-summary").parent is c.one("stage:scope")
-    assert gen.updates["output"]["summary"] == "adds a field" and gen.updates["usage_details"]["input"] == 7
-
-
 def test_preflight(traced, capsys, monkeypatch):
     assert observe.preflight() == 0 and "langfuse=on keys=ok verbose=false" in capsys.readouterr().out
     traced["cfg"] = Cfg(**{"LANGFUSE.SECRET_KEY": ""})

@@ -10,7 +10,7 @@ Steps (timed, written to logs/scope.json):
   1. context layer (fleetlens) health check (parallel with 2)
   2. PRD + child-page list + Jira via the claude.ai Atlassian connector (byte-exact, Haiku, no rewriting)
   3. Figma: per PRD link, open the node in the desktop app and wait for one plugin run (or reuse a cache)
-     — scope candidates are computed meanwhile (a fleetlens discovery agent + a Haiku PRD summary)
+     — scope candidates are computed meanwhile (an Opus agent that explores fleetlens)
   4. ONE confirm screen: repos (+branch), extra pages, Jira, Figma sections — or, with no design, whether
      to go on without one
   5. in parallel: repo snapshots pinned to the default branch, and the ticked pages/Jira
@@ -349,11 +349,6 @@ def main(argv: list[str] | None = None) -> int:
             d = disc["discovery"]
             _say(f"context layer: {len(d['services'])} service(s) from {d['tool_calls']} fleetlens lookups "
                  f"({d['seconds']:.0f}s, ${d['cost_usd']:.2f})")
-        if disc.get("summary_error"):
-            _say(f"PRD summary failed ({disc['summary_error']}) — no surfaces detected")
-        if disc.get("unmapped_surfaces"):
-            _say(f"the PRD changes {', '.join(disc['unmapped_surfaces'])} but the surface table names no repo for it "
-                 "— add the repo on the confirm screen (`+name`), and to config SCOPE.SURFACES for next time")
 
         # 4 — the one confirm screen
         def repo_item(name: str, why: list[str] | None = None, info: repos.RemoteInfo | None = None) -> confirm.Item:
@@ -383,8 +378,7 @@ def main(argv: list[str] | None = None) -> int:
                 items.append(confirm.Item("figma", f"{xi}:{s['name']}", f"{s['name']} ({len(s['frames'])} screens)",
                                           note=f"PRD overlap {s['overlap']}", include=s["include"]))
         header = (f"── Scope · confirm ── PRD: {scope.get('prd_title') or prd_path.name}\n"
-                  f"  context layer: {'ok' if layer.get('ok') else 'UNAVAILABLE — ' + str(layer.get('why'))}"
-                  + (f"\n  surfaces: {', '.join(disc['surfaces'])}" if disc.get("surfaces") else ""))
+                  f"  context layer: {'ok' if layer.get('ok') else 'UNAVAILABLE — ' + str(layer.get('why'))}")
         # no design to read (and Figma not skipped on purpose): the operator decides whether to go on
         no_design = None
         if not args.no_figma and not any(it.kind == "figma" for it in items):

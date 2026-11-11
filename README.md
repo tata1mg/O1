@@ -185,7 +185,7 @@ before it leaves your machine. See [scripts/security/SECURITY.md](scripts/securi
 
 **Config lives OUTSIDE the plugin**, in `~/.config/rfc-agent/config.json`: an installed plugin is replaced on every
 update, and a config inside it once leaked credentials into plugin cache copies. It holds everything you supply —
-team values (Atlassian site, fleetlens URL, product surfaces, service inventory, Langfuse host) and your own
+team values (Atlassian site, fleetlens URL, service inventory, Langfuse host) and your own
 (`REPOS_ROOT`, `RUNS_ROOT`, Langfuse keys, tokens). The harness's own working values ship read-only in
 `config.harness.json`; any key you set in your config.json wins, and env vars win over both. Nothing org-specific
 ships in the plugin. Details: SETUP.md §3.

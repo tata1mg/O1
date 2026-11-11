@@ -8,7 +8,7 @@ Trace shape (one trace per CLI invocation; a resumed run lands in the same Langf
 
     rfc-run                                  root; session = the run folder's identity.json
     ├─ stage:scope                            one `chain` per stage main()
-    │   ├─ llm:prd-summary                   one-shot model calls (generation)
+    │   ├─ llm:repo-discovery                the discovery agent (generation)
     │   ├─ agent:atlassian → llm:atlassian
     │   └─ operator:confirm                  the user's selection
     ├─ stage:investigate

@@ -129,9 +129,9 @@ Opus 5.5 and Sonnet 5.5, so those stages run on Claude; it has no Haiku:
 | Stage model | Used by | Gateway model |
 |---|---|---|
 | `claude-opus-5-5[1m]` | Investigate lead, Draft, Review, Revise | `anthropic/claude-opus-5.5` |
-| `claude-opus-5-5` | Investigate UI reader | `anthropic/claude-opus-5.5` |
-| `claude-sonnet-5-5` | tracers, Summarize, Scope discovery | `anthropic/claude-sonnet-5.5` |
-| `claude-haiku-4-5…` | Scope PRD summary, Atlassian fetch | `gemini-3.8-flash` |
+| `claude-opus-5-5` | Investigate UI reader, Scope discovery | `anthropic/claude-opus-5.5` |
+| `claude-sonnet-5-5` | tracers, Summarize | `anthropic/claude-sonnet-5.5` |
+| `claude-haiku-4-5…` | Scope's Atlassian fetch | `gemini-3.8-flash` |
 
 Print the current mapping:
 

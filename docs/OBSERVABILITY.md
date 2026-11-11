@@ -53,7 +53,6 @@ rfc-run                                   chain   input: argv · output: {exit}
 ├─ stage:scope                             chain   output: {exit}; ERROR + status message when it stopped
 │   ├─ agent:atlassian → llm:atlassian    one per connector turn (cost; connector calls as tools if verbose)
 │   ├─ agent:repo-discovery               the context-layer discovery agent
-│   ├─ agent:prd-summary → llm:prd-summary
 │   └─ operator:confirm                   your Scope selection: selected / not_selected
 ├─ stage:investigate
 │   ├─ agent:lead:1a → llm:lead:1a        agent = identity + outcome; generation = model, tokens, cost
@@ -139,7 +138,7 @@ SDK drop the export batch.
 |---|---|
 | trace + stage spans, the flags, the no-keys stop | `@observe.entry(...)` on `run.main` and every stage `main` |
 | every `claude -p` agent from Investigate to Summarize | `investigate/agent.py` `run()` |
-| Scope model calls | `scope/context.py` `discover` (the discovery agent, `agent:repo-discovery`) and `summarise`; `scope/atlassian.py` `_turn` |
+| Scope model calls | `scope/context.py` `discover` (the discovery agent, `agent:repo-discovery`); `scope/atlassian.py` `_turn` |
 | gates | `investigate/cli.py` (agent checks, understanding), `draft/cli.py` |
 | pauses | `investigate/pauses.py` `ask` (Investigate and Review), `scope/cli.py` (confirm) |
 

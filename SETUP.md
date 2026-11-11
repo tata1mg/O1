@@ -68,7 +68,6 @@ ignored.
 
 - **`ATLASSIAN.SITE`** — your Atlassian site; Scope fetches Confluence/Jira from it.
 - **`MCP.mcpServers.fleetlens.url`** and the `bitbucket` server's workspace — section 4.
-- **`SCOPE.SURFACES`** — your product surfaces → the repos that build them. Scope matches the PRD against them.
 - **`SERVICES_MAP.REPO` / `PATH`** — where your repo → deployed-service inventory lives.
 - **`REPOS_EXCLUDE`** — repos Scope never offers (e.g. an evals repo holding model answers).
 - **`LANGFUSE.HOST`** — your team's Langfuse.

@@ -1,7 +1,7 @@
 """Scope's whole flow (`python -m rfc_agent.scope`) with a local PRD file and throwaway git remotes.
 
 Nothing here touches the network or a model: no `fleetlens` is configured, so the context layer reports itself
-unavailable, and the PRD summary refuses to start a real `claude` while RFC_AGENT_NO_REAL_CLAUDE is set.
+unavailable and the discovery agent never starts.
 """
 
 import json
