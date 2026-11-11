@@ -335,7 +335,8 @@ def test_the_workflows_composition_flags_shape_the_run(tmp_path):
     """`testing.execute` used to be read by nothing: the CLI ran `default_pipeline` regardless."""
     assert _composed(tmp_path)[-2:] == ["store_cases", "prerequisites"]
     assert _composed(tmp_path, enable=["testing.execute"])[-2:] == ["derive_spec", "execute_be"]
-    assert "evaluate" not in _composed(tmp_path, disable=["testing.evaluate"])
+    assert "evaluate" not in _composed(tmp_path)                              # on demand, not by default
+    assert "evaluate" in _composed(tmp_path, enable=["testing.evaluate"])
 
 
 def test_stages_can_select_an_opt_in_stage(tmp_path):

@@ -15,8 +15,9 @@ build) plus the flags that compose the executor's stages. This builds that line 
 - `all` -> both, one after the other.
 
 Defaults: the run dir is the newest `<RUNS_ROOT>/*-testing-*`; feature and RFC run come from its
-`qa/sources.json`; environment and build from the last results of that kind (`qa/ui/results.json`,
-`qa/results.json`); the curl from `testing.curl` in config. `--print` shows the command instead of running it.
+`qa/sources.json`; environment and build from `--env`/`--build`, else `testing.env`/`testing.build` in config
+(`preflight setup-web --env/--build`), else the last results (`qa/ui/results.json`, `qa/results.json`); the
+curl from `testing.curl` in config. `--print` shows the command instead of running it.
 Exit code: the harness's (the last one, for `all`).
 """
 
@@ -64,8 +65,11 @@ def command(kind: str, run_dir: Path, *, env: str = "", build: str = "", headed:
     # The last run of this kind, else of the other kind: both name the same `<feature> · <env> · <build>` run.
     lasts = [_load(run_dir / results)] + [_load(run_dir / r) for _, _, r in KINDS.values() if r != results]
     feature, rfc_run = sources.get("feature"), sources.get("rfc_run_dir")
-    env = env or next((str(x["environment"]) for x in lasts if x.get("environment")), "")
-    build = build or next((str(x["build"]) for x in lasts if x.get("build")), "")
+    # --env > the default you set (`TESTING.env` in config.json, via `preflight setup-web --env`) > the last run's
+    env = env or str((flags.get("testing.env") if flags else "") or "") or \
+        next((str(x["environment"]) for x in lasts if x.get("environment")), "")
+    build = build or str((flags.get("testing.build") if flags else "") or "") or \
+        next((str(x["build"]) for x in lasts if x.get("build")), "")
     missing = [n for n, v in (("feature (qa/sources.json)", feature), ("--env", env), ("--build", build)) if not v]
     if kind == "web" and only_existing and not (run_dir / "qa" / "ui" / "plan.json").is_file():
         missing.append("qa/ui/plan.json — no test is written yet; run without --only-existing to write them")

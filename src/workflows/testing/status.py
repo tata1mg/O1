@@ -27,7 +27,9 @@ if __package__ in (None, ""):  # run as a script: make `workflows.testing` impor
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 #: Phase A ends at the human review; phase B starts after it. Order is the default composition's.
-GENERATE_STAGES = ("sources", "generate_cases", "render_xlsx", "evaluate", "store_cases", "prerequisites")
+GENERATE_STAGES = ("sources", "generate_cases", "render_xlsx", "store_cases", "prerequisites")
+#: Runs on demand (`/test-agent:evaluate`); never blocks or resumes generation, review or execution.
+EVALUATE_STAGE = "evaluate"
 EXECUTE_STAGES = ("derive_spec", "execute_be", "derive_ui", "execute_web", "publish_app")
 #: Where each executor writes its results, by kind.
 RESULTS = {"backend": "qa/results.json", "web": "qa/ui/results.json", "app": "qa/app/results.json"}

@@ -1,5 +1,5 @@
 ---
-description: QA test cases from an RFC run, end to end from chat — preflight, generate, evaluate, upload to Kiwi for review, prerequisites; then backend, web UI (Playwright) and app UI (Maestro) execution once you have confirmed the cases in Kiwi
+description: QA test cases from an RFC run, end to end from chat — preflight, generate, upload to Kiwi for review, prerequisites; then backend, web UI (Playwright) and app UI (Maestro) execution once you have confirmed the cases in Kiwi
 argument-hint: [--feature KEY] [--rfc-run-dir <rfc run>] [--run-dir <testing run, to resume>] [--contract F] [--plan F] [--test-data F] [--figma F]
 ---
 
@@ -7,8 +7,9 @@ Run the harness `testing` workflow for: `$ARGUMENTS`
 
 YOU are its progress view and its question UI. The run has two phases split by a human review in Kiwi:
 
-- **A. Generate** (~40 min, background): sources → generate_cases → render_xlsx → evaluate → store_cases →
-  prerequisites. Cases land in Kiwi as PROPOSED.
+- **A. Generate** (~30 min, background): sources → generate_cases → render_xlsx → store_cases →
+  prerequisites. Cases land in Kiwi as PROPOSED. Scoring the suite (`evaluate`: the rubric and the 14
+  compliance checks, ~15 min) is not part of it — it runs on demand with `/test-agent:evaluate`.
 - **Review**: the user approves cases in Kiwi (status CONFIRMED). This can take a day; nothing waits on it.
 - **B. Execute** (background), on CONFIRMED cases only: backend (`exec:http`, derive_spec → execute_be), web UI
   (Playwright: derive_ui → execute_web) and app UI (publish_app records a Maestro run from a device).
@@ -46,7 +47,7 @@ With no `--run-dir`, first run `… preflight runs --json --limit 3` (unfinished
 add `--rfc-run-dir D` / `--feature F` when those were given). If it lists any, ask **"Continue a testing run,
 or start a new one?"** with one option per run (label = `feature` and the folder's date, description =
 `label`, e.g. "waiting for review in Kiwi") and `Start a new run`. A run picked is a resume of its `path`, as
-above. Never skip this question when runs are listed: a new run regenerates the whole suite (~40 minutes).
+above. Never skip this question when runs are listed: a new run regenerates the whole suite (~30 minutes).
 
 Otherwise it is a **new run**: continue with section 2.
 
@@ -81,12 +82,12 @@ An argument given with no value (`--feature` alone) counts as not given.
 5. If `resolved.existing_runs` is non-empty, this feature already has an unfinished run from this RFC run.
    Ask **"<F> already has a run from this RFC — continue it?"** with `Continue <folder name>` (description =
    its `label`; a resume of its `path`, section 1) and `Start fresh` (description: regenerates the suite,
-   ~40 min; cases already reviewed in Kiwi stay as they are).
+   ~30 min; cases already reviewed in Kiwi stay as they are).
 6. Use `resolved.run_dir` from the check as `R` (a fresh `~/rfc-runs/<date>-testing-<feature>` folder).
 
 ## 3. Phase A — launch
 
-Say once: *"Generating the suite in the background — about 40 minutes. I'll post each stage as it
+Say once: *"Generating the suite in the background — about 30 minutes. I'll post each stage as it
 finishes."* Then:
 
 ```
@@ -155,8 +156,11 @@ From `… status <R> --kiwi --json`, post ONE message, in this order:
 
 1. **Cases are generated.** `<total>` cases in `<modules>` modules — by execution (`http` / `manual` / `ui`)
    and priority. Time and cost of phase A (`duration_s`, `cost_usd`).
-2. **Quality.** Evaluator score `<overall>/5` (coverage, quality) and compliance `<compliance>`; name the
-   failed checks in plain words (`structural_completeness` → "some preconditions are a bare n/a").
+2. **Quality.** When `eval` is set (the suite was scored earlier with `/test-agent:evaluate`): evaluator
+   score `<overall>/5` (coverage, quality) and compliance `<compliance>`, naming the failed checks in plain
+   words (`structural_completeness` → "some preconditions are a bare n/a"). Otherwise one line: *"Not scored
+   yet — `/test-agent:evaluate` rates it against the rubric and the 14 compliance checks (~15 min), any
+   time."*
 3. **In Kiwi.** `<store.total>` cases in `<store.product>` as PROPOSED — link `store.plan_url`. If
    `store.protected` > 0: that many cases were already reviewed and were left as they are (a suggestion
    comment shows what changed). If `kiwi.stale` is non-empty: the plan also holds that many cases from

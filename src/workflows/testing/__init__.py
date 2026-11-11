@@ -1,4 +1,4 @@
-"""The `testing` workflow: PRD/RFC -> QA suite -> evaluated, stored, executed.
+"""The `testing` workflow: PRD/RFC -> QA suite -> stored, executed (and evaluated, on demand).
 
 test_agent (plugin `ai-sdlc` 1.1.0) re-expressed on the harness contracts. The chain it replaces was one
 bash script that ran rfc_agent as a subprocess and then a single headless `claude -p` turn which was
@@ -8,7 +8,11 @@ resumable, costed, traced and mechanically checked.
 
 Default pipeline (generate and upload for review):
 
-    sources -> generate_cases -> render_xlsx -> evaluate -> store_cases -> prerequisites
+    sources -> generate_cases -> render_xlsx -> store_cases -> prerequisites
+
+`evaluate` (the rubric and the 14 compliance checks) is opt-in and separate: `--stages evaluate --enable
+testing.evaluate --run-dir <run>`, or `/test-agent:evaluate`. It took ~17 of a run's ~45 minutes and nothing
+downstream reads it, so it no longer stands between generation and review.
 
 Cases are stored PROPOSED, and only a human approves them (CONFIRMED). `derive_spec` reads CONFIRMED cases
 only, so it belongs to the RUN pipeline, after review, together with `execute_be`, which issues real
@@ -43,7 +47,7 @@ from .stages.sources import STAGE as SOURCES
 from .stages.store_cases import STAGE as STORE_CASES
 
 DEFAULT_PIPELINE: tuple[str, ...] = (
-    "sources", "generate_cases", "render_xlsx", "evaluate", "store_cases", "prerequisites",
+    "sources", "generate_cases", "render_xlsx", "store_cases", "prerequisites",
 )
 
 
@@ -80,7 +84,7 @@ def compose_pipeline(flags) -> tuple[str, ...]:
             return default
 
     stages = ["sources", "generate_cases", "render_xlsx"]
-    if on("evaluate", True):
+    if on("evaluate", False):
         stages.append("evaluate")
     store = on("store", True)
     if store:

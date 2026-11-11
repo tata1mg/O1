@@ -70,8 +70,10 @@ NAMES = (
     _f("exec_tag", str, "exec:http",
        "The tag a case must carry to be machine-executable (was EXEC_TAG in be_execute.py:25)."),
     # ---- pipeline shape ------------------------------------------------------------------------------
-    _f("evaluate", bool, True,
-       "Run the evaluator stage (presence checks in Python, rubric checked by the model); ON by default."),
+    _f("evaluate", bool, False,
+       "Run the evaluator stage (presence checks in Python, rubric checked by the model) in the pipeline. "
+       "OFF by default: it runs on demand on an existing run (`--stages evaluate --enable testing.evaluate`, "
+       "or /test-agent:evaluate), so ~17 minutes of scoring no longer delay the upload for review."),
     _f("store", bool, True, "Run the store_cases stage (upsert the suite into the case store)."),
     _f("prerequisites", bool, True,
        "Run the prerequisites stage: qa/prerequisites.md (services, deploy order, config, secrets, test "

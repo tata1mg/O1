@@ -208,7 +208,7 @@ GEN_OK = {s: "ok" for s in status.GENERATE_STAGES}
 @pytest.mark.parametrize("rows, store, step", [
     ({}, None, "start"),
     ({"sources": "ok", "generate_cases": "ok"}, None, "resume_generate"),
-    ({**GEN_OK, "evaluate": "gate_failed"}, None, "fix"),
+    ({**GEN_OK, "prerequisites": "gate_failed"}, None, "fix"),
     ({k: v for k, v in GEN_OK.items() if k != "store_cases"}, None, "store"),
     (GEN_OK, {"backend": "json"}, "store"),
     (GEN_OK, {"backend": "kiwi"}, "review"),
@@ -393,3 +393,23 @@ def test_a_real_gate_failure_names_its_checks(tmp_path):
     manifest(tmp_path, {"sources": "ok", "generate_cases": "gate_failed"})
     why = status.report(tmp_path)["next"]["why"]
     assert why["kind"] == "gate" and why["retry"] is False and "bad" in why["message"]
+
+
+def test_an_unscored_or_failed_evaluation_never_holds_a_run_back(tmp_path):
+    manifest(tmp_path, GEN_OK)
+    assert status.next_step(status.stages(tmp_path), {"backend": "kiwi"})["step"] == "review"
+    manifest(tmp_path, {**GEN_OK, "evaluate": "gate_failed"})
+    assert status.next_step(status.stages(tmp_path), {"backend": "kiwi"})["step"] == "review"
+
+
+def test_evaluation_runs_the_one_stage_on_the_run(tmp_path):
+    from workflows.testing import evaluation
+
+    run = tmp_path / "2026-11-05-testing-F-1"
+    (run / "qa").mkdir(parents=True)
+    (run / "qa/sources.json").write_text(json.dumps({"feature": "F-1", "rfc_run_dir": "/rfc"}))
+    with pytest.raises(SystemExit, match="not been generated"):
+        evaluation.command(run)
+    (run / "qa/cases.json").write_text("[]")
+    joined = " ".join(evaluation.command(run))
+    assert "--stages evaluate" in joined and "--enable testing.evaluate" in joined and "--feature F-1" in joined

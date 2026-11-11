@@ -640,3 +640,22 @@ def test_derive_ui_only_new_with_nothing_new_calls_no_model(ui_ctx, monkeypatch)
     ui_ctx.flags._v["testing.ui_only_new"] = True
     ui_ctx.engine = None
     assert "nothing new to derive" in derive_ui.STAGE.engine(derive_ui.STAGE, ui_ctx).final_text
+
+
+def test_execute_env_order_is_flag_then_config_then_last_run(tmp_path):
+    from workflows.testing import execute
+
+    run = tmp_path / "r"
+    (run / "qa" / "ui").mkdir(parents=True)
+    write_json(run / "qa/sources.json", {"feature": "F-1"})
+    write_json(run / "qa/ui/results.json", {"environment": "jupiter", "build": "b7"})
+    configured = flags_like({"testing.env": "pluto", "testing.build": ""})
+    assert "--env jupiter" in " ".join(execute.command("web", run))
+    assert "--env pluto --build b7" in " ".join(execute.command("web", run, flags=configured))
+    assert "--env mars" in " ".join(execute.command("web", run, env="mars", flags=configured))
+
+
+def flags_like(values: dict):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(get=lambda name, default=None: values.get(name, default))

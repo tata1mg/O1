@@ -13,7 +13,7 @@ turn into a checklist and a question, not six ad-hoc greps.
     python -m workflows.testing.preflight setup-kiwi --kiwi-web URL --product-prefix P [--kiwi-user U]
                                                     [--kiwi-url X] [--insecure-tls true|false]
     python -m workflows.testing.preflight setup-web [--environments a,b,c] [--base-url-template T]
-                                                   [--ui-login FILE] [--curl FILE]
+                                                   [--ui-login FILE] [--curl FILE] [--env E] [--build B]
     python -m workflows.testing.preflight envs [--json]
 
 `check` exits 0 when nothing failed (warnings allowed), 1 when a check failed. Each check is
@@ -48,7 +48,7 @@ KIWI_TIMEOUT_S = 15
 #: The non-secret `testing.*` flags `setup-kiwi` / `setup-web` may write. `ui_login` is a PATH to the
 #: credentials file, never its contents.
 KIWI_SETTINGS = ("storage", "kiwi_web", "product_prefix", "kiwi_user", "kiwi_url", "insecure_tls")
-WEB_SETTINGS = ("environments", "base_url_template", "ui_login", "curl")
+WEB_SETTINGS = ("environments", "base_url_template", "ui_login", "curl", "env", "build")
 
 
 # ---- shared with `status`: flags and the store, resolved the way a run resolves them ---------------
@@ -495,6 +495,8 @@ def main(argv: list[str] | None = None) -> int:
     w.add_argument("--base-url-template", help="web base URL with {env}, e.g. https://{env}.1mg.com")
     w.add_argument("--ui-login", help='path of the {"phone", "otp"} file (the path is stored, not the values)')
     w.add_argument("--curl", help="path of the captured curl the backend executor uses (the path, not its contents)")
+    w.add_argument("--env", help="default environment for /test-agent:execute, e.g. jupiter")
+    w.add_argument("--build", help="default build label for /test-agent:execute, e.g. unknown")
     e = sub.add_parser("envs")
     e.add_argument("--json", action="store_true")
     s = sub.add_parser("setup-kiwi")
@@ -522,7 +524,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "setup-web":
         values = {"environments": args.environments, "base_url_template": args.base_url_template,
-                  "ui_login": args.ui_login, "curl": args.curl}
+                  "ui_login": args.ui_login, "curl": args.curl, "env": args.env, "build": args.build}
         if args.base_url_template and "{env}" not in args.base_url_template:
             ap.error("--base-url-template needs {env}, e.g. https://{env}.1mg.com")
         path = setup_kiwi(values, allowed=WEB_SETTINGS, default_storage=False)

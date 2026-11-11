@@ -107,8 +107,12 @@ def pipeline_ctx(tmp_path, ctx_factory, recipes):
     return ctx, engine
 
 
+#: The default pipeline plus `evaluate`, which runs on demand: these tests exercise its gate end to end.
+WITH_EVALUATE = ("sources", "generate_cases", "render_xlsx", "evaluate", "store_cases", "prerequisites")
+
+
 def stages(names=None):
-    return [WORKFLOW.stage(n) for n in (names or WORKFLOW.default_pipeline)]
+    return [WORKFLOW.stage(n) for n in (names or WITH_EVALUATE)]
 
 
 def manifest(ctx) -> dict:
@@ -121,7 +125,7 @@ def test_the_default_pipeline_runs_green_end_to_end(pipeline_ctx):
     run_pipeline(stages(), ctx)
 
     m = manifest(ctx)
-    assert set(m) == set(WORKFLOW.default_pipeline)
+    assert set(m) == set(WITH_EVALUATE)
     for name, entry in m.items():
         assert entry["status"] == "ok", (name, entry)
         assert entry["gate"]["passed"] is True
@@ -213,7 +217,7 @@ def test_a_second_invocation_skips_every_green_stage(pipeline_ctx):
     assert engine.calls == []
     decisions = [json.loads(x) for x in ctx.path("logs/decisions.jsonl").read_text().splitlines()]
     skipped = {d["stage"] for d in decisions if d["decision"] == "green_skip"}
-    assert skipped == set(WORKFLOW.default_pipeline)
+    assert skipped == set(WITH_EVALUATE)
 
 
 def test_a_stage_subset_reruns_exactly_that_stage(pipeline_ctx):
@@ -229,7 +233,7 @@ def test_a_stage_subset_reruns_exactly_that_stage(pipeline_ctx):
 def test_the_chain_resumes_from_disk_one_stage_per_invocation(pipeline_ctx):
     """The flow a plugin command drives: --stages sources, then --stages generate_cases, ..."""
     ctx, engine = pipeline_ctx
-    for name in WORKFLOW.default_pipeline:
+    for name in WITH_EVALUATE:
         run_pipeline(stages(), ctx, selected=[name])
     assert engine.calls == ["generate_cases", "evaluate", "prerequisites"]
     assert manifest(ctx)["store_cases"]["status"] == "ok"
@@ -465,20 +469,19 @@ def test_compose_pipeline_defaults_to_the_declared_default(ctx):
 
 
 @pytest.mark.parametrize("flags,want", [
-    ({}, ("sources", "generate_cases", "render_xlsx", "evaluate", "store_cases", "prerequisites")),
-    ({"testing.evaluate": False},
-     ("sources", "generate_cases", "render_xlsx", "store_cases", "prerequisites")),
+    ({}, ("sources", "generate_cases", "render_xlsx", "store_cases", "prerequisites")),
+    ({"testing.evaluate": True},
+     ("sources", "generate_cases", "render_xlsx", "evaluate", "store_cases", "prerequisites")),
     ({"testing.execute": True},
-     ("sources", "generate_cases", "render_xlsx", "evaluate", "store_cases", "prerequisites",
-      "derive_spec", "execute_be")),
+     ("sources", "generate_cases", "render_xlsx", "store_cases", "prerequisites", "derive_spec", "execute_be")),
     # no store -> nothing that reads from it, so the operator is told by the shape of the run
-    ({"testing.store": False}, ("sources", "generate_cases", "render_xlsx", "evaluate", "prerequisites")),
+    ({"testing.store": False}, ("sources", "generate_cases", "render_xlsx", "prerequisites")),
     ({"testing.store": False, "testing.execute": True},
-     ("sources", "generate_cases", "render_xlsx", "evaluate", "prerequisites")),
-    ({"testing.evaluate": False, "testing.store": False, "testing.prerequisites": False},
+     ("sources", "generate_cases", "render_xlsx", "prerequisites")),
+    ({"testing.store": False, "testing.prerequisites": False},
      ("sources", "generate_cases", "render_xlsx")),
     ({"testing.prerequisites": False, "testing.execute": True},
-     ("sources", "generate_cases", "render_xlsx", "evaluate", "store_cases", "derive_spec", "execute_be")),
+     ("sources", "generate_cases", "render_xlsx", "store_cases", "derive_spec", "execute_be")),
 ])
 def test_compose_pipeline_honours_the_composition_flags(tmp_path, ctx_factory, flags, want):
     from workflows.testing import compose_pipeline
@@ -544,3 +547,12 @@ def test_an_errored_session_that_wrote_its_outputs_still_goes_to_the_gate(pipeli
     ctx.engine = ErroringEngine(recipes, write=True)
     run_pipeline(stages(), ctx)
     assert manifest(ctx)["generate_cases"]["status"] == "ok"
+
+
+def test_the_default_pipeline_leaves_evaluate_for_later(pipeline_ctx):
+    """evaluate runs on demand (/test-agent:evaluate): generation goes straight to the upload."""
+    ctx, engine = pipeline_ctx
+    run_pipeline(stages(WORKFLOW.default_pipeline), ctx)
+    assert "evaluate" not in manifest(ctx) and engine.calls == ["generate_cases", "prerequisites"]
+    run_pipeline(stages([*WORKFLOW.default_pipeline, "evaluate"]), ctx, selected=["evaluate"])
+    assert manifest(ctx)["evaluate"]["status"] == "ok" and ctx.path("qa/eval.json").exists()

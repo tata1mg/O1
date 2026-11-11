@@ -9,7 +9,8 @@ storage MCP tool, with nothing checking either. There was no manifest for those 
 or latency accounting, and the evaluator skill was wired to nothing at all.
 
 ```
-generate and upload:  sources -> generate_cases -> render_xlsx -> evaluate -> store_cases -> prerequisites
+generate and upload:  sources -> generate_cases -> render_xlsx -> store_cases -> prerequisites
+score, on demand:     evaluate                             rubric + 14 compliance checks (/test-agent:evaluate)
                       (cases stored PROPOSED; a reviewer approves or rejects each one in Kiwi)
 run after review:     derive_spec -> execute_be            backend cases (exec:http)
                       derive_ui -> execute_web             web UI cases (exec:ui + surface:web), Playwright
@@ -43,7 +44,7 @@ pipeline left out).
 | `sources` | python | — | `qa/sources.json` | PRD and RFC present and non-empty; the inventory names a feature |
 | `generate_cases` | model (`skills/qa-test-case-generator`) | `qa/sources.json` | `qa/cases.json`, `qa/scenarios.json` | every schema validator; every `execution: http` case's steps re-parsed through `be_spec.parse_case` with a route and a status. `retry_on_gate_failure=1`, `revise_on_retry=True` |
 | `render_xlsx` | python | the two suite files | `qa/<FEATURE>_QA_Suite.xlsx` (conditional) | both sheets present, headers exactly the declared columns, row count equals `cases.json` |
-| `evaluate` | python + model (`skills/qa-test-case-evaluator`) | the suite + `qa/sources.json` | `qa/eval.mechanical.json`, `qa/eval.json` | schema valid; aggregates recomputed; every FAIL carries a violation naming a real id; `compliance_status` derived not asserted; the model's presence verdict equals the one Python computed. `retry_on_gate_failure=1`, `revise_on_retry=True` |
+| `evaluate` (on demand) | python + model (`skills/qa-test-case-evaluator`) | the suite + `qa/sources.json` | `qa/eval.mechanical.json`, `qa/eval.json` | schema valid; aggregates recomputed; every FAIL carries a violation naming a real id; `compliance_status` derived not asserted; the model's presence verdict equals the one Python computed. `retry_on_gate_failure=1`, `revise_on_retry=True` |
 | `prerequisites` | python + model (`skills/qa-test-prerequisites`) | `qa/cases.json`, `qa/sources.json` | `qa/prerequisites.facts.json`, `qa/prerequisites.json`, `qa/prerequisites.md`, `qa/test_data.template.yaml` | every case is in some item's `used_by` or in `no_prerequisites` (never both); every cited id is a real case; a case carrying a placeholder or an invented value is never prerequisite-free; every item's fields filled; fixture ids `FX-nn` and unique; no secret carries a value. `retry_on_gate_failure=1`, `revise_on_retry=True` |
 | `store_cases` | python | `qa/cases.json` | `qa/store.json` | `created + updated + unchanged + protected == total`, and `total` equals the number of cases in the suite |
 | `derive_spec` | python | `qa/store.json` | `qa/spec.json`, `qa/spec.report.json` | non-empty; every entry has a path and asserts something. Dropped and status-only cases become decisions |
@@ -152,6 +153,16 @@ test_agent's `TC-[A-Z]+-\d+`, which matched none of the generator's ids.
 
 All three executors write into the same store run, `<feature> · <env> · <build>`.
 
+### Scoring a suite on demand: `/test-agent:evaluate`
+
+`evaluate` is not in the default pipeline: it took ~17 of a run's ~45 minutes and nothing downstream reads its
+output, so generation now goes straight to the Kiwi upload. `/test-agent:evaluate [--run-dir R]` (or
+`python -m workflows.testing.evaluation`) runs that stage alone on an existing run (`--stages evaluate
+--enable testing.evaluate`) and reports the score and the failed compliance checks; `/test-agent:test`'s
+handoff shows them when they exist and points to the command when they do not. It scores `qa/cases.json` in
+the run dir, not edits made in Kiwi. `status.next_step` never waits on it, so an unscored or a failed
+evaluation does not block review or execution.
+
 ### Executing an existing run: `/test-agent:execute`
 
 `/test-agent:execute [web|backend|all] [--only-existing] [--run-dir R] [--env E] [--build B] [--headed]
@@ -217,7 +228,7 @@ drops `derive_spec` and `execute_be`, since both read from the store. The harnes
 | `testing.run_template` | str | `"{feature} · {env} · {build}"` | Test-run summary, which is also the run's reuse key |
 | `testing.upload_status` | `PROPOSED`\|`CONFIRMED` | `PROPOSED` | Status a case is stored with. CONFIRMED skips review and is accepted by the JSON store only |
 | `testing.exec_tag` | str | `"exec:http"` | The tag a case must carry to be machine-executable |
-| `testing.evaluate` | bool | `True` | Run the evaluator stage |
+| `testing.evaluate` | bool | `False` | Run the evaluator stage in the pipeline. Off: it runs on demand (`--stages evaluate --enable testing.evaluate`, or `/test-agent:evaluate`) |
 | `testing.store` | bool | `True` | Run `store_cases` |
 | `testing.prerequisites` | bool | `True` | Run `prerequisites` |
 | `testing.execute` | bool | `False` | Run `execute_be` |
