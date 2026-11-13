@@ -347,7 +347,10 @@ class PiEngine:
                 _kill_group(proc, pgid)
 
         stderr_tail = _tail(err_path)
-        cost = session_usage_cost(_session_file(session_dir, session_id))
+        # The session file is the better source (it survives a torn pipe and includes compaction spend), but it
+        # holds EVERY turn of the session: on a resume it would book the earlier calls again, so a resumed call
+        # is costed from its own messages in the stream.
+        cost = None if resume_file is not None else session_usage_cost(_session_file(session_dir, session_id))
         extra = None
         if over_budget:
             extra = (f"killed: summed cost ${over_budget[0]:.4f} exceeded max_budget_usd "

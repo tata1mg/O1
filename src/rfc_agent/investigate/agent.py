@@ -216,6 +216,11 @@ def run(
     try:
         _run_proc(cmd, prompt, run_dir, env, spec, stream_path, res, on_event, trace)
     finally:
+        if res.cost_usd:
+            # `--resume` reports the whole session's cost so far: book only what this call added
+            from harness.session_cost import charge
+
+            res.cost_usd = charge(run_dir, res.session_id, res.cost_usd, resumed=resume) or 0.0
         if on_event:
             on_event(spec.label, "end", {"ok": res.ok, "error": res.error, "session_id": res.session_id,
                                          "tool_calls": res.tool_calls, "seconds": res.seconds,
@@ -340,7 +345,8 @@ def _consume(line: str, res: AgentResult, on_event, trace=None, run_dir: Path | 
                                                  "target": target(b.get("input"), run_dir)})
     elif t == "result":
         res.session_id = ev.get("session_id") or res.session_id
-        res.cost_usd += float(ev.get("total_cost_usd") or 0)
+        # the session's running total (last one wins); run() turns it into this call's own cost
+        res.cost_usd = float(ev.get("total_cost_usd") or 0)
         res.turns = int(ev.get("num_turns") or 0)
         res.final_text = str(ev.get("result") or "")[:2000]
         res.extra["result_subtype"] = ev.get("subtype")

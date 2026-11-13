@@ -494,8 +494,9 @@ def test_a_pending_connector_is_waited_for_on_the_same_connection(tmp_path, monk
         '"name": "mcp__atlassian__getAccessibleAtlassianResources", "input": {}}]}}), flush=True)\n'
         '        print(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", '
         f'"tool_use_id": "t1", "content": {sites!r}}}]}}}}), flush=True)\n'
-        '    print(json.dumps({"type": "result", "subtype": "success", "result": "ok", "total_cost_usd": 0.001}), '
-        "flush=True)\n"
+        # the open session reports its running total, as real `claude -p` does: $0.001 per turn
+        '    print(json.dumps({"type": "result", "subtype": "success", "result": "ok", '
+        '"total_cost_usd": round(0.001 * turn, 6)}), flush=True)\n'
     )
     fake.chmod(0o755)
     with contextlib.ExitStack() as stack:

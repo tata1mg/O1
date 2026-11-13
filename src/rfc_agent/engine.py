@@ -1205,6 +1205,9 @@ def run_claude(
         raise EngineFailure(
             f"'{label}' exited {proc.returncode} before emitting a result — stderr tail: "
             f"{_stderr_tail(err_path)} (full: {err_path})")
+    # a resumed session reports its running total; book only what this call added (harness.session_cost)
+    from harness.session_cost import charge
+    res.cost_usd = charge(ctx.run_dir, res.session_id, res.cost_usd, resumed=resume)
     if res.extra_results:
         # a post-result bonus turn ran (a steer racing the terminal result — file-poll lag window).
         # Its verdict is deliberately discarded (first-result-wins), but its file edits are on disk,

@@ -104,6 +104,7 @@ class ConnectorSession:
         self._lines: list[dict] = []
         self._cv = threading.Condition()
         self._results = 0
+        self._billed = 0.0  # the session total already charged to earlier turns
 
     # ---- process plumbing --------------------------------------------------------------------
     def __enter__(self) -> ConnectorSession:
@@ -142,6 +143,13 @@ class ConnectorSession:
         with self._cv:
             self._results = 10**6  # process ended: release every waiter
             self._cv.notify_all()
+
+    def _share(self, total: float) -> float:
+        """This turn's cost. The open session reports its running total, so charge only what it added
+        (a lower total means the CLI started counting again)."""
+        share = total - self._billed if total >= self._billed else total
+        self._billed = total
+        return share
 
     def _turn(self, text: str) -> TurnResult:
         """One user turn, recorded on the trace as `agent:atlassian` (tool spans when verbose)."""
@@ -187,7 +195,7 @@ class ConnectorSession:
                     call.text = _result_text(b.get("content"))
                     call.is_error = bool(b.get("is_error"))
             if ev.get("type") == "result":
-                res.cost_usd += float(ev.get("total_cost_usd") or 0)
+                res.cost_usd += self._share(float(ev.get("total_cost_usd") or 0))
                 if ev.get("is_error"):
                     # claude itself refused the turn (usage limit, auth, overload): the connector was never asked
                     raise AtlassianError(f"headless claude refused the request: {ev.get('result') or ev.get('subtype')}"

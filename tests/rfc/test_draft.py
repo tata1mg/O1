@@ -77,7 +77,10 @@ elif "The gate found these problems" in prompt:
     w("out/coverage.json", json.dumps({"REQ-1": {"status": "covered", "sections": ["4.1"]},
                                        "REQ-2": {"status": "assumes", "sections": ["4.1"], "question": "Q1"},
                                        "REQ-3": {"status": "deferred", "note": "phase 2"}}))
-print(json.dumps({"type": "result", "subtype": "success", "session_id": sid, "total_cost_usd": 0.02, "num_turns": 3}))
+# like real `claude -p --resume`: total_cost_usd is the session's running total, $0.02 per call here
+calls = len(open(os.environ["FAKE_LOG"]).read().splitlines())
+print(json.dumps({"type": "result", "subtype": "success", "session_id": sid, "total_cost_usd": 0.02 * calls,
+                  "num_turns": 3}))
 '''
 
 
