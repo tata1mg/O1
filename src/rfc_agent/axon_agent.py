@@ -31,7 +31,14 @@ import time
 import uuid
 from pathlib import Path
 
-from harness.engines.axon import RFC_TOOLS_JS, map_model, thinking_for, write_tools_config
+from harness.engines.axon import (
+    RECONNECT_PROMPT,
+    RFC_TOOLS_JS,
+    disconnected,
+    map_model,
+    thinking_for,
+    write_tools_config,
+)
 from harness.engines.pi import (
     CLAUDE_TO_PI_TOOLS,
     GUARD_JS,
@@ -134,6 +141,7 @@ def settings(cfg) -> dict:
         "models": dict(s.get("MODELS") or {}),
         "threshold_compaction": bool(s.get("THRESHOLD_COMPACTION", False)),
         "atlassian_server": str(s.get("ATLASSIAN_SERVER") or "atlassian"),
+        "reconnects": int(s.get("RECONNECTS", 2)),
     }
 
 
@@ -186,6 +194,7 @@ class PiToClaude:
                       "cache_creation_input_tokens": 0}
         self.settled = False
         self.error = ""
+        self.retried: list[str] = []  # turn errors Pi's own retry got past
         self._init_sent = False
 
     def _init(self) -> dict:
@@ -212,6 +221,13 @@ class PiToClaude:
                     "content": _text_of(msg.get("content")), "is_error": bool(msg.get("isError"))}]}})
         elif t == "auto_retry_end" and ev.get("success") is False:
             self.error = f"provider retries exhausted: {str(ev.get('finalError') or '')[:300]}"
+        elif t == "auto_retry_end" and ev.get("success") is True and self.error.startswith(
+                "assistant stopReason=error"):
+            # Pi retried the turn that failed (a gateway disconnect) and it went through: the agent carried on in
+            # the same session, so the error is not the outcome. Keeping it failed a finished Draft on axon-1 and
+            # the stage restarted the lead from scratch (~10 min each time).
+            self.retried.append(self.error)
+            self.error = ""
         elif t == "agent_settled":
             self.settled = True
             if ev.get("aborted"):
@@ -307,7 +323,32 @@ def build_env(*, run_dir: Path, spec, counter: Path, tools_cfg: Path, denials: P
 
 def run(spec, prompt: str, run_dir: Path, cfg, *, resume: str | None = None, on_event=None,
         stage: str = "investigate", step: str | None = None, trace_step: str | None = None):
-    """`investigate.agent.run` on Axon. Same arguments, same AgentResult, same log files."""
+    """`investigate.agent.run` on Axon. Same arguments, same AgentResult, same log files.
+
+    A gateway disconnect that outlasts Pi's own retries resumes the same Pi session (AGENT.AXON.RECONNECTS
+    times, default 2) and the result covers every attempt: cost, time and tool calls add up."""
+    res = _run_once(spec, prompt, run_dir, cfg, resume=resume, on_event=on_event, stage=stage, step=step,
+                    trace_step=trace_step)
+    tries = settings(cfg)["reconnects"]
+    while tries > 0 and not res.ok and disconnected(res.error) and res.session_id:
+        tries -= 1
+        if on_event:
+            on_event(spec.label, "text", {"text": f"gateway disconnected — resuming session {res.session_id}"})
+        nxt = _run_once(spec, RECONNECT_PROMPT, run_dir, cfg, resume=res.session_id, on_event=on_event, stage=stage,
+                        step=f"{step or ('fix' if resume else 'run')}-reconnect", trace_step=trace_step)
+        if nxt.error.startswith("axon: no saved Pi session"):
+            break  # nothing to resume: the caller's own fallback (a cold rerun) is all that is left
+        nxt.cost_usd += res.cost_usd
+        nxt.seconds = round(nxt.seconds + res.seconds, 1)
+        nxt.tool_calls += res.tool_calls
+        nxt.rate_limited += res.rate_limited
+        nxt.extra["reconnects"] = res.extra.get("reconnects", 0) + 1
+        res = nxt
+    return res
+
+
+def _run_once(spec, prompt: str, run_dir: Path, cfg, *, resume: str | None = None, on_event=None,
+              stage: str = "investigate", step: str | None = None, trace_step: str | None = None):
     from . import observe
     from .investigate import agent as ag
 

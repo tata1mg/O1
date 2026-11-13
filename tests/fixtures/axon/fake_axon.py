@@ -56,7 +56,9 @@ def main() -> int:
                 "PI_CODING_AGENT_DIR", "PYTHONPATH")
         Path(dump).write_text(json.dumps({"argv": sys.argv, "prompt": prompt, "cwd": os.getcwd(),
                                           "env": {k: os.environ.get(k) for k in keep}}))
-    stream = Path(os.environ.get("FAKE_AXON_STREAM") or HERE / "pi.sample.jsonl")
+    # a resumed call ($FAKE_AXON_RESUME_STREAM) can play a different stream from the first one
+    stream = Path((resume and os.environ.get("FAKE_AXON_RESUME_STREAM")) or os.environ.get("FAKE_AXON_STREAM")
+                  or HERE / "pi.sample.jsonl")
     lines = [ln.replace("__SID__", session_id) for ln in stream.read_text().splitlines() if ln.strip()]
     session_dir = flag(pi, "--session-dir")
     if session_dir:

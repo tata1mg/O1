@@ -31,7 +31,7 @@ from pathlib import Path
 
 from .. import flags as F
 from . import Containment, EngineRequest, EngineResult
-from .pi import _EXT_DIR, PiEngine, _older, _version_of
+from .pi import _EXT_DIR, PiEngine, _older, _session_file, _version_of
 
 RFC_TOOLS_JS = _EXT_DIR / "rfc-tools.js"
 
@@ -67,6 +67,21 @@ _f("models", dict, {}, "Model map merged over the defaults: {\"opus\": \"<gatewa
    "\"sonnet\": ..., \"haiku\": ...}, or an exact Claude id as the key. Unmapped non-Claude ids pass through.")
 _f("threshold_compaction", bool, False, "Allow Axon's early (threshold) compaction. Default OFF: compaction is "
    "lossy and summarised-away evidence makes the citation gates lie. Overflow recovery is never blocked.")
+_f("reconnects", int, 2, "How many times a call that lost the AI Gateway (after Pi's own 3 retries) is resumed "
+   "in its own Pi session before it fails. 0 = fail at once, as before.")
+
+# A dropped connection to the AI Gateway. Pi retries the turn itself; when those retries run out too, the call is
+# resumed in its own Pi session instead of the stage starting the agent again from scratch.
+_DISCONNECT = re.compile(r"Axon AI Gateway|connection error|connection (was )?(reset|interrupted|closed)|"
+                         r"ECONNRESET|socket hang up|fetch failed|provider retries exhausted", re.I)
+RECONNECT_PROMPT = ("The connection to the model gateway dropped while you were working. Everything you did "
+                    "before it is still here, in this session and in the files on disk. Do not start over: carry on "
+                    "from where you stopped and finish the task you were given.")
+
+
+def disconnected(error: str | None) -> bool:
+    """Did this call fail because the AI Gateway connection dropped (and not for any other reason)?"""
+    return bool(error) and bool(_DISCONNECT.search(error))
 
 
 def model_tier(model: str) -> str | None:
@@ -167,7 +182,29 @@ class AxonEngine(PiEngine):
         # Pi rejects --provider without --model. Default to the opus tier, as Claude Code does.
         model = map_model(req.model or DEFAULT_STAGE_MODEL, dict(self._flag("axon.models") or {}))
         effort = thinking_for(req.effort) if req.effort else None
-        return super().run(dataclasses.replace(req, env=env, model=model, effort=effort))
+        req = dataclasses.replace(req, env=env, model=model, effort=effort)
+        res = super().run(req)
+        tries = int(self._flag("axon.reconnects") or 0)
+        n = 0
+        session_dir = cwd / str(self._flag("pi.session_dir"))
+        while n < tries and res.summary.is_error and disconnected(res.summary.error_reason) and res.summary.session_id:
+            if not _session_file(session_dir, res.summary.session_id).exists():
+                break  # nothing saved to resume: a "carry on" prompt in a cold session would do nothing useful
+            n += 1
+            # each attempt keeps its own trace next to the first one; the result adds them up
+            trace = Path(req.trace_path)
+            nxt = super().run(dataclasses.replace(
+                req, prompt=RECONNECT_PROMPT, resume_session=res.summary.session_id,
+                trace_path=trace.with_name(trace.name.replace(".events.jsonl", "") + f".reconnect{n}.events.jsonl"),
+                raw_trace_path=Path(cwd) / "logs" / f"{req.label}.reconnect{n}.pi.jsonl"))
+            s, prev = nxt.summary, res.summary
+            if prev.cost_usd is not None or s.cost_usd is not None:
+                s.cost_usd = round((prev.cost_usd or 0) + (s.cost_usd or 0), 8)
+            s.num_turns = (prev.num_turns or 0) + (s.num_turns or 0) or None
+            s.tool_calls = list(prev.tool_calls or []) + list(s.tool_calls or [])
+            nxt.duration_s += res.duration_s
+            res = nxt
+        return res
 
     # ---- PiEngine seams ----------------------------------------------------------------------------
 

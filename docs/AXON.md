@@ -186,6 +186,11 @@ Different on Axon:
 - **Axon's early (threshold) compaction is turned off for pipeline agents**, because it summarises evidence away.
   Set `AGENT.AXON.THRESHOLD_COMPACTION: true` to allow it.
 - **Axon backs up each agent session to DeputyDev**, as it does for interactive use.
+- **A lost AI Gateway connection doesn't restart the agent.** Pi retries the turn itself, up to 3 times, and a
+  retry that gets through counts as a normal finish. If those retries run out too, the agent is resumed in its own
+  Pi session and told to carry on, up to `AGENT.AXON.RECONNECTS` times (default 2; the testing workflow's flag is
+  `axon.reconnects`). Each resume writes its own log (`…-reconnect.stream.jsonl`, `….reconnect1.pi.jsonl`), and
+  the call's cost and time include every attempt.
 - **Quality and cost differ.** The prompts were tuned on Claude. Compare a few runs before relying on it.
 
 Design notes and the reasoning behind each choice are in [decisions.md](../decisions.md).

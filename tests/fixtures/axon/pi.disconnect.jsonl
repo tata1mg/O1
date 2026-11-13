@@ -1,0 +1,12 @@
+{"type": "session", "version": 3, "id": "__SID__", "cwd": "/run"}
+{"type": "agent_start"}
+{"type": "turn_start"}
+{"type": "message_end", "message": {"role": "assistant", "provider": "litellm", "model": "anthropic/claude-opus-5.5", "content": [{"type": "toolCall", "id": "c1", "name": "write", "arguments": {"path": "out/x.md", "content": "hi"}}], "usage": {"input": 100, "output": 10, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 110, "cost": {"input": 0.05, "output": 0.05, "cacheRead": 0, "cacheWrite": 0, "total": 0.1}}, "stopReason": "toolUse"}}
+{"type": "message_end", "message": {"role": "toolResult", "toolCallId": "c1", "toolName": "write", "content": [{"type": "text", "text": "Successfully wrote to out/x.md"}], "isError": false}}
+{"type": "message_end", "message": {"role": "assistant", "provider": "litellm", "model": "anthropic/claude-opus-5.5", "content": [], "usage": {"input": 100, "output": 10, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 110, "cost": {"input": 0.0, "output": 0.0, "cacheRead": 0, "cacheWrite": 0, "total": 0.0}}, "stopReason": "error", "errorMessage": "Connection error: the connection to Axon AI Gateway was interrupted. Retry if needed. Relay diagnostics: ~/.axon/logs/relay.log"}}
+{"type": "turn_end"}
+{"type": "agent_end", "willRetry": true}
+{"type": "auto_retry_start", "attempt": 1, "maxAttempts": 3, "delayMs": 2000, "errorMessage": "Connection error: the connection to Axon AI Gateway was interrupted. Retry if needed. Relay diagnostics: ~/.axon/logs/relay.log"}
+{"type": "auto_retry_end", "success": false, "attempt": 3, "finalError": "Connection error: the connection to Axon AI Gateway was interrupted. Retry if needed. Relay diagnostics: ~/.axon/logs/relay.log"}
+{"type": "agent_end", "willRetry": false}
+{"type": "agent_settled", "aborted": false}

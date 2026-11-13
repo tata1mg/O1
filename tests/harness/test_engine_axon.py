@@ -124,3 +124,36 @@ def test_rfc_tools_extension_decisions_and_the_real_hook(tmp_path):
     assert r.returncode == 0, r.stderr
     out = json.loads(r.stdout.strip().splitlines()[-1])
     assert out["ok"], out["failures"]
+
+
+def test_a_disconnect_that_pi_retried_past_is_a_success(tmp_path, fake, monkeypatch):
+    monkeypatch.setenv("FAKE_AXON_STREAM", str(FIX / "pi.retried.jsonl"))
+    res = AxonEngine(bin=str(fake)).run(_req(tmp_path))
+    assert res.summary.got_result and not res.summary.is_error, res.summary.error_reason
+    assert res.summary.final_text == "done."
+
+
+def test_a_lost_gateway_resumes_the_same_session(tmp_path, fake, monkeypatch):
+    from harness.engines.axon import RECONNECT_PROMPT
+
+    monkeypatch.setenv("FAKE_AXON_STREAM", str(FIX / "pi.disconnect.jsonl"))
+    monkeypatch.setenv("FAKE_AXON_RESUME_STREAM", str(FIX / "pi.sample.jsonl"))
+    res = AxonEngine(bin=str(fake)).run(_req(tmp_path))
+    assert not res.summary.is_error, res.summary.error_reason
+    dumped = json.loads((tmp_path / "argv.json").read_text())
+    assert dumped["argv"][-1] == RECONNECT_PROMPT and "--session" in dumped["argv"]  # the prompt follows `--`
+    assert res.summary.cost_usd == pytest.approx(0.1 + 0.05)
+    assert (tmp_path / "run" / "logs" / "stage.reconnect1.pi.jsonl").exists()
+
+
+def test_a_lost_gateway_fails_once_the_reconnects_are_used_up(tmp_path, fake, monkeypatch):
+    from harness import flags as F
+
+    monkeypatch.setenv("FAKE_AXON_STREAM", str(FIX / "pi.disconnect.jsonl"))
+    eng = AxonEngine(bin=str(fake))
+    reg = F.registry()["axon.reconnects"]
+    assert reg.default == 2
+    res = eng.run(_req(tmp_path))
+    assert res.summary.is_error and "Axon AI Gateway" in (res.summary.error_reason or "")
+    assert (tmp_path / "run" / "logs" / "stage.reconnect2.pi.jsonl").exists()
+    assert not (tmp_path / "run" / "logs" / "stage.reconnect3.pi.jsonl").exists()

@@ -274,6 +274,8 @@ class Translator:
         # terminal state, all derived from the stream (never from the exit code)
         self.settled = False
         self.errors: list[str] = []
+        # turn errors Pi may still retry (a gateway disconnect): dropped again if its auto-retry succeeds
+        self._retryable: list[str] = []
         self.num_turns = 0
         self.stream_cost = 0.0
         # None until some message actually reported a cost. `--mode json` emits no terminal totals record,
@@ -333,6 +335,12 @@ class Translator:
         elif t == "auto_retry_end":
             if raw.get("success") is False:
                 self._fail(f"provider retries exhausted: {_clip(raw.get('finalError') or '', 300)}")
+            elif raw.get("success") is True and self._retryable:
+                # Pi retried the failed turn and it went through: the agent carried on in the same session,
+                # so that turn's error is no longer the outcome (axon-1 lost ~20 min treating it as one)
+                self.errors = [e for e in self.errors if e not in self._retryable]
+                self._log(f"provider retry succeeded — cleared: {'; '.join(self._retryable)}")
+                self._retryable = []
         elif t == "summarization_retry_scheduled":
             self._log(f"summarization retry scheduled (attempt {raw.get('attempt')})")
         elif t == "agent_end":
@@ -455,7 +463,10 @@ class Translator:
         stop = str(message.get("stopReason") or "")
         if stop in BAD_STOP_REASONS:
             detail = _clip(message.get("errorMessage"), 300) if message.get("errorMessage") else ""
-            self._fail(f"assistant stopReason={stop}" + (f": {detail}" if detail else ""))
+            reason = f"assistant stopReason={stop}" + (f": {detail}" if detail else "")
+            self._fail(reason)
+            if stop == "error":
+                self._retryable.append(reason)
         for block in message.get("content") or []:
             if not isinstance(block, dict):
                 continue

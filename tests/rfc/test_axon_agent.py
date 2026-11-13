@@ -171,6 +171,28 @@ def test_a_stream_without_agent_settled_did_not_finish(tmp_path):
     assert final["is_error"] and "agent_settled" in final["result"]
 
 
+def test_a_disconnect_that_pi_retried_past_is_not_a_failure(tmp_path):
+    # axon-1: Pi's own retry got the Draft lead through, but the error was kept and the stage restarted it
+    shim, _ = _convert("pi.retried.jsonl", tmp_path)
+    final = shim.result()
+    assert not final["is_error"] and final["result"] == "done."
+    assert shim.retried and "Axon AI Gateway" in shim.retried[0]
+
+
+def test_a_disconnect_pi_could_not_retry_past_is_a_failure(tmp_path):
+    shim, _ = _convert("pi.disconnect.jsonl", tmp_path)
+    final = shim.result()
+    assert final["is_error"] and ax.disconnected(final["result"])
+
+
+def test_disconnected_matches_only_connection_failures():
+    assert ax.disconnected("assistant stopReason=error: Connection error: the connection to Axon AI Gateway "
+                           "was interrupted.")
+    assert ax.disconnected("provider retries exhausted: socket hang up")
+    assert not ax.disconnected("assistant stopReason=error: 429 rate limit")
+    assert not ax.disconnected("timed out after 600s") and not ax.disconnected("")
+
+
 # ---- one agent through the fake launcher --------------------------------------------------------
 
 
@@ -261,6 +283,39 @@ def test_resume_continues_the_saved_session(tmp_path, monkeypatch):
     assert "--session-id" not in argv
     assert argv[argv.index("--session") + 1].endswith(f"_{first.session_id}.jsonl")
     assert second.cost_usd == pytest.approx(0.05)  # this invocation only, not the whole session file
+
+
+def test_a_lost_gateway_resumes_the_same_session_instead_of_starting_over(tmp_path, monkeypatch):
+    exe = _fake(tmp_path, monkeypatch, stream="pi.disconnect.jsonl")
+    monkeypatch.setenv("FAKE_AXON_RESUME_STREAM", str(FIX / "pi.sample.jsonl"))
+    run = tmp_path / "run"
+    run.mkdir()
+    cfg = Cfg(**{"AGENT.ENGINE": "axon", "AGENT.AXON": {"BIN": str(exe)}})
+    ticks: list[tuple] = []
+    res = ag.run(_spec(use_context=False), "write the RFC", run, cfg, stage="draft", step="write",
+                 on_event=lambda *a: ticks.append(a))
+    assert res.ok, res.error
+    assert res.extra["reconnects"] == 1 and res.final_text == "done."
+    dumped = json.loads((tmp_path / "argv.json").read_text())
+    argv = dumped["argv"]  # the last call: a resume of the first call's session, told to carry on
+    assert "--session-id" not in argv and argv[argv.index("--session") + 1].endswith(f"_{res.session_id}.jsonl")
+    assert dumped["prompt"] == ax.RECONNECT_PROMPT
+    assert res.cost_usd == pytest.approx(0.1 + 0.05)  # both calls: the lost one and the resume
+    assert res.tool_calls == 1 + 3
+    assert (run / "logs" / "draft.lead.write.stream.jsonl").exists()
+    assert (run / "logs" / "draft.lead.write-reconnect.stream.jsonl").exists()
+    assert any(t[1] == "text" and "gateway disconnected" in t[2]["text"] for t in ticks)
+
+
+def test_reconnects_stop_after_the_configured_number(tmp_path, monkeypatch):
+    exe = _fake(tmp_path, monkeypatch, stream="pi.disconnect.jsonl")
+    run = tmp_path / "run"
+    run.mkdir()
+    cfg = Cfg(**{"AGENT.ENGINE": "axon", "AGENT.AXON": {"BIN": str(exe), "RECONNECTS": 1}})
+    res = ag.run(_spec(use_context=False), "p", run, cfg, stage="draft")
+    assert not res.ok and ax.disconnected(res.error) and res.extra["reconnects"] == 1
+    cfg0 = Cfg(**{"AGENT.ENGINE": "axon", "AGENT.AXON": {"BIN": str(exe), "RECONNECTS": 0}})
+    assert "reconnects" not in ag.run(_spec(use_context=False), "p", run, cfg0, stage="draft").extra
 
 
 def test_resume_of_a_session_axon_never_saw_fails_without_starting(tmp_path, monkeypatch):
