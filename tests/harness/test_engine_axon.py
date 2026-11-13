@@ -71,6 +71,17 @@ def test_run_keeps_axons_extensions_and_registers_mcp(tmp_path, fake):
     assert not (tmp_path / "run" / ".pi-home").exists()
 
 
+def test_a_stage_with_no_model_still_gets_one(tmp_path, fake):
+    # Pi rejects `--provider litellm` without `--model`; the testing stages name no model.
+    import dataclasses
+    req = dataclasses.replace(_req(tmp_path), model=None)
+    res = AxonEngine(bin=str(fake)).run(req)
+    assert res.summary.got_result, res.summary
+    argv = json.loads((tmp_path / "argv.json").read_text())["argv"]
+    assert argv[argv.index("--provider") + 1] == "litellm"
+    assert argv[argv.index("--model") + 1] == "anthropic/claude-opus-5.5"
+
+
 def test_plain_pi_still_refuses_mcp(tmp_path):
     from harness.contracts import PipelineConfigError
 

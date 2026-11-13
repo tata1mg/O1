@@ -44,6 +44,8 @@ DEFAULT_MODELS: dict[str, str] = {
     "sonnet": "anthropic/claude-sonnet-5.5",
     "haiku": "gemini-3.8-flash",
 }
+#: The tier a stage runs on when it names no model.
+DEFAULT_STAGE_MODEL = "opus"
 
 # Claude's effort knob -> Pi's thinking level (Pi clamps to what the model supports).
 EFFORT_TO_THINKING: dict[str, str] = {
@@ -161,7 +163,9 @@ class AxonEngine(PiEngine):
             threshold_compaction=bool(self._flag("axon.threshold_compaction")),
         )
         env = {**(req.env or {}), "RFC_TOOLS_CONFIG": str(cfg_path)}
-        model = map_model(req.model, dict(self._flag("axon.models") or {}))
+        # A stage that names no model (the testing stages) still needs one: Axon always passes --provider, and
+        # Pi rejects --provider without --model. Default to the opus tier, as Claude Code does.
+        model = map_model(req.model or DEFAULT_STAGE_MODEL, dict(self._flag("axon.models") or {}))
         effort = thinking_for(req.effort) if req.effort else None
         return super().run(dataclasses.replace(req, env=env, model=model, effort=effort))
 
