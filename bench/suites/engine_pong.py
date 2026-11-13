@@ -2,7 +2,7 @@
 the actual model-invocation path (not the fake engine) still works end to end, and its baseline latency.
 
 Runs `claude -p "reply with the single word pong" --output-format json --max-turns 1 --model
-claude-haiku-4-5-20251001` 3 times (haiku, 1 turn, ~nothing of substance to say — this is the cheapest
+claude-haiku-5-5` 3 times (haiku, 1 turn, ~nothing of substance to say — this is the cheapest
 model+prompt pair available and is a real spend, not fake).
 
 AFTER-state hook: if `harness.engines.claude_code` is importable, also runs the same prompt through the
@@ -20,7 +20,7 @@ from pathlib import Path
 from bench.timing import Sample, timed
 
 N_RUNS = 3
-MODEL = "claude-haiku-4-5-20251001"
+MODEL = "claude-haiku-5-5"
 PROMPT = "reply with the single word pong"
 
 

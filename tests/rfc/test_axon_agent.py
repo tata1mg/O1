@@ -118,8 +118,10 @@ def test_every_stage_cli_and_the_pipeline_accept_the_engine_flags():
     ("claude-opus-5-5[1m]", "anthropic/claude-opus-5.5"),
     ("claude-opus-5-5", "anthropic/claude-opus-5.5"),
     ("claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"),
-    ("claude-sonnet-5[1m]", "anthropic/claude-sonnet-5.5"),
-    ("claude-haiku-4-5-20251001", "gemini-3.8-flash"),
+    ("claude-sonnet-5-5[1m]", "anthropic/claude-sonnet-5.5"),
+    ("anthropic/claude-haiku-5.5", "anthropic/claude-haiku-5.5"),
+    ("haiku", "anthropic/claude-haiku-5.5"),
+    ("claude-haiku-5-5", "anthropic/claude-haiku-5.5"),
     ("openai/gpt-6-luna", "openai/gpt-6-luna"),  # already a gateway id: untouched
 ])
 def test_claude_models_map_to_gateway_models(claude, gateway):
@@ -169,6 +171,72 @@ def test_a_stream_without_agent_settled_did_not_finish(tmp_path):
     shim, _ = _convert("pi.truncated.jsonl", tmp_path)
     final = shim.result()
     assert final["is_error"] and "agent_settled" in final["result"]
+
+
+def _assistant_event(stop, text="", error=""):
+    return {"type": "message_end", "message": {
+        "role": "assistant", "stopReason": stop, "errorMessage": error,
+        "content": [{"type": "text", "text": text}] if text else [],
+    }}
+
+
+def _recovered_events(*, retry_end_first=False, stop="stop"):
+    events = [
+        {"type": "agent_start"},
+        _assistant_event("error", error="502 Connection error."),
+        {"type": "agent_end", "willRetry": True},
+        {"type": "auto_retry_start", "attempt": 1},
+    ]
+    recovered = {"type": "auto_retry_end", "success": True, "attempt": 1}
+    success = _assistant_event(stop, "done")
+    events += [recovered, success] if retry_end_first else [success, recovered]
+    return events
+
+
+@pytest.mark.parametrize("retry_end_first", [False, True])
+@pytest.mark.parametrize("stop", ["stop", "toolUse"])
+def test_recovered_provider_error_is_not_a_failed_result(tmp_path, retry_end_first, stop):
+    shim = ax.PiToClaude(session_id="sid", model="m", cwd=tmp_path)
+    for event in [*_recovered_events(retry_end_first=retry_end_first, stop=stop),
+                  {"type": "agent_settled", "aborted": False}]:
+        shim.feed(event)
+    assert not shim.result()["is_error"]
+    assert shim.result()["result"] == "done"
+
+
+@pytest.mark.parametrize("ending", [
+    "retry_only", "truncated", "later_error", "aborted", "length", "pending", "assistant_aborted",
+])
+def test_recovery_does_not_hide_an_unfinished_or_failed_run(tmp_path, ending):
+    shim = ax.PiToClaude(session_id="sid", model="m", cwd=tmp_path)
+    if ending == "retry_only":
+        events = [_assistant_event("error", error="502"), {"type": "auto_retry_end", "success": True}]
+    else:
+        events = _recovered_events()
+    if ending == "later_error":
+        events.append(_assistant_event("error", error="401 unauthorized"))
+    elif ending in {"length", "pending", "assistant_aborted"}:
+        # Pi can emit retry success after any non-error stop, including length/aborted.
+        stop = "aborted" if ending == "assistant_aborted" else ending
+        events += [_assistant_event(stop, "partial"), {"type": "auto_retry_end", "success": True}]
+    if ending != "truncated":
+        events.append({"type": "agent_settled", "aborted": ending == "aborted"})
+    for event in events:
+        shim.feed(event)
+    assert shim.result()["is_error"]
+
+
+@pytest.mark.parametrize("terminal", [
+    {"type": "auto_retry_end", "success": False, "finalError": "502 retries exhausted"},
+    {"type": "agent_settled", "aborted": True},
+])
+def test_a_later_assistant_message_cannot_clear_a_terminal_failure(tmp_path, terminal):
+    shim = ax.PiToClaude(session_id="sid", model="m", cwd=tmp_path)
+    for event in [_assistant_event("error", error="502"), terminal,
+                  _assistant_event("stop", "done"), {"type": "auto_retry_end", "success": True},
+                  {"type": "agent_settled", "aborted": False}]:
+        shim.feed(event)
+    assert shim.result()["is_error"]
 
 
 # ---- one agent through the fake launcher --------------------------------------------------------
@@ -280,6 +348,58 @@ def test_a_failed_agent_reports_the_provider_error(tmp_path, monkeypatch):
     cfg = Cfg(**{"AGENT.ENGINE": "axon", "AGENT.AXON": {"BIN": str(exe)}})
     res = ag.run(_spec(use_context=False), "p", run, cfg, stage="review")
     assert not res.ok and "429 rate limit" in res.error
+
+
+@pytest.mark.parametrize("exit_code", [0, 3])
+def test_recovered_retry_through_the_agent_runner(tmp_path, monkeypatch, exit_code):
+    exe = _fake(tmp_path, monkeypatch)
+    events = [*_recovered_events(), {"type": "agent_settled", "aborted": False}]
+    stream = tmp_path / "recovered.jsonl"
+    stream.write_text("\n".join(json.dumps(event) for event in events) + "\n")
+    monkeypatch.setenv("FAKE_AXON_STREAM", str(stream))
+    monkeypatch.setenv("FAKE_AXON_EXIT", str(exit_code))
+    run = tmp_path / "run"
+    run.mkdir()
+    cfg = Cfg(**{"AGENT.ENGINE": "axon", "AGENT.AXON": {"BIN": str(exe)}})
+    res = ag.run(_spec(use_context=False), "p", run, cfg, stage="investigate")
+    assert res.ok == (exit_code == 0), res.error
+    if exit_code:
+        assert "exited 3 after the turn finished" in res.error
+    else:
+        assert res.final_text == "done"
+
+
+def test_investigate_does_not_restart_a_lead_after_a_recovered_retry(tmp_path, monkeypatch):
+    from argparse import Namespace
+
+    from rfc_agent.investigate.cli import Run
+    from rfc_agent.investigate.config import resolve
+
+    exe = _fake(tmp_path, monkeypatch)
+    run = tmp_path / "run"
+    run.mkdir()
+    cfg = Cfg(**{"AGENT.ENGINE": "axon", "AGENT.AXON": {"BIN": str(exe)}})
+    first = ag.run(_spec(use_context=False), "initial plan", run, cfg)
+    assert first.ok
+    stream = tmp_path / "recovered.jsonl"
+    stream.write_text("\n".join(json.dumps(event) for event in [
+        *_recovered_events(), {"type": "agent_settled", "aborted": False},
+    ]) + "\n")
+    monkeypatch.setenv("FAKE_AXON_STREAM", str(stream))
+    investigation = Run(run, cfg, resolve(cfg), Namespace(fresh=False))
+    investigation.state["lead_session"] = first.session_id
+    original = ag.run
+    calls = []
+
+    def counted(*args, **kwargs):
+        calls.append(kwargs.get("resume"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ag, "run", counted)
+    result = investigation.run_lead("integrate", ("work/understanding.md",), "1c")
+    assert result.ok, result.error
+    assert calls == [first.session_id]  # no unnecessary fresh lead and duplicate investigation spend
+    assert investigation.agents["lead"]["runs"][-1]["ok"]
 
 
 def test_a_failed_exit_after_a_finished_turn_is_an_error(tmp_path, monkeypatch):

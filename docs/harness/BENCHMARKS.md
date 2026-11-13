@@ -23,7 +23,7 @@ Six suites (`bench/suites/`):
 | `gate_latency` | Wall time of the shared gate helpers (`check_citations`, `check_no_secrets`, `require_sections`) and the stage gates on minimal fixtures | Gates that need a live git-backed repos root; they would make fixture setup the dominant, non-reproducible cost |
 | `cli_startup` | `rfc` and `harness` `--help` wall time, plus bare import time of the core modules | Anything beyond process and import cold-start |
 | `test_suite` | `uv run pytest -q` wall time and the parsed pass/fail/skip counts. Repeat 1: one number per pass is enough to attach to a PR | A per-test breakdown (use `pytest --durations`) |
-| `engine_pong` | Live `claude -p "reply with the single word pong" --output-format json --max-turns 1 --model claude-haiku-4-5-20251001` calls: wall time and real cost and usage off the JSON result, plus the same prompt through the `claude-code` adapter | Anything beyond a minimal roundtrip. This is a liveness and baseline-latency probe, not a model-quality eval |
+| `engine_pong` | Live `claude -p "reply with the single word pong" --output-format json --max-turns 1 --model claude-haiku-5-5` calls: wall time and real cost and usage off the JSON result, plus the same prompt through the `claude-code` adapter | Anything beyond a minimal roundtrip. This is a liveness and baseline-latency probe, not a model-quality eval |
 | `stream_translate` | Time to translate a synthetic 5 MB recorded stream-json file into the canonical event schema via `harness.engines.claude_translate` | Nothing |
 
 `harness_overhead` measures **the kernel, not the model**. Every stage's "work" is an instant file write, so

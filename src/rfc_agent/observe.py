@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import json
 import logging
 import re
 import sys
@@ -56,6 +57,7 @@ _overrides: dict[str, bool] = {}  # set by the CLI flag (--langfuse-verbose)
 _lock = threading.Lock()
 _client = None
 _verbose = False
+_per_call = False
 _root = None  # the open root observation, or None
 _root_otel_ctx = None  # main-thread OTel context: carries the propagated identity into worker threads
 _stages: list = []  # open stage observations, innermost last
@@ -266,13 +268,18 @@ class _IdCtx:
         self.config = None
 
 
-def _arg(argv: list[str], flag: str) -> str | None:
+def _args(argv: list[str], flag: str) -> list[str]:
+    values = []
     for i, a in enumerate(argv):
         if a == flag and i + 1 < len(argv):
-            return argv[i + 1]
-        if a.startswith(flag + "="):
-            return a.split("=", 1)[1]
-    return None
+            values.append(argv[i + 1])
+        elif a.startswith(flag + "="):
+            values.append(a.split("=", 1)[1])
+    return values
+
+
+def _arg(argv: list[str], flag: str) -> str | None:
+    return next(iter(_args(argv, flag)), None)
 
 
 def _run_dir_of(argv: list[str], cfg) -> Path | None:
@@ -349,6 +356,22 @@ def _unwatch_exports() -> None:
         _export_watch = None
 
 
+def _engine_attrs(cfg, entry: str, argv: list[str], md: dict) -> tuple[dict, list[str]]:
+    """The run's engine choice as trace metadata and tags. Raises on a malformed engine setting."""
+    from .axon_agent import STAGE_NAMES, engine_for, parse_stage_engines
+
+    # The trace opens before the CLI exports its flags. Resolve those choices without mutating env.
+    cli_engines = _args(argv, "--engine")
+    overrides = parse_stage_engines(_args(argv, "--stage-engine"))
+    engines = {stage: engine_for(stage, cfg, engine=cli_engines[-1] if cli_engines else None,
+                                stage_overrides=overrides)
+               for stage in (STAGE_NAMES if entry == "rfc" else (entry,))}
+    effective = set(engines.values())
+    engine = next(iter(effective)) if len(effective) == 1 else "mixed"
+    md = {**md, "engine": engine, "stage_engines": json.dumps(engines, sort_keys=True)}
+    return md, [f"engine:{name}" for name in sorted(effective | {engine})]
+
+
 def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
     """Open the root observation + trace attributes. Returns the start-as-current context manager."""
     global _client, _root, _root_otel_ctx, _facts_src, _entry_name
@@ -370,11 +393,18 @@ def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
         jira = _arg(argv, "--jira")
         if not jira and run_dir is not None:
             with contextlib.suppress(Exception):
-                import json
-
                 jira = json.loads((run_dir / "scope.json").read_text(encoding="utf-8")).get("jira")
         md = {"entry": entry, "observability": "verbose" if _verbose else "standard"}
         tags = []
+        try:  # a bad engine setting must cost only the engine tags, never the trace's identity
+            md, tags = _engine_attrs(cfg, entry, argv, md)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[observe] langfuse: engine tags skipped: {exc}", file=sys.stderr)
+        import os
+
+        if benchmark := os.environ.get("RFC_AGENT_BENCHMARK_ID"):
+            md["benchmark_id"] = benchmark
+            tags.append(f"benchmark:{benchmark}")
         session = None
         if run_dir is not None:
             ident = identity.load(_IdCtx(run_dir, jira))
@@ -392,7 +422,7 @@ def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
         )
         prop.__enter__()
     with contextlib.suppress(Exception):
-        _root.set_trace_io(input={"entry": entry, "argv": argv})
+        _root.update(input={"entry": entry, "argv": argv})  # the trace's Input is the root observation's
     if run_dir is not None:  # feedback (rfc_agent.feedback) scores the trace this run produced
         _facts_src = (run_dir, _arg(argv, "--prd"))
         _entry_name = entry
@@ -463,11 +493,10 @@ def _score_outcome(root, client, facts: dict, run_dir: Path) -> None:
 
 
 def _close_root(cm, prop, code) -> None:
-    global _client, _root, _root_otel_ctx, _tool_spans_left, _warned, _facts_src, _entry_name
+    global _client, _root, _root_otel_ctx, _tool_spans_left, _warned, _facts_src, _entry_name, _per_call
     with contextlib.suppress(Exception):
         out = {"exit": code}
-        _root.update(output=out, level="ERROR" if code else "DEFAULT")
-        _root.set_trace_io(output=out)
+        _root.update(output=out, level="ERROR" if code else "DEFAULT")  # the trace's Output too
     if _facts_src is not None:  # which PRD / repos / how big the RFC / how the review ended — filterable later
         with contextlib.suppress(Exception):
             _client.flush()  # send the spans first, so a failed upload is in the activity log before it is counted
@@ -484,7 +513,6 @@ def _close_root(cm, prop, code) -> None:
 
                     text = feedback.run_summary(_facts_src[0], facts)
                     _root.update(output=text)
-                    _root.set_trace_io(output=text)
         _facts_src = None
     _entry_name = None
     if prop is not None:
@@ -499,6 +527,7 @@ def _close_root(cm, prop, code) -> None:
     _stages.clear()
     _tool_spans_left = _MAX_TOOL_SPANS
     _warned = False
+    _per_call = False
 
 
 def _exit_code(e: SystemExit) -> int:
@@ -515,7 +544,7 @@ def entry(stage: str | None):
     def deco(fn):
         @functools.wraps(fn)
         def wrapper(argv: list[str] | None = None):
-            global _verbose
+            global _verbose, _per_call
             argv = take_flags(list(sys.argv[1:] if argv is None else argv))
             if stage == "scope" and argv[:1] in (["run-dir"], ["cleanup"]) or {"-h", "--help"} & set(argv):
                 return fn(argv)  # utilities and help: nothing to trace
@@ -529,6 +558,9 @@ def entry(stage: str | None):
                 print(missing_keys_message(cfg), file=sys.stderr)
                 return EXIT_NO_KEYS
             _verbose = s["verbose"]
+            from . import llm_metrics  # late: llm_metrics imports this module
+
+            _per_call = llm_metrics.enabled(cfg)
             try:
                 cm, prop = _open_root(cfg, _run_dir_of(argv, cfg), stage or "rfc", argv)
             except Exception as exc:  # noqa: BLE001 — an SDK problem must not stop the run
@@ -578,10 +610,37 @@ class AgentTrace:
     """Handles for one agent run: the `agent` node, its `generation` (model, tokens, cost), and — verbose only —
     one `tool` span per tool call, opened at tool_use and closed at its tool_result."""
 
-    def __init__(self, agent, gen) -> None:
+    def __init__(self, agent, gen, *, name: str = "", per_call: bool = False) -> None:
         self.agent = agent
         self.gen = gen
+        self.name = name
+        self.per_call = per_call
+        self.call = None
+        self.reported_call_cost = 0.0
         self.tools: dict[str, object] = {}
+
+    def call_started(self, metadata: dict) -> None:
+        if not self.per_call:
+            return
+        self.call = _child("generation", f"llm:{self.name}:call-{metadata['call_index']}", parent=self.agent,
+                           model=_bare_model(metadata.get("model")), metadata=metadata)
+
+    def call_finished(self, record: dict) -> None:
+        if self.call is None:
+            return
+        usage = {dest: record[src] for src, dest in (("input_tokens", "input"), ("output_tokens", "output"),
+                 ("cache_read_input_tokens", "cache_read_input_tokens"),
+                 ("cache_creation_input_tokens", "cache_creation_input_tokens")) if record[src] is not None}
+        cost = record["cost_usd"]
+        self.reported_call_cost += float(cost or 0)
+        with contextlib.suppress(Exception):
+            # Unknown response cost is reconciled at invocation end, not estimated and billed a second time.
+            self.call.update(model=_bare_model(record.get("model")), usage_details=usage, metadata=record,
+                             cost_details={"total": float(cost or 0)},
+                             **({"level": "ERROR"} if not record["complete"] or
+                                record["stop_reason"] in ("error", "aborted") else {}))
+            self.call.end(end_time=int(record["ended_at"] * 1_000_000_000))
+        self.call = None
 
     def event(self, ev: dict) -> None:
         """Feed one stream-json event (verbose: tool spans)."""
@@ -620,22 +679,31 @@ class AgentTrace:
         for h in list(self.tools.values()):
             _end(h, output="(no result: the agent ended first)")
         self.tools.clear()
+        if self.call is not None:
+            _end(self.call, level="ERROR", output="(call metrics incomplete)")
+            self.call = None
         level = {} if ok else {"level": "ERROR", "status_message": error[:500]}
         u = usage or {}
-        _end(
-            self.gen,
-            **({"model": _bare_model(model)} if model else {}),
-            output=_clip(output, 20_000),
-            usage_details={
-                "input": int(u.get("input_tokens") or 0),
-                "output": int(u.get("output_tokens") or 0),
-                "cache_read_input_tokens": int(u.get("cache_read_input_tokens") or 0),
-                "cache_creation_input_tokens": int(u.get("cache_creation_input_tokens") or 0),
-            },
-            cost_details={"total": float(cost_usd or 0)},
-            metadata=metadata or {},
-            **level,
-        )
+        totals = {"usage_details": {
+            "input": int(u.get("input_tokens") or 0), "output": int(u.get("output_tokens") or 0),
+            "cache_read_input_tokens": int(u.get("cache_read_input_tokens") or 0),
+            "cache_creation_input_tokens": int(u.get("cache_creation_input_tokens") or 0),
+        }, "cost_details": {"total": float(cost_usd or 0)}}
+        # Claude reports invocation cost, not response cost. Pi's session can also include hidden calls.
+        # Reconcile only the unbilled remainder, with zero tokens: never invent per-response prices.
+        remainder = max(0.0, float(cost_usd or 0) - self.reported_call_cost)
+        if self.per_call and remainder > 1e-9:
+            billing = _child("generation", f"billing:{self.name}", parent=self.agent,
+                             metadata={**(metadata or {}), "model": model,
+                                       "cost_source": "reported_invocation_remainder",
+                                       "reported_call_cost_usd": self.reported_call_cost})
+            _end(billing, usage_details={key: 0 for key in totals["usage_details"]},
+                 cost_details={"total": remainder}, **level)
+        # In per-call mode the summary is a SPAN: billing both it and its generations doubles usage/cost.
+        _end(self.gen, output=_clip(output, 20_000),
+             **({**totals, **({"model": _bare_model(model)} if model else {})} if not self.per_call else {}),
+             metadata={**(metadata or {}), **({"aggregate_usage": u, "aggregate_cost_usd": cost_usd,
+                       "aggregation": "agent_summary_not_billable"} if self.per_call else {})}, **level)
         _end(
             self.agent,
             output=_clip(output, 2000) if ok else f"FAILED: {error}"[:2000],
@@ -644,7 +712,8 @@ class AgentTrace:
         )
 
 
-def agent_started(label: str, *, stage: str, step: str | None, model: str | None, prompt: str) -> AgentTrace | None:
+def agent_started(label: str, *, stage: str, step: str | None, model: str | None, prompt: str,
+                  per_call: bool | None = None) -> AgentTrace | None:
     """Open `agent:<label>[:<step>]` + its generation under the current stage. Safe from worker threads."""
     if not active():
         return None
@@ -653,15 +722,16 @@ def agent_started(label: str, *, stage: str, step: str | None, model: str | None
     agent = _child("agent", f"agent:{name}", input=_clip(prompt, 2000), metadata=md)
     if agent is None:
         return None
+    per_call = _per_call if per_call is None else per_call
     gen = _child(
-        "generation",
-        f"llm:{name}",
+        "span" if per_call else "generation",
+        f"summary:{name}" if per_call else f"llm:{name}",
         parent=agent,
         input=_clip(prompt, _GEN_INPUT_LIMIT),
-        model=_bare_model(model),
+        **({"model": _bare_model(model)} if not per_call else {}),
         metadata=md,
     )
-    return AgentTrace(agent, gen)
+    return AgentTrace(agent, gen, name=name, per_call=per_call)
 
 
 def llm_call(
@@ -677,7 +747,7 @@ def llm_call(
     tool_calls: list[dict] | None = None,
 ) -> None:
     """Record a call that already finished (Scope's one-shot calls) as agent + generation [+ tool spans]."""
-    t = agent_started(name, stage="scope", step=None, model=model, prompt=prompt)
+    t = agent_started(name, stage="scope", step=None, model=model, prompt=prompt, per_call=False)
     if t is None:
         return
     if _verbose:

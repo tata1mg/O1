@@ -2,6 +2,7 @@
 documented dummy format), false-positive fixtures matching our real traffic shape (UUIDs, git SHAs,
 base64 blobs), nested payloads, fail-closed behavior, and a hot-path perf bound."""
 
+import json
 import time
 import types
 
@@ -107,3 +108,46 @@ def test_mask_otel_spans_fail_closed_sentinel(monkeypatch):
     res = mask_otel_spans(params=params)
     assert res.span_patches["s1"].set_attributes["a"] == "<masked: scrubber error>"
     assert "n" not in res.span_patches["s1"].set_attributes  # non-strings untouched
+
+
+# ---- Python SDK v5: metadata attribute values are JSON-encoded, strings included ----
+
+def test_v5_metadata_attributes_are_scrubbed_inside_their_json_encoding():
+    """`"prod"` ships as '"prod"'. A raw regex pass can break the encoding (the private-key rule
+    runs to end-of-string and ate the closing quote), so metadata is decoded, scrubbed, re-encoded."""
+    import json
+
+    key = "-----BEGIN PRIVATE KEY-----\nMIIabc…[+1800 chars]"  # END clipped away
+    nested = {"cmd": "curl -H 'Authorization: Bearer abcDEF123456789012345678901234567890'", "n": 3}
+    params = _params({"s1": _span({
+        "langfuse.observation.metadata.note": json.dumps(key),
+        "langfuse.trace.metadata.ctx": json.dumps(nested),
+        "langfuse.observation.metadata.clean": json.dumps("nothing secret in this value"),
+    })})
+    patched = mask_otel_spans(params=params).span_patches["s1"].set_attributes
+    assert "langfuse.observation.metadata.clean" not in patched  # sparse: untouched values stay out
+    note = json.loads(patched["langfuse.observation.metadata.note"])  # still valid JSON
+    assert note == "[REDACTED:private-key]"
+    ctx = json.loads(patched["langfuse.trace.metadata.ctx"])
+    assert "[REDACTED:bearer-token]" in ctx["cmd"] and ctx["n"] == 3
+
+
+def test_v5_metadata_that_is_not_json_is_still_scrubbed_raw():
+    from rfc_agent.privacy import scrub_attribute
+
+    masked, n = scrub_attribute("langfuse.observation.metadata.x", "raw sk-lf-00000000-0000-0000-0000-000000000000")
+    assert n == 1 and "[REDACTED:langfuse-key]" in masked
+    # input/output that is not JSON keeps the raw path exactly as before
+    assert scrub_attribute("langfuse.observation.output", "token sk-lf-00000000-0000-0000-0000-000000000000") == \
+        scrub_text("token sk-lf-00000000-0000-0000-0000-000000000000")
+
+
+@pytest.mark.parametrize("key", ["langfuse.observation.input", "langfuse.observation.output",
+                                 "langfuse.trace.input", "langfuse.trace.output"])
+def test_v5_json_input_output_stays_valid_json_after_scrubbing(key):
+    from rfc_agent.privacy import scrub_attribute
+
+    value = json.dumps({"file_path": "k.pem", "content": "-----BEGIN RSA PRIVATE KEY-----\nMIIEabc"})
+    masked, n = scrub_attribute(key, value)
+    decoded = json.loads(masked)  # the closing quote survives
+    assert n >= 1 and decoded["file_path"] == "k.pem" and "MIIEabc" not in decoded["content"]

@@ -105,7 +105,10 @@ def promote(ctx: RunContext, ask=None) -> list[str]:
         if not signals.strip():
             return []
         cfg = ctx.config
-        model = ((cfg.get("AGENT.STAGE_MODELS", {}) or {}).get("promote") if cfg else None) or "claude-haiku-4-5"
+        model = (
+            ((cfg.get("AGENT.STAGE_MODELS", {}) or {}).get("promote") if cfg else None)
+            or "claude-haiku-5-5"
+        )
         prompt = (
             "You are the post-run learning pass of a staged RFC pipeline (stages: ingest, extract, "
             "ground, generate, review). Below are THIS run's process signals: per-stage attempts, "

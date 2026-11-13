@@ -16,6 +16,7 @@ setup.)
 | Setting | Default | Env | Flag (wins) | What it does |
 |---|---|---|---|---|
 | `LANGFUSE.VERBOSE` | `false` | `RFC_AGENT_LANGFUSE_VERBOSE` | `--langfuse-verbose true\|false` | also one span per tool call |
+| `LANGFUSE.PER_CALL` | `false` | `RFC_AGENT_LLM_CALLS` | — | per-visible-assistant-response metrics and generations |
 
 Precedence: CLI flag > env var > `config.json`. The flag works on `rfc` and on every stage
 (`python -m rfc_agent.draft --run-dir … --langfuse-verbose true`) and applies to that call only: a resumed run
@@ -75,6 +76,60 @@ as the status message.
 Worker threads (parallel tracers and reviewers) get the main thread's trace context, so their spans keep the
 session and user, and they name their parent span directly.
 
+## Per-response latency and cache diagnostics
+
+Set `LANGFUSE.PER_CALL: true` in the private config (or `RFC_AGENT_LLM_CALLS=true`). Works for Claude Code,
+Axon and vanilla Pi, including both local-PRD Scope helpers. With this enabled:
+
+- Each invocation writes `logs/<agent>.llm-calls.jsonl` and `<agent>.llm-metrics.json`. These are content-free
+  metrics: engine, actual reported model/provider, call index, tokens, cache reads/writes, token-cache-hit
+  ratio, explicit timing boundaries, completion status, and reported per-response cost when available.
+- Each visible response is a Langfuse **generation** named `llm:<agent>:call-N`. The agent summary becomes a
+  **span**, retaining aggregate usage/cost in metadata instead of billing it again. A cost-only
+  `billing:<agent>` generation records any reported invocation cost not already attributed to responses,
+  with zero tokens. Scope helpers are not exported a second time as aggregate usage generations.
+  Existing run totals remain authoritative.
+  In this mode the clipped prompt/result pair remains on `summary:<agent>`; per-response generations
+  carry metrics, not a reconstructed conversation history.
+- Claude Code additionally receives `--include-partial-messages`; Pi is measured from its raw native stream,
+  not its Claude-shaped adapter. Local metrics still work if tracing is disabled or export fails.
+- Claude tool results can arrive before the response's final usage. They advance the next-turn timing boundary,
+  but streamed responses are finalized only at `message_stop`. Without partial events, the next response or
+  invocation end flushes the accumulated assistant blocks; interrupted streams remain marked incomplete.
+  Older per-response records may undercount output if they were finalized on a tool result. Tokens can be
+  reconciled from the saved final stream usage; original receipt-based timings cannot be reconstructed from
+  untimestamped raw events.
+
+### Interpret the clocks honestly
+
+| Field | Meaning |
+| --- | --- |
+| `observed_turn_s` | Previous tool-result receipt to response end; first response includes process startup. Without intervening tools, starts at previous response end. Includes harness preparation/provider waits; not pure API latency. |
+| `tool_and_harness_gap_s` | Previous response end to last tool-result receipt (when present). Includes tool/hook work; not a provider wait. |
+| `event_span_s` | Claude: response-stream message-start to message-stop, **after response headers**. Pi: assistant-message lifecycle. These are **different clocks**, not a fair direct cross-engine API-latency comparison. Langfuse generation duration covers this event span. |
+| `time_to_first_delta_s` | First observed text/thinking/tool delta after message-start; **not portable provider TTFT**. `null` when absent. |
+| `boundary_to_first_delta_s` | First delta relative to the explicit observed-turn boundary; first response includes startup. |
+| `first_event_delay_s` / `first_assistant_delay_s` | Process start to first received event / assistant-start event; startup/initialization diagnostics, not isolated network latency. |
+| `settled_to_exit_s` | Terminal result/settled event to process cleanup; useful for distinguishing Axon shutdown/session-backup overhead from model work. |
+
+`RFC_AGENT_BENCHMARK_ID` adds a common `benchmark_id` metadata field and benchmark tag to traces.
+Engine tags reflect the effective CLI, environment and config selection, including per-stage overrides.
+Mixed-engine pipeline traces carry `engine:mixed`, tags for their engines, and a `stage_engines` metadata map.
+
+Token-cache-hit ratio is `cache_read / (uncached_input + cache_read + cache_write)`, NOT the fraction of
+requests with a cache hit. Missing values remain `null`, not zero. `reasoning_tokens` is recorded only when
+the CLI/provider exposes it; otherwise it stays `null` (output usage may already include reasoning).
+Claude per-response billed cost is often
+unavailable; no aggregate cost is divided into invented per-call costs. Those response records retain
+`cost_usd: null` / `cost_source: unavailable`; their Langfuse generations use an explicit zero accounting cost
+so automatic price estimates cannot double-bill the reported invocation remainder on `billing:<agent>`.
+Pi's reported response costs are billed directly, with any additional session cost reconciled the same way.
+
+Coverage is **visible assistant responses**, not every HTTP attempt: provider-internal retries, automatic
+compaction model calls, and other hidden SDK traffic may not emit response events. Retry/compaction event
+counts and `metrics_errors` are retained in each invocation summary; inspect them before comparing. Exact
+HTTP latency, gateway queue time, and request-level retry details require provider/gateway tracing.
+
 ## User feedback
 
 Full design, trace selection and limits: [FEEDBACK.md](FEEDBACK.md).
@@ -128,7 +183,9 @@ The ruleset is deterministic and derived from gitleaks: AWS, GitHub, GitLab, Sla
 Anthropic, Langfuse and Google keys, JWTs, whole PEM blocks, connection-string credentials, bearer tokens, plus
 one `keyword=value` rule gated by entropy and an allowlist. Free-standing entropy scanning is deliberately
 absent: it produces false positives on hashes, UUIDs and base64, which is exactly what tool output contains.
-Matches become `[REDACTED:<rule>]`.
+Matches become `[REDACTED:<rule>]`. The Langfuse Python SDK v5 JSON-encodes every metadata value on the span
+(the string `prod` ships as `"prod"`), so metadata attributes are decoded, scrubbed string by string and
+re-encoded; a raw pass could break the encoding.
 
 It is **fail-closed**: a span whose scrub errors ships with sentinel strings, and a hook-level error makes the
 SDK drop the export batch.
@@ -161,7 +218,8 @@ dataset" on any observation.
 
 - **In-flight traces have dangling nodes.** Spans export on close, so while a run is going its open stage and
   root are not yet in the tree. A run killed mid-way leaves those holes, and its trace-level input and output
-  stay empty.
+  stay empty: since Langfuse v4 they are the root observation's own input and output (SDK v5 has no separate
+  trace-io setter), and the root never closes.
 - **Langfuse graphs individual traces only.** The Sessions page is a chronological list, so a view across a
   whole workstream has to be built on the API.
 - **A slow connection can drop spans.** The Langfuse SDK gives each export 5 seconds by default

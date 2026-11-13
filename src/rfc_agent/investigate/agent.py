@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -26,7 +27,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .. import observe
+from .. import llm_metrics, observe
 from ..mcp_tools import READONLY_TOOLS
 from ..scope.context import SERVER
 
@@ -137,15 +138,16 @@ def run(
     """Run (or resume) one agent to completion.
     `on_event(label, kind, data)` gets "start", "tool", "text" and "end" ticks.
     `trace_step` names the step on the Langfuse trace only (default: the log file's step).
-    The stage's engine (`--engine` / AGENT.ENGINE, default claude-code) picks the backend: `axon` runs the
-    same spec on the org's managed Pi (rfc_agent.axon_agent) and returns the same AgentResult."""
+    The stage's engine (`--engine` / AGENT.ENGINE, default claude-code) picks the backend: `axon` and `pi`
+    share the Pi transport (rfc_agent.axon_agent) and return the same AgentResult."""
     from ..axon_agent import engine_for
 
-    if engine_for(stage, cfg) == "axon":
+    engine = engine_for(stage, cfg)
+    if engine in ("axon", "pi"):
         from .. import axon_agent
 
         return axon_agent.run(spec, prompt, run_dir, cfg, resume=resume, on_event=on_event, stage=stage,
-                              step=step, trace_step=trace_step)
+                              step=step, trace_step=trace_step, engine=engine)
     run_dir = run_dir.resolve()
     binary = cfg.get("AGENT.CLAUDE_BIN", "claude") if cfg else "claude"
     if os.environ.get("RFC_AGENT_NO_REAL_CLAUDE") and Path(binary).name == "claude" and not Path(binary).is_file():
@@ -171,6 +173,7 @@ def run(
         "--output-format",
         "stream-json",
         "--verbose",
+        *(["--include-partial-messages"] if llm_metrics.enabled(cfg) else []),
         "--permission-mode",
         "acceptEdits",
         "--setting-sources",
@@ -212,10 +215,15 @@ def run(
     env.pop("CLAUDE_CODE_EFFORT_LEVEL", None)  # --effort decides
 
     res = AgentResult(label=spec.label, ok=False, stream=str(stream_path))
-    trace = observe.agent_started(spec.label, stage=stage, step=trace_step or attempt, model=spec.model, prompt=prompt)
+    trace = observe.agent_started(spec.label, stage=stage, step=trace_step or attempt, model=spec.model, prompt=prompt,
+                                  per_call=llm_metrics.enabled(cfg))
+    calls = (llm_metrics.CallRecorder(stream_path, engine="claude-code", model=spec.model, label=spec.label,
+             stage=stage, step=attempt, trace=trace) if llm_metrics.enabled(cfg) else None)
     try:
-        _run_proc(cmd, prompt, run_dir, env, spec, stream_path, res, on_event, trace)
+        _run_proc(cmd, prompt, run_dir, env, spec, stream_path, res, on_event, trace, calls=calls)
     finally:
+        if calls is not None:
+            res.extra["llm_metrics"] = calls.finish()
         if on_event:
             on_event(spec.label, "end", {"ok": res.ok, "error": res.error, "session_id": res.session_id,
                                          "tool_calls": res.tool_calls, "seconds": res.seconds,
@@ -237,12 +245,14 @@ def run(
                     "resumed": bool(resume),
                     "effort": spec.effort,
                     "stream": res.stream,
+                    "engine": "claude-code",
+                    **({"llm_metrics": res.extra["llm_metrics"]} if calls is not None else {}),
                 },
             )
     return res
 
 
-def _run_proc(cmd, prompt, run_dir, env, spec, stream_path, res, on_event, trace) -> None:
+def _run_proc(cmd, prompt, run_dir, env, spec, stream_path, res, on_event, trace, *, calls=None) -> None:
     t0 = time.monotonic()
     err_path = stream_path.with_name(stream_path.name.replace(".stream.jsonl", ".stderr"))
     err_f = open(err_path, "w", encoding="utf-8")
@@ -288,7 +298,7 @@ def _run_proc(cmd, prompt, run_dir, env, spec, stream_path, res, on_event, trace
                 out.write(chunk)
                 out.flush()
                 buf = chunk.strip()
-                _consume(buf, res, on_event, trace, run_dir)
+                _consume(buf, res, on_event, trace, run_dir, calls=calls)
         if timed_out:
             _kill_group(proc)
             res.error = f"timed out after {spec.timeout_s}s"
@@ -314,11 +324,16 @@ def _run_proc(cmd, prompt, run_dir, env, spec, stream_path, res, on_event, trace
     res.ok = not res.error
 
 
-def _consume(line: str, res: AgentResult, on_event, trace=None, run_dir: Path | None = None) -> None:
+def _consume(line: str | dict, res: AgentResult, on_event, trace=None, run_dir: Path | None = None,
+             *, calls=None) -> None:
     try:
-        ev = json.loads(line)
+        ev = json.loads(line) if isinstance(line, str) else line
     except ValueError:
         return
+    if not isinstance(ev, dict):
+        return
+    if calls is not None:
+        calls.feed(ev)
     if trace is not None:
         trace.event(ev)
     t = ev.get("type")
@@ -346,8 +361,24 @@ def _consume(line: str, res: AgentResult, on_event, trace=None, run_dir: Path | 
         res.extra["result_subtype"] = ev.get("subtype")
         res.extra["result_is_error"] = bool(ev.get("is_error"))
         res.extra["usage"] = ev.get("usage") or {}
-    if "rate_limit" in line or '"overloaded' in line:
+    if t == "rate_limit_event":
+        status = (ev.get("rate_limit_info") or {}).get("status") or "allowed"
+        limited = status not in ("allowed", "allowed_warning")
+    else:
+        # Read protocol error codes, never assistant/tool text or partial token deltas about rate limiting.
+        error = ev.get("error")
+        code = error.get("type") if isinstance(error, dict) else error
+        limited = code in ("rate_limit", "rate_limit_error", "overloaded", "overloaded_error")
+        limited |= t in ("rate_limit_error", "overloaded_error")
+        # A failed run's result text is the error itself, not prose: Claude's "API Error: 429 ..." and the
+        # Pi shim's "provider retries exhausted: ... rate_limit_error" carry the throttle only there.
+        if t == "result" and ev.get("is_error"):
+            limited |= bool(_THROTTLE_RE.search(str(ev.get("result") or "")))
+    if limited:
         res.rate_limited += 1
+
+
+_THROTTLE_RE = re.compile(r"rate[_ ]limit|\b429\b|overloaded", re.IGNORECASE)
 
 
 def target(inp, run_dir: Path | None = None, width: int = 90) -> str:

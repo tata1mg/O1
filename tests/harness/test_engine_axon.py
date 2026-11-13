@@ -32,9 +32,14 @@ def test_axon_is_a_registered_engine():
 
 def test_model_tiers():
     assert model_tier("claude-opus-5-5[1m]") == "opus[1m]"
-    assert model_tier("claude-haiku-4-5-20251001") == "haiku"
+    assert model_tier("claude-haiku-5-5") == "haiku"
+    assert model_tier("anthropic/claude-haiku-5.5") == "haiku"
     assert model_tier("gemini-3.8-flash") is None
     assert map_model("claude-sonnet-5-5") == "anthropic/claude-sonnet-5.5"
+    assert map_model("anthropic/claude-haiku-5.5") == "anthropic/claude-haiku-5.5"
+    assert map_model("anthropic/claude-haiku-5.5", {"haiku": "x"}) == "x"
+    assert map_model("anthropic/claude-haiku-5.5", {"anthropic/claude-haiku-5.5": "y"}) == "y"
+    assert map_model("claude-haiku-5-5") == "anthropic/claude-haiku-5.5"
     assert map_model("claude-sonnet-5-5", {"sonnet": "x"}) == "x"
     assert map_model(None) is None
 

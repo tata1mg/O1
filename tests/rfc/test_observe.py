@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -37,9 +38,6 @@ class Obs:
     def score(self, **kw):
         self.scores.append(kw)
 
-    def set_trace_io(self, **kw):
-        self.client.trace_io.update(kw)
-
     @property
     def level(self):
         return self.updates.get("level", self.kw.get("level", "DEFAULT"))
@@ -48,7 +46,6 @@ class Obs:
 class FakeClient:
     def __init__(self):
         self.all: list[Obs] = []
-        self.trace_io: dict = {}
         self.flushed = 0
         self.created: list[dict] = []
         self.lock = threading.Lock()
@@ -231,7 +228,9 @@ def test_standalone_stage_gets_its_own_trace(traced, tmp_path):
     c = traced["client"]
     root, stage = c.one("rfc-run"), c.one("stage:review")
     assert stage.parent is root and stage.type == "chain" and stage.ended
-    assert stage.updates["output"] == {"exit": 0} and c.trace_io["output"] == {"exit": 0}
+    assert stage.updates["output"] == {"exit": 0}
+    # SDK v5: the trace's Input/Output is the root observation's own io
+    assert root.updates["output"] == {"exit": 0} and root.updates["input"]["entry"] == "review"
     assert c.flushed == 2  # the spans before the run's numbers are counted, then everything at the end
     assert (tmp_path / "identity.json").exists()  # the session id outlives this invocation
 
@@ -426,7 +425,7 @@ def test_scope_summary_call_is_recorded(traced, tmp_path, monkeypatch):
     fake = tmp_path / "claude"
     fake.write_text(
         "#!/usr/bin/env python3\nimport json,sys\nsys.stdin.read()\n"
-        'print(json.dumps({"total_cost_usd": 0.01, "usage": {"input_tokens": 7},'
+        'print(json.dumps({"type": "result", "total_cost_usd": 0.01, "usage": {"input_tokens": 7},'
         ' "result": json.dumps({"summary": "adds a field", "surfaces": []})}))\n'
     )
     fake.chmod(0o755)
@@ -650,3 +649,190 @@ def test_a_failed_start_leaves_no_export_watcher_behind(traced, tmp_path, monkey
 
     assert main(["--run-dir", str(tmp_path)]) == 0  # the run goes on untraced
     assert observe._export_watch is None
+
+
+@pytest.mark.parametrize("engine", ["claude-code", "axon", "pi"])
+def test_per_call_generations_do_not_double_bill_agent_summary(traced, tmp_path, monkeypatch, engine):
+    from test_llm_metrics import FAKE
+
+    from rfc_agent.investigate import agent as ag
+
+    traced["cfg"] = Cfg(**{"LANGFUSE.PER_CALL": True})
+    fake = tmp_path / "fake-agent"
+    fake.write_text(FAKE)
+    fake.chmod(0o755)
+    cfg = Cfg(**{"AGENT.ENGINE": engine, "AGENT.CLAUDE_BIN": str(fake), "AGENT.AXON": {"BIN": str(fake)},
+                 "AGENT.PI": {"BIN": str(fake)}, "LANGFUSE.PER_CALL": True})
+    monkeypatch.setenv("RFC_AGENT_ENGINE", engine)
+    spec = ag.AgentSpec("lead", "test-model", None, (), (), use_context=False, timeout_s=10)
+    _traced_stage(tmp_path, lambda: ag.run(spec, "synthetic", tmp_path, cfg))
+    c = traced["client"]
+    calls = c.named("llm:lead:call-")
+    assert len(calls) == 2 and all(g.type == "generation" and g.ended for g in calls)
+    assert sum(g.updates["usage_details"]["cache_read_input_tokens"] for g in calls) == 200
+    assert all(g.parent is c.one("agent:lead") for g in calls)
+    summary = c.one("summary:lead")
+    assert summary.type == "span" and "usage_details" not in summary.updates
+    assert summary.updates["metadata"]["aggregate_cost_usd"] == 0.002
+    assert summary.updates["metadata"]["aggregation"] == "agent_summary_not_billable"
+    generations = [o for o in c.all if o.type == "generation"]
+    assert sum(g.updates["cost_details"]["total"] for g in generations) == pytest.approx(0.002)
+    assert sum(g.updates["usage_details"]["input"] for g in generations) == 20
+    assert sum(g.updates["usage_details"]["output"] for g in generations) == 4
+    billing = c.named("billing:lead")
+    assert len(billing) == (1 if engine == "claude-code" else 0)
+    if engine == "claude-code":
+        assert all(g.updates["cost_details"]["total"] == 0 for g in calls)
+        assert all(g.updates["metadata"]["cost_usd"] is None for g in calls)
+        assert billing[0].updates["cost_details"]["total"] == 0.002
+        assert not any(billing[0].updates["usage_details"].values())
+
+
+@pytest.mark.parametrize("engine", ["claude-code", "axon", "pi"])
+def test_profiled_scope_helpers_are_not_exported_twice(traced, tmp_path, monkeypatch, engine):
+    from test_llm_metrics import fake_cfg
+
+    from rfc_agent.scope import context
+
+    traced["cfg"] = Cfg(**{"LANGFUSE.PER_CALL": True})
+    cfg = fake_cfg(tmp_path, engine)
+    monkeypatch.setenv("RFC_AGENT_ENGINE", engine)
+    logs = tmp_path / "logs"
+    logs.mkdir()
+
+    @observe.entry("scope")
+    def main(argv=None):
+        assert context.summarise("synthetic", cfg, logs)["ok"]
+        assert context.discover("synthetic", cfg, {"url": "http://unused.invalid"}, logs)["ok"]
+        return 0
+
+    assert main(["--run-dir", str(tmp_path)]) == 0
+    c = traced["client"]
+    generations = [o for o in c.all if o.type == "generation"]
+    assert len(c.named("llm:")) == 4
+    assert len(c.named("billing:")) == (2 if engine == "claude-code" else 0)
+    assert sum(g.updates["cost_details"]["total"] for g in generations) == pytest.approx(0.004)
+    assert sum(g.updates["usage_details"]["input"] for g in generations) == 40
+    assert sum(g.updates["usage_details"]["output"] for g in generations) == 8
+    assert len([o for o in c.all if o.type == "agent"]) == 2
+    assert all(o.ended for o in c.all)
+
+
+@pytest.mark.parametrize("engine", ["claude-code", "axon", "pi"])
+def test_scope_helpers_are_billed_once_without_per_call_metrics(traced, tmp_path, monkeypatch, engine):
+    from test_llm_metrics import fake_cfg
+
+    from rfc_agent.scope import context
+
+    traced["cfg"] = Cfg(**{"LANGFUSE.PER_CALL": False})
+    cfg = fake_cfg(tmp_path, engine)
+    cfg.d["LANGFUSE.PER_CALL"] = False
+    monkeypatch.setenv("RFC_AGENT_ENGINE", engine)
+    logs = tmp_path / "logs"
+    logs.mkdir()
+
+    @observe.entry("scope")
+    def main(argv=None):
+        assert context.summarise("synthetic", cfg, logs)["ok"]
+        assert context.discover("synthetic", cfg, {"url": "http://unused.invalid"}, logs)["ok"]
+        return 0
+
+    assert main(["--run-dir", str(tmp_path)]) == 0
+    c = traced["client"]
+    assert len([o for o in c.all if o.type == "agent"]) == 2  # one per helper, never an extra llm_call
+    assert sum(g.updates["cost_details"]["total"] for g in c.all if g.type == "generation") == pytest.approx(0.004)
+
+
+def test_a_bad_engine_setting_keeps_the_trace_identity(traced, tmp_path, monkeypatch, capsys):
+    from rfc_agent.axon_agent import ENGINE_ENV, STAGE_ENGINES_ENV
+
+    for key in (ENGINE_ENV, STAGE_ENGINES_ENV):
+        monkeypatch.delenv(key, raising=False)
+    propagated = []
+
+    @contextlib.contextmanager
+    def propagate(**kwargs):
+        propagated.append(kwargs)
+        yield
+
+    monkeypatch.setattr("langfuse.propagate_attributes", propagate)
+
+    @observe.entry("review")
+    def main(argv=None):
+        return 0
+
+    assert main(["--run-dir", str(tmp_path), "--stage-engine", "review=nope"]) == 0
+    assert len(propagated) == 1 and propagated[0]["session_id"]
+    assert propagated[0]["metadata"]["run_dir"] == str(tmp_path) and "engine" not in propagated[0]["metadata"]
+    assert "engine tags skipped" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("visible_cost", [None, 0.002])
+def test_cost_reconciliation_retains_unobserved_invocation_spend(traced, tmp_path, visible_cost):
+    def run():
+        trace = observe.agent_started("lead", stage="draft", step=None, model="m", prompt="x", per_call=True)
+        if visible_cost is not None:
+            trace.call_started({"call_index": 1, "model": "m"})
+            trace.call_finished({"model": "m", "input_tokens": 10, "output_tokens": 2,
+                                 "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+                                 "cost_usd": visible_cost, "complete": True, "stop_reason": "stop", "ended_at": 1})
+        trace.finish(ok=True, model="m", cost_usd=0.005)
+
+    _traced_stage(tmp_path, run)
+    generations = [o for o in traced["client"].all if o.type == "generation"]
+    assert sum(g.updates["cost_details"]["total"] for g in generations) == pytest.approx(0.005)
+    billing = traced["client"].one("billing:lead")
+    assert billing.updates["cost_details"]["total"] == pytest.approx(0.005 - (visible_cost or 0))
+    assert not any(billing.updates["usage_details"].values())
+
+
+@pytest.mark.parametrize("stage,values,env,argv,expected", [
+    ("review", {}, {}, [], "claude-code"),
+    ("review", {"AGENT.ENGINE": "pi"}, {}, [], "pi"),
+    ("review", {"AGENT.ENGINE": "axon"}, {"RFC_AGENT_ENGINE": "pi"}, [], "pi"),
+    ("review", {"AGENT.STAGE_ENGINES": {"review": "pi"}}, {"RFC_AGENT_ENGINE": "axon"}, [], "pi"),
+    ("review", {"AGENT.ENGINE": "pi"}, {"RFC_AGENT_ENGINE": "axon"}, ["--engine=claude-code"], "claude-code"),
+    ("review", {"AGENT.STAGE_ENGINES": {"review": "axon"}}, {},
+     ["--engine", "pi", "--stage-engine", "review=claude-code", "--stage-engine=review=pi"], "pi"),
+    ("review", {}, {"RFC_AGENT_STAGE_ENGINES": '{"review": "axon"}'}, ["--stage-engine=review=pi"], "pi"),
+    (None, {"AGENT.ENGINE": "pi"}, {}, ["--stage-engine=scope=claude-code"], "mixed"),
+    (None, {"AGENT.ENGINE": "axon"}, {"RFC_AGENT_ENGINE": "pi"}, [], "pi"),
+])
+def test_trace_engine_tags_follow_effective_selection(traced, tmp_path, monkeypatch,
+                                                     stage, values, env, argv, expected):
+    from rfc_agent.axon_agent import ENGINE_ENV, STAGE_ENGINES_ENV
+
+    for key in (ENGINE_ENV, STAGE_ENGINES_ENV):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("RFC_AGENT_BENCHMARK_ID", "synthetic-benchmark")
+    traced["cfg"] = Cfg(**values)
+    propagated = []
+
+    @contextlib.contextmanager
+    def propagate(**kwargs):
+        propagated.append(kwargs)
+        yield
+
+    monkeypatch.setattr("langfuse.propagate_attributes", propagate)
+
+    @observe.entry(stage)
+    def main(argv=None):
+        return 0
+
+    assert main(["--run-dir", str(tmp_path), *argv]) == 0
+    assert len(propagated) == 1
+    attrs = propagated[0]
+    assert attrs["metadata"]["engine"] == expected
+    engines = json.loads(attrs["metadata"]["stage_engines"])
+    assert set(tag for tag in attrs["tags"] if tag.startswith("engine:")) == {
+        f"engine:{engine}" for engine in {*engines.values(), expected}}
+    assert "benchmark:synthetic-benchmark" in attrs["tags"]
+    if stage is None:
+        assert len(engines) == 6
+    else:
+        assert engines == {stage: expected}
+    # Resolving a trace's tags must not export CLI choices into the process environment.
+    assert {key: os.environ.get(key) for key in (ENGINE_ENV, STAGE_ENGINES_ENV)} == {
+        key: env.get(key) for key in (ENGINE_ENV, STAGE_ENGINES_ENV)}

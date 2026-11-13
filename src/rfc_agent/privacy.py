@@ -22,6 +22,7 @@ Braintrust conventions):
 
 from __future__ import annotations
 
+import json
 import math
 import re
 
@@ -108,6 +109,51 @@ def scrub_text(text: str) -> tuple[str, int]:
     return text, hits
 
 
+# Python SDK v5 JSON-encodes every metadata attribute value, strings included (`"prod"` ships as
+# `'"prod"'`) — on `langfuse.{observation,trace}.metadata.<key>` and the bare prefix for non-dict
+# metadata — and the observation/trace input and output the same way. A raw regex pass over that
+# encoding can break it (the private-key rule runs to end-of-string and would eat the closing
+# quote), so these are decoded, scrubbed leaf by leaf and re-encoded, as the v4→v5 upgrade guide
+# prescribes for `mask_otel_spans`.
+_JSON_ATTR_PREFIXES = ("langfuse.observation.metadata", "langfuse.trace.metadata",
+                       "langfuse.observation.input", "langfuse.observation.output",
+                       "langfuse.trace.input", "langfuse.trace.output")
+
+
+def _scrub_json_leaves(value) -> tuple[object, int]:
+    """Scrub every string inside a decoded JSON value. Returns (value, hit_count)."""
+    if isinstance(value, str):
+        return scrub_text(value)
+    if isinstance(value, list):
+        hits, out = 0, []
+        for item in value:
+            masked, n = _scrub_json_leaves(item)
+            out.append(masked)
+            hits += n
+        return out, hits
+    if isinstance(value, dict):
+        hits, out = 0, {}
+        for k, item in value.items():
+            masked, n = _scrub_json_leaves(item)
+            out[k] = masked
+            hits += n
+        return out, hits
+    return value, 0
+
+
+def scrub_attribute(key: str, value: str) -> tuple[str, int]:
+    """Scrub one string span attribute. Metadata and input/output attributes are JSON (SDK v5): decode,
+    scrub the strings inside, re-encode compact like the SDK. A value that does not decode is scrubbed raw."""
+    if key.startswith(_JSON_ATTR_PREFIXES):
+        try:
+            decoded = json.loads(value)
+        except ValueError:
+            return scrub_text(value)
+        masked, n = _scrub_json_leaves(decoded)
+        return (json.dumps(masked, ensure_ascii=False, separators=(",", ":")) if n else value), n
+    return scrub_text(value)
+
+
 def mask_otel_spans(*, params):
     """Export-stage hook for `Langfuse(mask_otel_spans=...)` — scrubs every string attribute of
     every span in the batch. Sparse patches; per-span fail-closed sentinel; a hook-level error
@@ -120,7 +166,7 @@ def mask_otel_spans(*, params):
             changed = {}
             for key, value in (span.attributes or {}).items():
                 if isinstance(value, str) and len(value) >= _MIN_SCAN_LEN:
-                    masked, n = scrub_text(value)
+                    masked, n = scrub_attribute(key, value)
                     if n:
                         changed[key] = masked
                 elif isinstance(value, (list, tuple)):
