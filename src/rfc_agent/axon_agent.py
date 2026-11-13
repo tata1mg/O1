@@ -43,7 +43,7 @@ from harness.engines.pi import (
     _session_file,
     policy_cmd,
 )
-from harness.engines.pi_translate import session_usage_cost
+from harness.engines.pi_translate import BAD_STOP_REASONS, session_usage_cost
 
 ENGINES = ("claude-code", "axon", "pi")
 DEFAULT_ENGINE = "claude-code"
@@ -154,7 +154,6 @@ def gateway_model(model: str | None, cfg, *, engine: str = "axon") -> str | None
 # Pi built-in tool -> the Claude name downstream readers key on (e.g. `_code_reads` counts Read/Grep/Glob)
 PI_TO_CLAUDE_TOOL = {"read": "Read", "write": "Write", "edit": "Edit", "multiedit": "MultiEdit",
                      "grep": "Grep", "find": "Glob", "ls": "LS", "bash": "Bash"}
-_BAD_STOPS = ("error", "aborted")
 
 
 def claude_tool_input(tool: str, args, cwd: Path | None) -> dict:
@@ -195,8 +194,13 @@ class PiToClaude:
         self.usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0,
                       "cache_creation_input_tokens": 0}
         self.settled = False
-        self.error = ""
+        self._assistant_error = ""
+        self._terminal_error = ""
         self._init_sent = False
+
+    @property
+    def error(self) -> str:
+        return self._terminal_error or self._assistant_error
 
     def _init(self) -> dict:
         self._init_sent = True
@@ -221,11 +225,11 @@ class PiToClaude:
                     "type": "tool_result", "tool_use_id": msg.get("toolCallId"),
                     "content": _text_of(msg.get("content")), "is_error": bool(msg.get("isError"))}]}})
         elif t == "auto_retry_end" and ev.get("success") is False:
-            self.error = f"provider retries exhausted: {str(ev.get('finalError') or '')[:300]}"
+            self._terminal_error = f"provider retries exhausted: {str(ev.get('finalError') or '')[:300]}"
         elif t == "agent_settled":
             self.settled = True
             if ev.get("aborted"):
-                self.error = self.error or "the agent was aborted"
+                self._terminal_error = self._terminal_error or "the agent was aborted"
         return out
 
     def _assistant(self, msg: dict) -> list[dict]:
@@ -238,8 +242,15 @@ class PiToClaude:
         self.usage["cache_read_input_tokens"] += int(u.get("cacheRead") or 0)
         self.usage["cache_creation_input_tokens"] += int(u.get("cacheWrite") or 0)
         stop = str(msg.get("stopReason") or "")
-        if stop in _BAD_STOPS:
-            self.error = f"assistant stopReason={stop}: {str(msg.get('errorMessage') or '')[:300]}".rstrip(": ")
+        if stop in BAD_STOP_REASONS:
+            detail = str(msg.get("errorMessage") or "")[:300]
+            self._assistant_error = f"assistant stopReason={stop}: {detail}".rstrip(": ")
+        elif stop in {"stop", "toolUse"}:
+            # Pi retains failed attempts in the stream before retry/overflow recovery. Only an
+            # authoritative successful assistant message clears that attempt's error, not the
+            # retry-success notification (Pi also emits that after length/aborted responses).
+            # Exhausted retries and a terminal abort remain failures regardless of later messages.
+            self._assistant_error = ""
         content = []
         for b in msg.get("content") or []:
             if not isinstance(b, dict):
