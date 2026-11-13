@@ -90,8 +90,24 @@ Then, in any `axon` session (`/reload` an open one first):
   policy: a command with `$`, a redirect or a glob still asks, unless your org allows `/yolo`
   (`/terminal-permissions` shows what it allows).
 
-With the checkout install, the stub points at your checkout, so pulling new code updates `/rfc` without a
-reinstall.
+With the checkout install, the stubs point at your checkout, so pulling new code updates `/rfc` and `/test`
+without a reinstall. `install` writes two stubs, `rfc-agent.js` and `test-agent.js`; `uninstall` removes both.
+
+### `/test`: QA test cases on Axon
+
+The same install also registers `/test`, the harness `testing` workflow that Claude Code runs as
+`/test-agent:test`, `/test-agent:execute` and `/test-agent:evaluate`:
+
+```
+/test [--feature K] [--rfc-run-dir D] [--run-dir R] [--test-data F]   generate → Kiwi → review → execute
+/test execute [web|backend|all] [--only-existing] [--env E] [--build B] [--headed]
+/test evaluate [--run-dir R]
+/test status [run dir] · /test attach <run dir> · /test doctor
+```
+
+It asks the same questions as the Claude commands (RFC run, feature key, environment, build, login), shows
+progress above the editor, and starts the harness detached, so quitting Axon does not stop it. Agents run
+on Axon unless you pass `--engine`. Details: [src/workflows/testing/README.md](../src/workflows/testing/README.md).
 
 ## 3. Run from a terminal or Claude Code
 

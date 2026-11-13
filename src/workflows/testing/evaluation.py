@@ -27,7 +27,7 @@ from workflows.testing.execute import PROJECT, _load, latest_run  # noqa: E402
 from workflows.testing.preflight import load_config  # noqa: E402
 
 
-def command(run_dir: Path) -> list[str]:
+def command(run_dir: Path, engine: str = "") -> list[str]:
     """The harness command line, or SystemExit naming what is missing."""
     sources = _load(run_dir / "qa" / "sources.json")
     feature, rfc_run = sources.get("feature"), sources.get("rfc_run_dir")
@@ -41,6 +41,8 @@ def command(run_dir: Path) -> list[str]:
            "--enable", "testing.evaluate"]
     if rfc_run:
         cmd += ["--rfc-run-dir", rfc_run]
+    if engine:  # `/test evaluate` inside Axon passes axon
+        cmd += ["--engine", engine]
     return cmd
 
 
@@ -48,11 +50,12 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="evaluation")
     ap.add_argument("--run-dir")
     ap.add_argument("--print", action="store_true", dest="print_only")
+    ap.add_argument("--engine", default="", help="engine for the evaluator (default: the harness's)")
     args = ap.parse_args(argv)
     run_dir = Path(args.run_dir).expanduser() if args.run_dir else latest_run(load_config())
     if run_dir is None or not run_dir.is_dir():
         raise SystemExit("evaluate: no testing run found — pass --run-dir")
-    cmd = command(run_dir)
+    cmd = command(run_dir, args.engine)
     print(" ".join(shlex.quote(c) for c in cmd), flush=True)
     if args.print_only:
         return 0

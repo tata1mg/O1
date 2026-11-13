@@ -31,6 +31,24 @@ def test_rfc_command_end_to_end(tmp_path):
     assert res["ok"], json.dumps(res["failures"], indent=2)
 
 
+@pytest.mark.skipif(NODE is None, reason="node not on PATH (Axon requires Node >= 22.19 anyway)")
+def test_test_command_end_to_end(tmp_path):
+    """/test: phase A, the review handoff, phase B (web), /test execute, /test evaluate, test_status — against
+    fake_uv_testing.py. Engines default to axon, and no PI_ variable reaches the children."""
+    for d in ("run", "cwd"):
+        (tmp_path / d).mkdir()
+    fake_uv = FIX / "fake_uv_testing.py"
+    fake_uv.chmod(0o755)
+    out = subprocess.run(
+        [NODE, str(FIX / "test_command_cases.mjs"), str(axon_agent.TEST_COMMAND_JS), str(fake_uv), str(ROOT),
+         str(tmp_path / "run"), str(tmp_path / "cwd"), str(tmp_path / "uv.log")],
+        capture_output=True, text=True, timeout=150,
+    )
+    assert out.returncode == 0, out.stderr
+    res = json.loads(out.stdout.strip().splitlines()[-1])
+    assert res["ok"], json.dumps(res["failures"], indent=2)
+
+
 def test_install_writes_stub(tmp_path, monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda name: "/bin/uv" if name == "uv" else None)
     path = axon_agent.install(tmp_path)
@@ -39,6 +57,9 @@ def test_install_writes_stub(tmp_path, monkeypatch):
     assert json.dumps(str(axon_agent.RFC_COMMAND_JS)) in text
     assert f'project: {json.dumps(str(ROOT))}' in text and 'uv: "/bin/uv"' in text
     assert axon_agent.RFC_COMMAND_JS.exists()
+    test_stub = (tmp_path / "extensions" / "test-agent.js").read_text()
+    assert json.dumps(str(axon_agent.TEST_COMMAND_JS)) in test_stub and 'uv: "/bin/uv"' in test_stub
+    assert axon_agent.TEST_COMMAND_JS.exists()
 
 
 def test_install_needs_uv(tmp_path, monkeypatch):

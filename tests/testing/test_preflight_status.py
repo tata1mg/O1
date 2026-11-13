@@ -413,3 +413,14 @@ def test_evaluation_runs_the_one_stage_on_the_run(tmp_path):
     (run / "qa/cases.json").write_text("[]")
     joined = " ".join(evaluation.command(run))
     assert "--stages evaluate" in joined and "--enable testing.evaluate" in joined and "--feature F-1" in joined
+    assert "--engine" not in joined and " ".join(evaluation.command(run, "axon")).endswith("--engine axon")
+
+
+def test_check_on_axon_does_not_need_the_claude_cli(tmp_path, rfc_run, monkeypatch):
+    monkeypatch.setattr(preflight, "load_config", lambda: Cfg({"RUNS_ROOT": str(tmp_path)}))
+    monkeypatch.setattr(preflight, "check_claude",
+                        lambda cfg: [preflight._check("claude", "fail", "claude CLI not found")])
+    ids = {c["id"]: c["level"] for c in preflight.check("HDPO", str(rfc_run), network=False, engine="axon")["checks"]}
+    assert "claude" not in ids and ids["engine"] == "info"
+    ids = {c["id"]: c["level"] for c in preflight.check("HDPO", str(rfc_run), network=False)["checks"]}
+    assert ids["claude"] == "fail"

@@ -265,7 +265,7 @@ def suggest_run_dir(cfg, feature: str) -> str:
 
 
 def check(feature: str, rfc_run_dir: str | None, overrides: dict | None = None, *,
-          network: bool = True) -> dict:
+          network: bool = True, engine: str = "") -> dict:
     # One spelling per feature: a key typed as "hdpo" and one picked as "HDPO" would otherwise name two Kiwi
     # products and two run folders for the same thing.
     feature = feature_key(feature) if feature else feature
@@ -274,7 +274,11 @@ def check(feature: str, rfc_run_dir: str | None, overrides: dict | None = None, 
     if cfg is None:
         checks.append(_check("config", "fail", "~/.config/rfc-agent/config.json not found",
                              "run /rfc-agent:setup"))
-    checks += check_claude(cfg)
+    if engine and engine != "claude-code":
+        # the claude CLI is not used; `/test` inside Axon runs `rfc_agent.axon_agent doctor` before this
+        checks.append(_check("engine", "info", f"agents run on {engine}"))
+    else:
+        checks += check_claude(cfg)
     checks += check_sources(feature, rfc_run_dir, overrides or {})
     flags = resolved_flags(cfg)
     checks += check_kiwi(flags, network=network)
@@ -477,6 +481,7 @@ def main(argv: list[str] | None = None) -> int:
     for key in ("prd", "rfc", "contract", "plan", "figma", "test-data", "ui-login"):
         c.add_argument(f"--{key}")
     c.add_argument("--no-network", action="store_true")
+    c.add_argument("--engine", default="", help="the engine the agents run on (axon: skip the claude CLI check)")
     c.add_argument("--json", action="store_true")
     r = sub.add_parser("recent")
     r.add_argument("--limit", type=int, default=8)
@@ -542,7 +547,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote TESTING Kiwi settings to {path} (no password: that stays in ~/.tcms.conf)")
         return 0
     overrides = {k: getattr(args, k) for k in ("prd", "rfc", "contract", "plan", "figma", "test_data", "ui_login")}
-    verdict = check(args.feature, args.rfc_run_dir, overrides, network=not args.no_network)
+    verdict = check(args.feature, args.rfc_run_dir, overrides, network=not args.no_network, engine=args.engine)
     if args.json:
         print(json.dumps(verdict, indent=2))
     else:

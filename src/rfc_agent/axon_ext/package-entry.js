@@ -1,5 +1,5 @@
 /**
- * The /rfc extension when rfc-agent is installed as a Pi package:
+ * The /rfc and /test extensions when rfc-agent is installed as a Pi package:
  *
  *   axon pi install git:github.com/tata1mg/O1@<tag>
  *
@@ -14,6 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import make from "./rfc-command.js";
+import makeTest from "./test-command.js";
 
 export const PROJECT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
@@ -26,4 +27,8 @@ export function findUv(env = process.env, exists = fs.existsSync, home = os.home
   return "uv";
 }
 
-export default (pi) => make(pi, { project: PROJECT, uv: findUv() });
+export default (pi) => {
+  const opts = { project: PROJECT, uv: findUv() };
+  make(pi, opts);
+  makeTest(pi, opts);
+};

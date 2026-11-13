@@ -56,7 +56,8 @@ def latest_run(cfg) -> Path | None:
 
 
 def command(kind: str, run_dir: Path, *, env: str = "", build: str = "", headed: bool = False,
-            cases: str = "", curl: str = "", flags=None, only_existing: bool = False) -> list[str]:
+            cases: str = "", curl: str = "", flags=None, only_existing: bool = False,
+            engine: str = "") -> list[str]:
     """The harness command line for one kind, or SystemExit naming what is missing."""
     stages, enable, results = KINDS[kind]
     if kind == "web" and only_existing:
@@ -92,6 +93,8 @@ def command(kind: str, run_dir: Path, *, env: str = "", build: str = "", headed:
         cmd += ["--curl", str(Path(curl).expanduser())]
     if cases:
         cmd += ["--set", f"testing.cases={cases}"]
+    if engine:  # the agents' engine (derive_spec, derive_ui); `/test` inside Axon passes axon
+        cmd += ["--engine", engine]
     return cmd
 
 
@@ -131,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--headed", action="store_true")
     ap.add_argument("--cases", default="", help="comma-separated case ids (backend: narrows derive_spec)")
     ap.add_argument("--curl", default="")
+    ap.add_argument("--engine", default="", help="engine for the agent stages (default: the harness's)")
     ap.add_argument("--print", action="store_true", dest="print_only")
     ap.add_argument("--only-existing", action="store_true",
                     help="web: run only the tests already written — no derive_ui, no model, starts now")
@@ -148,7 +152,8 @@ def main(argv: list[str] | None = None) -> int:
     code = 0
     for kind in (("web", "backend") if args.kind == "all" else (args.kind,)):
         cmd = command(kind, run_dir, env=args.env, build=args.build, headed=args.headed, cases=args.cases,
-                      curl=args.curl, flags=flags, only_existing=args.only_existing)
+                      curl=args.curl, flags=flags, only_existing=args.only_existing,
+                      engine=args.engine)
         print(" ".join(shlex.quote(c) for c in cmd), flush=True)
         if not args.print_only:
             log = run_dir / "logs" / f"run.{kind}.out"  # one log per launch, as /test-agent:test writes them

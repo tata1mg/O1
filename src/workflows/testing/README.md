@@ -167,6 +167,25 @@ handoff shows them when they exist and points to the command when they do not. I
 the run dir, not edits made in Kiwi. `status.next_step` never waits on it, so an unscored or a failed
 evaluation does not block review or execution.
 
+### Inside Axon (Pi): `/test`
+
+The same three commands exist in Axon as one, `/test`, from the Pi extension
+`src/rfc_agent/axon_ext/test-command.js` (installed with `/rfc`: see [docs/AXON.md](../../../docs/AXON.md) §2):
+
+| Claude Code | Axon |
+|---|---|
+| `/test-agent:test [flags]` | `/test [flags]` |
+| `/test-agent:execute [web\|backend\|all] [flags]` | `/test execute [web\|backend\|all] [flags]` |
+| `/test-agent:evaluate [--run-dir R]` | `/test evaluate [--run-dir R]` |
+| (ask Claude) | `/test status [run dir]`, `/test attach <run dir>`, `/test doctor`, the `test_status` tool |
+
+No model drives it: the extension calls the same helpers the Claude commands name (`preflight`, `status`,
+`progress --watch`, `execute`, `evaluation`), asks the same questions as Pi dialogs, and starts the harness
+detached, so a run outlives the Axon session (`/test attach` follows it again). Agent stages run on Axon
+(`--engine axon`; `execute`, `evaluation` and `preflight check` take `--engine` for this — on axon the check
+skips the `claude` CLI) unless you pass `--engine` or `--stage-engine` yourself. Login files and curls are
+only checked to exist, never read.
+
 ### Executing an existing run: `/test-agent:execute`
 
 `/test-agent:execute [web|backend|all] [--only-existing] [--run-dir R] [--env E] [--build B] [--headed]

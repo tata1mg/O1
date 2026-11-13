@@ -659,3 +659,15 @@ def flags_like(values: dict):
     from types import SimpleNamespace
 
     return SimpleNamespace(get=lambda name, default=None: values.get(name, default))
+
+
+def test_execute_passes_the_engine_only_when_asked(tmp_path):
+    from workflows.testing import execute
+
+    run = tmp_path / "2026-11-05-testing-F-1"
+    (run / "qa" / "ui").mkdir(parents=True)
+    write_json(run / "qa/sources.json", {"feature": "F-1", "rfc_run_dir": "/rfc"})
+    write_json(run / "qa/ui/plan.json", {"tests": [], "skipped": []})
+    write_json(run / "qa/ui/results.json", {"environment": "jupiter", "build": "b7"})
+    assert "--engine" not in execute.command("web", run)
+    assert " ".join(execute.command("web", run, engine="axon")).endswith("--engine axon")

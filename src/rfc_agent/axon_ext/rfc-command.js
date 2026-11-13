@@ -197,7 +197,7 @@ export function readNewLines(file, state) {
 const DONE = "✔ Done";
 
 /** Toggle list on top of ui.select (Pi has no multi-select dialog). Escape keeps the current ticks. */
-async function checklist(ui, title, rows) {
+export async function checklist(ui, title, rows) {
   const on = rows.map((r) => !!r.on);
   for (;;) {
     const opts = rows.map((r, i) => checkLabel(on[i], r.label, r.note));
@@ -305,7 +305,7 @@ async function askTriage(ui, prop) {
 
 // ---- rfc_status: a run's state as a read-only tool -------------------------------------------------------
 
-function tail(file, n) {
+export function tail(file, n) {
   try {
     return fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).slice(-n);
   } catch {
@@ -313,7 +313,7 @@ function tail(file, n) {
   }
 }
 
-function pidAlive(pid) {
+export function pidAlive(pid) {
   if (!pid) return false;
   try {
     process.kill(pid, 0);
@@ -503,7 +503,7 @@ class Run {
 
 // ---- the extension ------------------------------------------------------------------------------------
 
-function runCapture(cmd, args, opts) {
+export function runCapture(cmd, args, opts) {
   return new Promise((resolve) => {
     const p = spawn(cmd, args, { ...opts, stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
@@ -516,9 +516,14 @@ function runCapture(cmd, args, opts) {
 }
 
 /** The parent Pi's runtime variables must not leak into the pipeline's own `axon pi` children. */
-function childEnv() {
+export function childEnv(home = process.env.HOME || "", exists = fs.existsSync) {
   const env = { ...process.env };
   for (const k of Object.keys(env)) if (k.startsWith("PI_")) delete env[k];
+  // The pipeline's agents start `axon pi` themselves; Axon launched from a shell that predates its installer's
+  // PATH line would otherwise make every stage fail with "`axon` not found".
+  const bin = path.join(home, ".axon", "bin");
+  const dirs = (env.PATH || "").split(path.delimiter);
+  if (home && !dirs.includes(bin) && exists(path.join(bin, "axon"))) env.PATH = [bin, ...dirs.filter(Boolean)].join(path.delimiter);
   return env;
 }
 
