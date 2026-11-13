@@ -265,6 +265,10 @@ def main(argv: list[str] | None = None) -> int:
         saved = {k: getattr(args, k) for k in RUN_ARGS if getattr(args, k, None)}
         (run_dir / "logs" / "run_args.json").write_text(json.dumps(saved, indent=2), encoding="utf-8")
     print(f"  [rfc] {'resuming' if existed else 'new run'}: {run_dir}", file=sys.stderr, flush=True)
+    from harness.provenance import code_version, label
+
+    o1 = dict(code_version())  # read at the start: the code this attempt runs, even if the checkout changes later
+    print(f"  [rfc] code: {label(o1)}", file=sys.stderr, flush=True)
     mains = _mains()
     ran: list[dict] = []
     code = 0
@@ -293,6 +297,7 @@ def main(argv: list[str] | None = None) -> int:
             break
     summary = _summary(run_dir, ran)
     summary["engines"] = _engines(ran)
+    summary["o1"] = o1
     summary["status"] = "done" if code == 0 else f"stopped at {ran[-1]['stage']}"
     prev = _read(run_dir / "logs" / "run.json") or {}  # read before it is overwritten below
     with (run_dir / "logs" / "attempts.jsonl").open("a", encoding="utf-8") as f:
@@ -304,6 +309,8 @@ def main(argv: list[str] | None = None) -> int:
                     "from": STAGES[start],
                     "exit": code,
                     "status": summary["status"],
+                    "o1_commit": o1.get("commit"),
+                    "o1_dirty": o1.get("dirty"),
                 }
             )
             + "\n"

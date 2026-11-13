@@ -131,7 +131,8 @@ def test_the_harness_path_adds_flags_json_and_nothing_else(tmp_path, registered_
                                  uses a bare stage callable, which is not an engine adapter and writes
                                  none — so their presence here is the seam working, not a regression;
       logs/asks_skipped.jsonl    the harness CLI records that a non-interactive run swallowed its asks.
-                                 `_direct_run` bypasses the CLI, so it never gets the chance.
+                                 `_direct_run` bypasses the CLI, so it never gets the chance;
+      logs/o1_code.jsonl         the harness CLI records which O1 commit each attempt ran on.
 
     Any OTHER new file is a change to the run-dir contract and this test is where it surfaces.
     """
@@ -146,7 +147,7 @@ def test_the_harness_path_adds_flags_json_and_nothing_else(tmp_path, registered_
                 and not p.name.endswith(".tmp")}
 
     extra = layout(harness_dir) - layout(direct_dir)
-    allowed = {"flags.json", "logs/asks_skipped.jsonl"} | {
+    allowed = {"flags.json", "logs/asks_skipped.jsonl", "logs/o1_code.jsonl"} | {
         f"logs/{name}.events.jsonl" for name in ("alpha", "beta", "gamma")}
     assert extra <= allowed, f"the harness path created unexpected files: {sorted(extra - allowed)}"
     assert "flags.json" in extra and "logs/alpha.events.jsonl" in extra, (

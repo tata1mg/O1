@@ -373,7 +373,10 @@ def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
                 import json
 
                 jira = json.loads((run_dir / "scope.json").read_text(encoding="utf-8")).get("jira")
-        md = {"entry": entry, "observability": "verbose" if _verbose else "standard"}
+        from harness.provenance import code_version, label
+
+        md = {"entry": entry, "observability": "verbose" if _verbose else "standard",
+              "o1_commit": code_version().get("commit"), "o1_code": label()}
         tags = []
         session = None
         if run_dir is not None:

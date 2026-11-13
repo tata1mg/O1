@@ -62,6 +62,11 @@ def test_full_run_passes_each_stage_its_options(tmp_path, monkeypatch):
     assert args["draft"] == ["--run-dir", str(rd.resolve())]
     summary = json.loads((rd / "logs" / "run.json").read_text())
     assert summary["status"] == "done" and summary["cost_usd_by_stage"]["scope"] == 0.1
+    from harness.provenance import code_version
+
+    assert summary["o1"]["commit"] == code_version()["commit"]  # which O1 code the run ran on
+    attempt = json.loads((rd / "logs" / "attempts.jsonl").read_text().splitlines()[-1])
+    assert attempt["o1_commit"] == code_version()["commit"] and "o1_dirty" in attempt
 
 
 def test_existing_inputs_skip_scope_and_from_starts_later(tmp_path, monkeypatch):

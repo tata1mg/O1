@@ -234,6 +234,7 @@ def run_workflow(name: str, args: argparse.Namespace, hooks: RunHooks | None = N
 
     run_dir = resolve_run_dir(args, cfg, hooks)
     run_dir.mkdir(parents=True, exist_ok=True)
+    o1 = _record_code_version(run_dir)
     args.run_dir = str(run_dir)
     if hooks.before_run is not None:
         hooks.before_run(args, run_dir)
@@ -312,11 +313,27 @@ def run_workflow(name: str, args: argparse.Namespace, hooks: RunHooks | None = N
         print(json.dumps({
             "workflow": wf.name, "outcome": outcome, "exit_code": code, "run_dir": str(run_dir),
             "engine": engine_name, "pipeline": [s.name for s in stages],
-            "cost_usd": cost, "duration_s": secs, "stage_attempts": tries,
+            "cost_usd": cost, "duration_s": secs, "stage_attempts": tries, "o1": o1,
             "stages": {k: v.get("status") for k, v in manifest.items()
                        if isinstance(v, dict) and "status" in v},
         }, indent=2))
     return code
+
+
+def _record_code_version(run_dir: Path) -> dict:
+    """Append which O1 commit this attempt runs on to logs/o1_code.jsonl (one line per attempt, so a run resumed
+    on newer code shows both) and return it."""
+    from datetime import UTC, datetime
+
+    from .provenance import code_version, label
+
+    v = dict(code_version())
+    with contextlib.suppress(OSError):
+        (run_dir / "logs").mkdir(parents=True, exist_ok=True)
+        with open(run_dir / "logs" / "o1_code.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": datetime.now(UTC).isoformat(timespec="seconds"), **v}) + "\n")
+    print(f"  [harness] code: {label(v)}", file=sys.stderr)
+    return v
 
 
 def resolve_run_dir(args: argparse.Namespace, cfg, hooks: RunHooks) -> Path:
