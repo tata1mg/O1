@@ -392,7 +392,7 @@ def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
         )
         prop.__enter__()
     with contextlib.suppress(Exception):
-        _root.set_trace_io(input={"entry": entry, "argv": argv})
+        _root.update(input={"entry": entry, "argv": argv})  # the trace's Input is the root observation's
     if run_dir is not None:  # feedback (rfc_agent.feedback) scores the trace this run produced
         _facts_src = (run_dir, _arg(argv, "--prd"))
         _entry_name = entry
@@ -466,8 +466,7 @@ def _close_root(cm, prop, code) -> None:
     global _client, _root, _root_otel_ctx, _tool_spans_left, _warned, _facts_src, _entry_name
     with contextlib.suppress(Exception):
         out = {"exit": code}
-        _root.update(output=out, level="ERROR" if code else "DEFAULT")
-        _root.set_trace_io(output=out)
+        _root.update(output=out, level="ERROR" if code else "DEFAULT")  # the trace's Output too
     if _facts_src is not None:  # which PRD / repos / how big the RFC / how the review ended — filterable later
         with contextlib.suppress(Exception):
             _client.flush()  # send the spans first, so a failed upload is in the activity log before it is counted
@@ -484,7 +483,6 @@ def _close_root(cm, prop, code) -> None:
 
                     text = feedback.run_summary(_facts_src[0], facts)
                     _root.update(output=text)
-                    _root.set_trace_io(output=text)
         _facts_src = None
     _entry_name = None
     if prop is not None:

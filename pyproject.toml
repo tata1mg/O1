@@ -5,7 +5,7 @@ description = "O1 agent toolkit: rfc-agent (PRD -> grounded tech RFC), with the 
 requires-python = "==3.12.*"
 dependencies = [
     "defusedxml>=0.7.1",
-    "langfuse>=4,<5",  # v4 API (start_as_current_observation)
+    "langfuse>=5,<6",  # Python SDK v5: trace io from the root observation; Observations API v2
 ]
 
 [project.optional-dependencies]

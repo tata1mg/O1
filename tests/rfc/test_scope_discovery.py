@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -163,3 +164,51 @@ def test_discovery_timeout_kills_the_agent_and_closes_its_card(tmp_path, monkeyp
     d = c.discover(PRD, cfg, {"url": "u"}, log_dir=tmp_path / "logs")
     assert not d["ok"] and "TimeoutExpired" in d["error"] and d["seconds"] < 10
     assert "■ FAILED: timed out after 1s" in (tmp_path / "logs" / "agents" / "scope.discovery.log").read_text()
+
+
+def test_scratch_folder_with_the_token_is_removed(tmp_path, monkeypatch):
+    """No run folder → the MCP config (it carries the fleetlens token) goes in a scratch folder that is deleted."""
+    import tempfile
+
+    cfg = _fake(tmp_path, monkeypatch)
+    made: list[str] = []
+    real = tempfile.mkdtemp
+    monkeypatch.setattr(tempfile, "mkdtemp", lambda **kw: made.append(real(dir=tmp_path, **kw)) or made[-1])
+    assert c.discover(PRD, cfg, {"url": "u", "headers": {"Authorization": "Bearer t"}})["ok"]
+    assert made and not any(os.path.exists(d) for d in made), "the token-bearing scratch folder is gone"
+
+
+def test_exit_zero_error_keeps_its_reason_on_the_card(tmp_path, monkeypatch):
+    """Claude reports a usage limit and exits 0: the card says why, not `exit 0`."""
+    cfg = _fake(tmp_path, monkeypatch, "limit")
+    d = c.discover(PRD, cfg, {"url": "u"}, log_dir=tmp_path / "logs")
+    assert not d["ok"] and "weekly limit" in d["error"]
+    card = (tmp_path / "logs" / "agents" / "scope.discovery.log").read_text()
+    assert "FAILED" in card and "weekly limit" in card and "exit 0" not in card
+
+
+def test_a_failing_callback_kills_the_agent(tmp_path, monkeypatch):
+    """A progress callback that raises must not leave the agent running (and spending) in the background."""
+    import time
+
+    from rfc_agent.investigate import agent as ag
+
+    cfg = _fake(tmp_path, monkeypatch)
+    slow = tmp_path / "slow"
+    pid = tmp_path / "child.pid"
+    slow.write_text(f"#!/bin/sh\necho $$ > {pid}\ncat >/dev/null\n"
+                    "echo '{\"type\":\"system\",\"subtype\":\"init\"}'\nsleep 30\n")
+    slow.chmod(0o755)
+    cfg.d["AGENT.CLAUDE_BIN"] = str(slow)
+
+    def boom(*a, **k):
+        raise RuntimeError("callback failed")
+
+    monkeypatch.setattr(ag, "_consume", boom)
+    t0 = time.monotonic()
+    with pytest.raises(RuntimeError, match="callback failed"):
+        c.discover(PRD, cfg, {"url": "u"}, log_dir=tmp_path / "logs")
+    assert time.monotonic() - t0 < 10, "did not wait for the 30 s sleep"
+    child = int(pid.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(child, 0)  # gone

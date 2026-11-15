@@ -11,11 +11,14 @@ fails in seconds, not as a silent empty scope.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -122,7 +125,8 @@ def discover(prd_text: str, cfg, spec: dict, log_dir: Path | None = None) -> dic
     if os.environ.get("RFC_AGENT_NO_REAL_CLAUDE") and Path(binary).name == "claude" and not Path(binary).is_file():
         out["error"] = "test guard: not starting the real claude"
         return out
-    log_dir = log_dir or Path(os.environ.get("TMPDIR", "/tmp"))
+    own_dir = log_dir is None  # a scratch folder, removed below: it holds the token-bearing MCP config
+    log_dir = log_dir or Path(tempfile.mkdtemp(prefix="rfc-scope-discovery-"))
     log_dir.mkdir(parents=True, exist_ok=True)
     mcp = log_dir / "scope.discovery.mcp.json"
     mcp.write_text(json.dumps({"mcpServers": {SERVER: spec}}, indent=2))
@@ -143,7 +147,6 @@ def discover(prd_text: str, cfg, spec: dict, log_dir: Path | None = None) -> dic
             p = subprocess.CompletedProcess(cmd, 0, stream_text, "")
         else:
             p = _run_live(cmd, prompt, log_dir)
-        result = None
         for line in p.stdout.splitlines():
             try:
                 ev = json.loads(line)
@@ -156,8 +159,7 @@ def discover(prd_text: str, cfg, spec: dict, log_dir: Path | None = None) -> dic
                     calls[blk.get("id")] = {"name": blk.get("name"), "input": blk.get("input")}
                 elif blk.get("type") == "tool_result" and blk.get("tool_use_id") in calls:
                     calls[blk["tool_use_id"]].update(output=blk.get("content"), is_error=bool(blk.get("is_error")))
-            if isinstance(ev, dict) and ev.get("type") == "result":
-                result = ev
+        result = _last_result(p.stdout)
         if result is None:
             raise ValueError(f"no result from claude (exit {p.returncode}): {p.stderr.strip()[:160]}")
         if result.get("is_error"):
@@ -171,6 +173,9 @@ def discover(prd_text: str, cfg, spec: dict, log_dir: Path | None = None) -> dic
         out["ok"] = True
     except (OSError, ValueError, subprocess.TimeoutExpired) as e:
         out["error"] = (str(e) if isinstance(e, ValueError) else f"{type(e).__name__}: {e}")[:200]
+    finally:
+        if own_dir:
+            shutil.rmtree(log_dir, ignore_errors=True)
     out["tool_calls"] = len(calls)
     out["seconds"] = round(time.monotonic() - t0, 1)
     observe.llm_call("repo-discovery", model=model, prompt=prompt, output={"services": out["services"]},
@@ -185,12 +190,23 @@ def _on_axon(cfg) -> bool:
     return engine_for("scope", cfg) == "axon"
 
 
+def _last_result(text: str) -> dict | None:
+    """The final `result` event of a Claude-shaped stream-json text, if any."""
+    result = None
+    for line in text.splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(ev, dict) and ev.get("type") == "result":
+            result = ev
+    return result
+
+
 def _axon_agent(prompt: str, model: str, cfg, log_dir: Path | None, *, label: str, use_context: bool,
                 timeout_s: int) -> tuple[str, dict]:
     """One Scope helper agent on Axon (--engine axon): → (its Claude-shaped stream, the final `result` event).
     Same prompt, no built-in tools, the fleetlens read tools."""
-    import tempfile
-
     from .. import axon_agent
     from ..investigate import agent as ag  # late: investigate.agent imports this module
     from ..investigate.progress import Progress
@@ -199,19 +215,16 @@ def _axon_agent(prompt: str, model: str, cfg, log_dir: Path | None, *, label: st
     run_dir = log_dir.parent if in_run else Path(tempfile.mkdtemp(prefix=f"rfc-scope-{label}-"))
     prog = Progress(run_dir, stage="scope") if in_run else None
     spec = ag.AgentSpec(label, model, None, (), (), use_context=use_context, timeout_s=timeout_s)
-    res = axon_agent.run(spec, prompt, run_dir, cfg, on_event=prog.tick if prog else None, stage="scope")
     try:
-        text = Path(res.stream).read_text(encoding="utf-8")
-    except OSError:
-        text = ""
-    result: dict = {}
-    for line in text.splitlines():
+        res = axon_agent.run(spec, prompt, run_dir, cfg, on_event=prog.tick if prog else None, stage="scope")
         try:
-            ev = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(ev, dict) and ev.get("type") == "result":
-            result = ev
+            text = Path(res.stream).read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+    finally:
+        if not in_run:  # a scratch run folder: its MCP config carries the token
+            shutil.rmtree(run_dir, ignore_errors=True)
+    result = _last_result(text)
     if not result:
         result = {"type": "result", "is_error": True, "result": res.error or "no result from axon"}
         text += json.dumps(result) + "\n"
@@ -254,13 +267,25 @@ def _run_live(cmd: list[str], prompt: str, log_dir: Path) -> subprocess.Complete
                 ag._consume(line.strip(), res, prog.tick if prog else None, run_dir=log_dir.parent)
         stderr = proc.stderr.read()
         proc.wait()
+    except BaseException:  # a failing progress callback must not leave the agent spending in the background
+        kill()
+        with contextlib.suppress(Exception):
+            proc.wait(timeout=5)
+        raise
     finally:
         timed_out = not killer.is_alive() and proc.returncode not in (0, None)
         killer.cancel()
+        if timed_out:
+            error = f"timed out after {DISCOVERY_TIMEOUT_S}s"
+        elif proc.returncode:
+            error = f"exit {proc.returncode}"
+        elif res.extra.get("result_is_error"):  # e.g. a usage limit: Claude reports it and exits 0
+            error = str(res.final_text or "the agent reported an error")[:300]
+        else:
+            error = ""
         if prog:
             prog.tick("discovery", "end", {
-                "ok": proc.returncode == 0 and not timed_out,
-                "error": f"timed out after {DISCOVERY_TIMEOUT_S}s" if timed_out else f"exit {proc.returncode}",
+                "ok": not error, "error": error,
                 "session_id": res.session_id, "tool_calls": res.tool_calls,
                 "seconds": round(time.monotonic() - t0, 1), "step": "run"})
     if timed_out:

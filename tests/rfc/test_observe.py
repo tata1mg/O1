@@ -37,9 +37,6 @@ class Obs:
     def score(self, **kw):
         self.scores.append(kw)
 
-    def set_trace_io(self, **kw):
-        self.client.trace_io.update(kw)
-
     @property
     def level(self):
         return self.updates.get("level", self.kw.get("level", "DEFAULT"))
@@ -48,7 +45,6 @@ class Obs:
 class FakeClient:
     def __init__(self):
         self.all: list[Obs] = []
-        self.trace_io: dict = {}
         self.flushed = 0
         self.created: list[dict] = []
         self.lock = threading.Lock()
@@ -231,7 +227,9 @@ def test_standalone_stage_gets_its_own_trace(traced, tmp_path):
     c = traced["client"]
     root, stage = c.one("rfc-run"), c.one("stage:review")
     assert stage.parent is root and stage.type == "chain" and stage.ended
-    assert stage.updates["output"] == {"exit": 0} and c.trace_io["output"] == {"exit": 0}
+    assert stage.updates["output"] == {"exit": 0}
+    # SDK v5: the trace's Input/Output is the root observation's own io
+    assert root.updates["output"] == {"exit": 0} and root.updates["input"]["entry"] == "review"
     assert c.flushed == 2  # the spans before the run's numbers are counted, then everything at the end
     assert (tmp_path / "identity.json").exists()  # the session id outlives this invocation
 
