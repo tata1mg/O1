@@ -1,4 +1,4 @@
-"""Scope repo discovery: the Opus discovery agent over fleetlens, PRD mentions, fallbacks."""
+"""Scope repo discovery: the Opus discovery agent over fleetlens (two tiers), PRD mentions, fallbacks."""
 
 from __future__ import annotations
 
@@ -22,8 +22,9 @@ if "stream-json" in sys.argv:  # the discovery agent
         {"type": "tool_use", "id": "t1", "name": "mcp__fleetlens__get_service_graph", "input": {}}]}}
     res = {"type": "user", "message": {"content": [
         {"type": "tool_result", "tool_use_id": "t1", "content": "graph", "is_error": False}]}}
-    services = {"services": [{"service": "service:API-Gateway", "why": "routes the new endpoint"},
-                             {"service": "svc_a", "why": "  owns the order\n patient name "},
+    services = {"services": [{"service": "ns_gateway", "tier": "maybe", "why": "may need a template"},
+                             {"service": "service:API-Gateway", "tier": "changes", "why": "routes the new endpoint"},
+                             {"service": "svc_a", "tier": "CHANGES", "why": "  owns the order\n patient name "},
                              {"service": "svc_a_admin_service", "why": "same repo"}]}
     draft = json.dumps({"services": [{"service": "draft"}]})
     text = {"ok": f"Looked around. {draft} then {json.dumps(services)}", "nojson": "I could not decide."}.get(mode, "")
@@ -61,9 +62,11 @@ def test_discovery_agent_is_isolated_and_parsed(tmp_path, monkeypatch):
     spec = {"type": "http", "url": "http://fl/mcp", "headers": {"Authorization": "Bearer t"}}
     d = c.discover(PRD, cfg, spec, log_dir=tmp_path / "logs")
     assert d["ok"] and d["cost_usd"] == 0.42 and d["tool_calls"] == 1 and d["error"] is None
-    assert d["services"] == [{"service": "API-Gateway", "why": "routes the new endpoint"},
-                             {"service": "svc_a", "why": "owns the order patient name"},
-                             {"service": "svc_a_admin_service", "why": "same repo"}], "the LAST services JSON wins"
+    assert d["services"] == [{"service": "API-Gateway", "tier": "changes", "why": "routes the new endpoint"},
+                             {"service": "svc_a", "tier": "changes", "why": "owns the order patient name"},
+                             {"service": "svc_a_admin_service", "tier": "changes", "why": "same repo"},
+                             {"service": "ns_gateway", "tier": "maybe", "why": "may need a template"}], \
+        "the LAST services JSON wins; a missing tier counts as changes; maybe goes last"
     argv = json.loads((tmp_path / "prompt.txt.argv").read_text())
     assert argv[argv.index("--tools") + 1] == "" and "--strict-mcp-config" in argv, "no built-ins, no other MCP"
     grants = argv[argv.index("--allowedTools") + 1].split(",")
@@ -80,6 +83,7 @@ def test_discovery_agent_is_isolated_and_parsed(tmp_path, monkeypatch):
     prompt = (tmp_path / "prompt.txt.disc").read_text()
     assert "Labs checkout" in prompt and "source_url" not in prompt and "untrusted" in prompt
     assert "frontend" in prompt, "the agent is asked for UI repos too (no surface table any more)"
+    assert '"maybe"' in prompt and "recall" in prompt and "passes through unchanged" not in prompt
     assert argv[argv.index("--model") + 1] == c.DISCOVERY_MODEL == "claude-opus-5-5"
 
 
@@ -113,13 +117,28 @@ def test_agent_services_become_repos(tmp_path, monkeypatch):
     assert got[0]["why"] == "context layer: routes it" and got[2]["why"] == "context layer: service c"
 
 
+def test_maybe_only_when_every_service_behind_the_repo_is_maybe(tmp_path, monkeypatch):
+    monkeypatch.setattr(c, "repo_for_service", lambda root, svc, aliases, config=None:
+                        "svc_a" if svc.startswith("svc_a") else svc)
+    found = [{"service": "svc_a_admin_service", "tier": "maybe", "why": "variant"},
+             {"service": "svc_a", "tier": "changes", "why": "owns orders"},
+             {"service": "email", "tier": "maybe", "why": "attachments"}]
+    got = c.context_candidates(found, tmp_path, None, set())
+    assert got == [{"repo": "svc_a", "why": "context layer: owns orders", "maybe": False},
+                   {"repo": "email", "why": "context layer (maybe): attachments", "maybe": True}]
+
+
 def test_gather_order_and_meta(tmp_path, monkeypatch):
     cfg = _fake(tmp_path, monkeypatch)
     monkeypatch.setattr(c, "_repo_for", lambda root, svc, aliases, cfg: svc.lower())
     monkeypatch.setattr(c, "prd_mentioned", lambda *a: [{"repo": "named_in_prd", "why": "the PRD mentions it"}])
     meta: dict = {}
     out = c.gather(cfg, {"url": "u"}, True, PRD, tmp_path, ["mine"], meta=meta, log_dir=tmp_path / "logs")
-    assert [o["repo"] for o in out] == ["mine", "api-gateway", "svc_a", "svc_a_admin_service", "named_in_prd"]
+    named = c.gather(cfg, {"url": "u"}, True, PRD, tmp_path, ["ns_gateway"], log_dir=tmp_path / "logs")
+    assert all(o["include"] for o in named if o["repo"] == "ns_gateway"), "named by you wins over maybe"
+    assert [o["repo"] for o in out] == ["mine", "api-gateway", "svc_a", "svc_a_admin_service", "ns_gateway",
+                                        "named_in_prd"]
+    assert [o["repo"] for o in out if not o["include"]] == ["ns_gateway"], "a maybe is proposed unticked"
     assert meta["discovery"]["ok"] and meta["discovery"]["tool_calls"] == 1 and meta["discovery_error"] is None
     assert meta["cost_usd"] == 0.42 and "summary" not in meta and "surfaces" not in meta
     json.dumps(meta)  # goes into scope.json

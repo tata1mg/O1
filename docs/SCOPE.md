@@ -165,8 +165,13 @@ Flow arrows, connector lines, text labels, icons, dots and header strips are ski
 context layer's read-only tools: no built-in tools, no other MCP server. It finds entry points
 (`get_service_graph`, `discover_interfaces`, `discover_services` with short queries), follows the code across
 services (`get_endpoint_call_graph`, `get_callers`, `get_callees`, `find_symbol`, `get_source`) and confirms each
-candidate (`list_interfaces`, `get_service_relationships`). It names backend services **and** the frontend repos
-whose screens the PRD changes: up to 10, each with a one-line reason naming the endpoint or code that shows it.
+candidate (`list_interfaces`, `get_service_relationships`). It is asked for **recall**, backend and frontend,
+in two tiers, up to 15 in all, each with a one-line reason naming the endpoint or code:
+- **changes**: code there clearly has to change. Proposed **ticked**.
+- **maybe**: on the request path, needed by an alternative design, config/template only, or not confirmed.
+  Proposed **unticked**, marked "context layer (maybe)", so it is one keypress away rather than missing.
+
+Where designs compete (extend an existing flow vs. add an endpoint), the services of each are listed.
 Expect 20–35 lookups and a few minutes. Its stream is in `logs/scope.discovery.stream.jsonl`, written as it runs;
 it also gets a task card in `/rfc-agent:rfc` (`logs/agents/scope.discovery.log`). If it fails (limit hit,
 timeout, no JSON at the end), Scope says so and you add repos on the confirm screen.
@@ -254,7 +259,7 @@ printed summary. See [Output](#output).
 | Decision | Considers | Rule |
 |---|---|---|
 | **Is the context layer usable?** | MCP `initialize` answers | 3 tries, 2 s apart. Down → continue and let you add repos |
-| **Which services own this feature?** | The discovery agent (Opus): the whole PRD plus the context layer's read tools | Up to **10** services, backend and frontend, in the agent's order, each with its reason |
+| **Which services own this feature?** | The discovery agent (Opus): the whole PRD plus the context layer's read tools | Up to **15** services, backend and frontend, in the agent's order, each with its reason. "changes" → ticked; "maybe" → unticked unless `--repos` or the PRD also names it |
 | **Service → repo name** | The inventory, then `STEERING.REPO_ALIASES` (your config wins) | `svc_a_background` → `svc_a`. A miss is retried with `_service` appended; the lower-cased name as last resort. Several deployed variants of one repo collapse into one entry |
 | **Does the PRD name a repo?** | Repo names in the inventory, matched in PRD text | Names under 5 characters are ignored. `lab_buddy` matches "lab buddy" / "lab-buddy". Single-word names count only in a repo context: `` `search` ``, "search service", "repo search" |
 | **Which repos are never proposed?** | `REPOS_EXCLUDE` | Keeps repos such as an evals repo (which may hold model answers) and this tool's own repo out of the list. Naming one in `--repos` overrides |
@@ -391,7 +396,7 @@ Environment: `RFC_AGENT_REPO_CACHE` (repo cache location), `RFC_AGENT_CONFIG` (c
 
 Fixed limits (in code): connector turn 180 s · git step 120 s · `ls-remote` 20 s · Figma screen list
 600 s per link (`--figma-wait`) · Figma export 30 min · file confirm 60 min · discovery agent 600 s ·
-≤ 10 context repos · screen ≥ 200 px.
+≤ 15 context repos · screen ≥ 200 px.
 
 ---
 

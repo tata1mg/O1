@@ -2,10 +2,10 @@
 
 Generated from the test code: one line per test function (parametrised tests count once). The sentence is the test's docstring summary when it has one, otherwise its name.
 
-**997 test functions** in 72 files (rfc: 170, infra: 313, harness: 236, testing: 260, parity: 18).
+**998 test functions** in 72 files (rfc: 171, infra: 313, harness: 236, testing: 260, parity: 18).
 
 
-## tests/rfc/ — 170 tests
+## tests/rfc/ — 171 tests
 
 ### test_activity_feed.py (6)
 
@@ -229,14 +229,15 @@ _Scope: parsing, confirm input, git snapshots against a throwaway remote, receiv
 - missing sign in is not retried
 - The common case: the server connects 10-30 s in, after the warm-up turn. No fresh connection needed.
 
-### test_scope_discovery.py (7)
+### test_scope_discovery.py (8)
 
-_Scope repo discovery: the Opus discovery agent over fleetlens, PRD mentions, fallbacks._
+_Scope repo discovery: the Opus discovery agent over fleetlens (two tiers), PRD mentions, fallbacks._
 
 - discovery agent is isolated and parsed
 - discovery model from config
 - discovery failures are reported not raised
 - agent services become repos
+- maybe only when every service behind the repo is maybe
 - gather order and meta
 - gather without the layer has named and mentioned repos
 - discovery timeout kills the agent and closes its card
