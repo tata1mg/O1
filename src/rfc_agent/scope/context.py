@@ -26,6 +26,7 @@ from pathlib import Path
 from .. import observe
 from ..mcp_tools import READONLY_TOOLS
 from ..services_map import load_map, repo_for_service
+from .repos import is_valid_repo_name
 
 SERVER = "fleetlens"  # the context layer's name under MCP.mcpServers; agents see its tools as mcp__fleetlens__*
 MAX_REPOS = 15  # across both tiers
@@ -300,7 +301,7 @@ def context_candidates(found: list[dict], repos_root: Path, cfg, exclude: set[st
     picked: dict[str, dict] = {}
     for item in found:
         repo = _repo_for(repos_root, item["service"], aliases, cfg)
-        if repo in exclude:
+        if repo in exclude or not is_valid_repo_name(repo):  # the name comes from the model: never a path
             continue
         maybe = item.get("tier") == "maybe"
         label = "context layer (maybe)" if maybe else "context layer"

@@ -192,6 +192,9 @@ def main(argv: list[str] | None = None) -> int:
         (run_dir / d).mkdir(parents=True, exist_ok=True)
     repos_root = Path(args.repos_root or cfg.get("REPOS_ROOT") or "~/Documents").expanduser()
     named = [r.strip() for r in args.repos.split(",") if r.strip()]
+    for r in [r for r in named if not repos.is_valid_repo_name(r)]:
+        _say(f"STOP: --repos '{r}' is not a repo name (letters, digits, . _ - only)")
+        return 1
     interactive = not args.yes
     _say(f"run dir: {run_dir}")
 

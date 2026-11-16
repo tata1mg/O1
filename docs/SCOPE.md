@@ -201,7 +201,7 @@ One numbered list, in four groups:
 
 | Group | Default | Note shown |
 |---|---|---|
-| Repos | Ticked, except names Bitbucket doesn't have | Branch · local checkout / in repo cache / not cloned · why it was proposed · ⚠ warnings |
+| Repos | Ticked, except agent "maybe" repos (unticked) and names Bitbucket doesn't have | Branch · local checkout / in repo cache / not cloned · why it was proposed · ⚠ warnings |
 | Child and linked Confluence pages | Unticked | Fetched only if ticked |
 | Jira keys found in the PRD | Unticked | Fetched only if ticked |
 | Figma sections | Pre-ticked by PRD overlap | Screen count, overlap score |
@@ -260,7 +260,7 @@ printed summary. See [Output](#output).
 |---|---|---|
 | **Is the context layer usable?** | MCP `initialize` answers | 3 tries, 2 s apart. Down → continue and let you add repos |
 | **Which services own this feature?** | The discovery agent (Opus): the whole PRD plus the context layer's read tools | Up to **15** services, backend and frontend, in the agent's order, each with its reason. "changes" → ticked; "maybe" → unticked unless `--repos` or the PRD also names it |
-| **Service → repo name** | The inventory, then `STEERING.REPO_ALIASES` (your config wins) | `svc_a_background` → `svc_a`. A miss is retried with `_service` appended; the lower-cased name as last resort. Several deployed variants of one repo collapse into one entry |
+| **Service → repo name** | The inventory, then `STEERING.REPO_ALIASES` (your config wins) | `svc_a_background` → `svc_a`. A miss is retried with `_service` appended; the lower-cased name as last resort. Several deployed variants of one repo collapse into one entry. A name that isn't a plain repo name (`..`, `a/b`, odd characters) is dropped, as are `--repos` / `+name` values like it |
 | **Does the PRD name a repo?** | Repo names in the inventory, matched in PRD text | Names under 5 characters are ignored. `lab_buddy` matches "lab buddy" / "lab-buddy". Single-word names count only in a repo context: `` `search` ``, "search service", "repo search" |
 | **Which repos are never proposed?** | `REPOS_EXCLUDE` | Keeps repos such as an evals repo (which may hold model answers) and this tool's own repo out of the list. Naming one in `--repos` overrides |
 | **Default branch** | 1. remote `HEAD` via `ls-remote` (authoritative) → 2. local `origin/HEAD` → 3. `origin/master` / `origin/main` exists locally → 4. `master` | The "how" is recorded per repo (`remote HEAD`, `local origin/HEAD (remote unreachable)`, …). A branch override on the confirm screen wins |

@@ -212,3 +212,19 @@ def test_a_failing_callback_kills_the_agent(tmp_path, monkeypatch):
     child = int(pid.read_text())
     with pytest.raises(ProcessLookupError):
         os.kill(child, 0)  # gone
+
+
+def test_model_names_that_are_not_plain_repo_names_are_dropped(tmp_path, monkeypatch):
+    monkeypatch.setattr(c, "repo_for_service", lambda root, svc, aliases, config=None: svc)
+    found = [{"service": s, "why": "x"} for s in ("..", "../other", "a/b", ".hidden", "-rf", "ok_repo", "Good-Repo.v2")]
+    got = c.context_candidates(found, tmp_path, None, set())
+    assert [p["repo"] for p in got] == ["ok_repo", "good-repo.v2"]
+
+
+def test_plus_name_rejects_path_like_names():
+    from rfc_agent.scope import confirm
+    items = [confirm.Item("repo", "svc_a", "svc_a")]
+    err = confirm.apply(items, "+../x, fine", lambda n: confirm.Item("repo", n, n))
+    assert err and "../x" in err and [it.key for it in items] == ["svc_a"], "nothing is added when one name is bad"
+    assert confirm.apply(items, "+fine", lambda n: confirm.Item("repo", n, n)) is None
+    assert [it.key for it in items] == ["svc_a", "fine"]

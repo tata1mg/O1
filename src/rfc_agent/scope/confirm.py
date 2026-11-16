@@ -10,6 +10,8 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass, field
 
+from .repos import is_valid_repo_name
+
 
 @dataclass
 class Item:
@@ -44,7 +46,11 @@ def apply(items: list[Item], answer: str, add_repo) -> str | None:
     """Apply one line of operator input. Returns an error message, or None."""
     a = answer.strip()
     if a.startswith("+"):
-        for name in [n.strip() for n in a[1:].split(",") if n.strip()]:
+        names = [n.strip() for n in a[1:].split(",") if n.strip()]
+        bad = [n for n in names if not is_valid_repo_name(n)]
+        if bad:
+            return f"not a repo name: {', '.join(bad)} (letters, digits, . _ - only)"
+        for name in names:
             if not any(it.kind == "repo" and it.key == name for it in items):
                 pos = max((i for i, it in enumerate(items) if it.kind == "repo"), default=-1) + 1
                 items.insert(pos, add_repo(name))
