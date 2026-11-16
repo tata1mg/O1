@@ -33,6 +33,7 @@ def test_alive_is_cached_per_cli_version_and_never_reprobed(tmp_path, monkeypatc
     assert marker.exists() and json.loads(marker.read_text())["alive"] is True
     spawned = [c for c in calls if "-p" in c]
     assert len(spawned) == 1 and "--settings" in spawned[0], "probed under the stage's own settings"
+    assert spawned[0][spawned[0].index("--model") + 1] == "claude-haiku-5-5"
     decisions = (tmp_path / "logs" / "decisions.jsonl").read_text()
     assert '"hook_canary"' in decisions and '"alive": true' in decisions
     # second call: cached, nothing spawned

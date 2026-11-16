@@ -27,7 +27,7 @@ from .. import observe
 # the claude.ai connector, or the user-scope `atlassian` server SETUP.md adds (same tools, same OAuth host)
 PREFIXES = ("mcp__claude_ai_Atlassian__", "mcp__atlassian__")
 TOOLS = ("getAccessibleAtlassianResources", "getConfluencePage", "getConfluencePageDescendants", "getJiraIssue")
-DEFAULT_MODEL = "claude-haiku-4-5"
+DEFAULT_MODEL = "claude-haiku-5-5"
 TURN_TIMEOUT_S = 180
 
 PAGE_ID_RE = re.compile(r"/pages/(\d+)|[?&]pageId=(\d+)")

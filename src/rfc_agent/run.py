@@ -118,7 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--yes", action="store_true", help="accept every pause's default (no questions)")
     from .axon_agent import add_engine_args
 
-    add_engine_args(p.add_argument_group("engine (claude-code | axon)"))
+    add_engine_args(p.add_argument_group("engine (claude-code | axon | pi)"))
     g = p.add_argument_group("observability (Langfuse)")
     g.add_argument(
         observe.VERBOSE_FLAG,

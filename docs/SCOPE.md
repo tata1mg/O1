@@ -64,7 +64,7 @@ uv run python -m rfc_agent.scope --prd "<confluence url>"
 | `--reuse-figma ask\|always\|never` | What to do when a previous export of the same link exists (default `ask`) |
 | `--figma-wait N` | Seconds to wait for the plugin's screen list, per link (default 600) |
 | `--fresh-clone` | Never touch your checkouts: every repo comes from the repo cache |
-| `--model` | Model that makes the Atlassian connector calls (default `claude-haiku-4-5`) |
+| `--model` | Model that makes the Atlassian connector calls (default `claude-haiku-5-5`) |
 
 Other subcommands:
 
@@ -103,7 +103,7 @@ Atlassian connector starts, so it costs no extra time.
 
 ### 2. Atlassian fetch (PRD, child-page list, Jira)
 
-A headless `claude -p` session (Haiku 4.5) bound to your Atlassian connector. It runs with **no built-in
+A headless `claude -p` session (`claude-haiku-5-5`) bound to your Atlassian connector. It runs with **no built-in
 tools** (it cannot read, write or run anything) and only these connector tools allowed:
 `getAccessibleAtlassianResources`, `getConfluencePage`, `getConfluencePageDescendants`, `getJiraIssue`.
 
@@ -388,8 +388,8 @@ From `~/.config/rfc-agent/config.json` (see [config.example.json](../config.exam
 | `STEERING.REPO_ALIASES` | Manual service → repo names; wins over the inventory | `{}` |
 | `SCOPE.SURFACES` | Product surfaces → repos: `{"name": {"what": "one line Haiku reads", "repos": [...]}}` | none |
 | `SERVICES_MAP.REPO` / `PATH` | Where the repo → service inventory lives (an Ansible `group_vars` file) | none |
-| `SCOPE.DISCOVERY_MODEL` | The model of the discovery agent | `claude-sonnet-5` |
-| `SCOPE.SUMMARY_MODEL` | The model that writes the summary | `claude-haiku-4-5-20251001` |
+| `SCOPE.DISCOVERY_MODEL` | The model of the discovery agent | `claude-sonnet-5-5` |
+| `SCOPE.SUMMARY_MODEL` | The model that writes the summary | `claude-haiku-5-5` |
 | `ATLASSIAN.SITE` | Which Atlassian site to fetch from | none — required for Confluence/Jira |
 | `AGENT.CLAUDE_BIN` | The `claude` binary | `claude` |
 
@@ -406,11 +406,14 @@ summary 120 s · ≤ 8 context repos · screen ≥ 200 px.
 
 | Part | Model |
 |---|---|
-| Atlassian connector calls | **Claude Haiku 4.5** (`--model` to change). Calls tools only; writes nothing. About $0.10–0.23 per run |
+| Atlassian connector calls | `claude-haiku-5-5` (`--model` to change). Calls tools only; writes nothing |
 | Repo discovery agent | **Claude Sonnet** (`SCOPE.DISCOVERY_MODEL`). About $0.50 and 90 s |
-| PRD summary + surfaces | **Claude Haiku 4.5**, one call, no tools. About $0.01–0.02 |
+| PRD summary + surfaces | `claude-haiku-5-5`, one call, no tools |
 | Everything else in Scope | No model: Python, git, the Figma plugin |
 | `/rfc-agent:scope` | Plus the Claude Code session you run it in, which only shows the questions and relays progress |
+
+These are native Claude Code model IDs. On Axon/Pi, the Haiku tier maps to
+`anthropic/claude-haiku-5.5` (see [Axon models](AXON.md#4-models)).
 
 ---
 

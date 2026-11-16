@@ -5,10 +5,12 @@ engine's stream tail (real timestamps, input AND output), and the online gate as
 Posture (cribbed from animus/integrations/langfuse.py): observability must NEVER fail a run — unconfigured
 keys, a missing package, or any SDK/network error degrade to a no-op with a single stderr warning.
 
-SDK note: langfuse 4.14 removed `span.update_trace()`; trace attributes go through
-`propagate_attributes(session_id=...)` (must wrap the root span's lifetime) and `span.set_trace_io()`.
-The old call raised AttributeError on every run and the suppress() ate it — session/input were silently
-null on all traces. Anything suppressed here must first be proven present in a real trace (tests can't).
+SDK note (Python SDK v5, Langfuse v4 data model): trace attributes go through
+`propagate_attributes(session_id=...)` (must wrap the root span's lifetime), and the trace's input/output
+is the ROOT observation's own io (`span.update(input=..., output=...)`). `span.update_trace()` (gone in
+4.14) and `set_trace_io()` / `set_current_trace_io()` (gone in v5) must not come back: a removed call
+raises AttributeError, the suppress() eats it, and the field is silently null on every trace. Anything
+suppressed here must first be proven present in a real trace (tests can't).
 
 EMBEDDING PRECONDITION: this module assumes one run per process — the ambient stage/attempt, step
 counter, tool budget and client cache are module globals, and the SDK adopts any pre-registered
@@ -430,7 +432,8 @@ def _observed_span(ctx: RunContext, name: str, *, as_type: str = "span", is_run_
                     if snap:
                         span.update(metadata={"config_snapshot": snap})
                 with contextlib.suppress(Exception):
-                    span.set_trace_io(input=_clip(json.loads(json.dumps(ctx.inputs, default=str))))
+                    # trace input = the root observation's input (Langfuse v4 / SDK v5)
+                    span.update(input=_clip(json.loads(json.dumps(ctx.inputs, default=str))))
         except Exception as exc:  # noqa: BLE001 — observability never fails a run
             _warn_once(str(exc))
             cm = span = None
@@ -1269,15 +1272,10 @@ def finish_run(ctx: RunContext, manifest: dict, ran: set | None = None) -> None:
                 (ctx.run_dir / "findings" / "evidence.json").read_text(encoding="utf-8")).get("heads")
             if heads:
                 summary["repo_heads"] = heads
-        # re-assert INPUT alongside output: a trace_context observation from a subprocess is stamped
-        # as_root by the SDK and its present fields get promoted to trace level mid-run — the final
-        # write here makes the completed run's trace io authoritative regardless
-        client.set_current_trace_io(  # root span is current here (stage spans closed)
-            input=_clip(json.loads(json.dumps(ctx.inputs, default=str))), output=summary)
-        # mirror the same io onto the ROOT SPAN observation: trace io lives on the trace header, but
-        # clicking the rfc-run node in the graph opens the root OBSERVATION, which showed
-        # Input/Output: undefined (operator confusion, 2026-08-17). Own suppress: a failure here
-        # must never eat the scores below.
+        # The run's io goes on the ROOT observation: since Langfuse v4 the trace's Input/Output IS the
+        # root observation's (SDK v5 removed set_current_trace_io). Input is re-asserted alongside
+        # output so the completed run's io is authoritative. The root span is current here (stage
+        # spans closed). Own suppress: a failure here must never eat the scores below.
         with contextlib.suppress(Exception):
             client.update_current_span(
                 input=_clip(json.loads(json.dumps(ctx.inputs, default=str))), output=summary)

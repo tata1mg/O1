@@ -47,7 +47,7 @@ def fake(monkeypatch):
 
 
 def _session(tmp_path, **kw):
-    s = AxonConnectorSession(tmp_path / "logs" / "scope.atlassian.stream.jsonl", model="gemini-3.8-flash",
+    s = AxonConnectorSession(tmp_path / "logs" / "scope.atlassian.stream.jsonl", model="anthropic/claude-haiku-5.5",
                              provider="litellm", **kw)
     return s.__enter__()
 
@@ -65,7 +65,7 @@ def test_connect_picks_the_configured_site(tmp_path, fake):
     assert argv[:5] == ["axon", "pi", "--mode", "json", "-p"] and "--approve" in argv and "--no-session" in argv
     tools = argv[argv.index("--tools") + 1].split(",")
     assert tools == [f"mcp__atlassian__{t}" for t in at.TOOLS]  # nothing but the four fetch tools
-    assert argv[argv.index("--model") + 1] == "gemini-3.8-flash"
+    assert argv[argv.index("--model") + 1] == "anthropic/claude-haiku-5.5"
     assert (tmp_path / "logs" / "scope.atlassian.stream.jsonl").read_text().count("agent_settled") == 1
 
 
@@ -159,7 +159,7 @@ def test_scope_uses_axon_only_on_axon(tmp_path, monkeypatch):
     monkeypatch.setenv("RFC_AGENT_ENGINE", "axon")
     s = scope_cli._axon_atlassian(Cfg(), at.DEFAULT_MODEL, tmp_path)()
     assert isinstance(s, AxonConnectorSession) and s.server == "atl" and s.prefix == "mcp__atl__"
-    assert s.model == "gemini-3.8-flash"  # haiku tier -> the gateway's cheap model
+    assert s.model == "anthropic/claude-haiku-5.5"  # haiku tier -> the gateway's Haiku model
     monkeypatch.delenv("RFC_AGENT_ENGINE")
 
 

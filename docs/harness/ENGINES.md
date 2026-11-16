@@ -42,7 +42,7 @@ is built around.
 
 `harness doctor` runs all three plus the hook canary.
 
-The **hook canary** spawns one real `claude -p --model claude-haiku-4-5-20251001` the first time on a given CLI
+The **hook canary** spawns one real `claude -p --model claude-haiku-5-5` the first time on a given CLI
 version (about 20–40 s) to prove that `additionalContext` from a PostToolUse hook actually reaches the model.
 Success caches in `~/.cache/rfc-agent/hooks_alive/<version>.json`. It never blocks a run: on failure it warns
 and records a `hook_canary` decision. Disable it with `--disable hook_canary`.
@@ -286,7 +286,7 @@ The rfc-agent pipeline uses the same pieces through its own agent seam (`rfc_age
 | `PI_OFFLINE=1` | unset | gateway model discovery is a startup network call |
 | MCP refused | registered per session by `pi_ext/rfc-tools.js` (`pi.registerMcpServer`, `direct` exposure) | Pi 1.4 has built-in MCP; nothing is written to `~/.axon/pi/mcp.json` |
 | MCP tool names dropped | kept in `--tools`; listed as `granted_tools` for the guard | the guard otherwise default-denies them ("no policy rule") |
-| `--model` as given | Claude ids mapped to gateway ids by tier (flag `axon.models`) | the gateway serves no Claude models |
+| `--model` as given | Claude ids mapped to gateway ids by tier (flag `axon.models`) | the gateway serves Opus, Sonnet and Haiku 5.5 under gateway-specific ids |
 | compaction off via settings | Axon's **threshold** compaction cancelled by `rfc-tools.js` (flag `axon.threshold_compaction`) | Axon enables early compaction for every session |
 
 ### Known gaps

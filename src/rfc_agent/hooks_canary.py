@@ -33,7 +33,7 @@ _CACHE = Path.home() / ".cache" / "rfc-agent" / "hooks_alive"
 # byte_budget's pacing report opens with this — the phrase the model can only know if the hook's
 # additionalContext actually reached it (hook stdout is never echoed into the stream)
 _MARK = "BYTE BUDGET pacing"
-_MODEL = "claude-haiku-4-5-20251001"  # cheapest capable model; the channel under test is CLI-side
+_MODEL = "claude-haiku-5-5"  # cheapest capable model; the channel under test is CLI-side
 
 
 def cli_version(claude_bin: str = "claude") -> str:

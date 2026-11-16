@@ -15,26 +15,29 @@ In parallel, one Haiku call reads the whole PRD and returns a short summary and 
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .. import observe
+from .. import llm_metrics, observe
 from ..mcp_tools import READONLY_TOOLS
 from ..services_map import load_map, repo_for_service
 
 SERVER = "fleetlens"  # the context layer's name under MCP.mcpServers; agents see its tools as mcp__fleetlens__*
 QUERY_CHARS = 1500  # the PRD summary is capped at this length
 MAX_REPOS = 8
-DISCOVERY_MODEL = "claude-sonnet-5"
+DISCOVERY_MODEL = "claude-sonnet-5-5"
 DISCOVERY_TIMEOUT_S = 300  # measured 85-95 s on two PRDs (20-30 tool calls)
-SUMMARY_MODEL = "claude-haiku-4-5-20251001"
+SUMMARY_MODEL = "claude-haiku-5-5"
 SUMMARY_TIMEOUT_S = 120
 # Product surfaces → the repos that implement them: the org's table, config SCOPE.SURFACES (config.json). Nothing
 # org-specific ships in the code, so with no table the PRD summary simply names no surface. A surface with no
@@ -111,7 +114,7 @@ def _last_services_json(text: str) -> list[dict] | None:
     return None
 
 
-def discover(prd_text: str, cfg, spec: dict, log_dir: Path | None = None) -> dict:
+def discover(prd_text: str, cfg, spec: dict, log_dir: Path | None = None, *, progress=None) -> dict:
     """The discovery agent: whole PRD in, fleetlens read tools only, no built-in tools.
     → {ok, services: [{service, why}], cost_usd, seconds, tool_calls, error}."""
     binary = str((cfg.get("AGENT.CLAUDE_BIN") if cfg else None) or "claude")
@@ -120,7 +123,8 @@ def discover(prd_text: str, cfg, spec: dict, log_dir: Path | None = None) -> dic
     if os.environ.get("RFC_AGENT_NO_REAL_CLAUDE") and Path(binary).name == "claude" and not Path(binary).is_file():
         out["error"] = "test guard: not starting the real claude"
         return out
-    log_dir = log_dir or Path(os.environ.get("TMPDIR", "/tmp"))
+    own_dir = log_dir is None  # a scratch folder, removed below: it holds the token-bearing MCP config
+    log_dir = log_dir or Path(tempfile.mkdtemp(prefix="rfc-scope-discovery-"))
     log_dir.mkdir(parents=True, exist_ok=True)
     mcp = log_dir / "scope.discovery.mcp.json"
     mcp.write_text(json.dumps({"mcpServers": {SERVER: spec}}, indent=2))
@@ -130,18 +134,18 @@ def discover(prd_text: str, cfg, spec: dict, log_dir: Path | None = None) -> dic
     cmd = [binary, "-p", "--model", model, "--tools", "", "--setting-sources", "",
            "--strict-mcp-config", "--mcp-config", str(mcp),
            "--output-format", "stream-json", "--verbose",
+           *(["--include-partial-messages"] if llm_metrics.enabled(cfg) else []),
            "--allowedTools", ",".join(f"mcp__{SERVER}__{t}" for t in READONLY_TOOLS[SERVER])]
     t0 = time.monotonic()
     usage: dict = {}
     calls: dict[str, dict] = {}
     try:
-        if _on_axon(cfg):
+        if _on_pi_runtime(cfg):
             stream_text, _ = _axon_agent(prompt, model, cfg, log_dir, label="discovery", use_context=True,
-                                         timeout_s=DISCOVERY_TIMEOUT_S)
+                                         timeout_s=DISCOVERY_TIMEOUT_S, progress=progress)
             p = subprocess.CompletedProcess(cmd, 0, stream_text, "")
         else:
-            p = _run_live(cmd, prompt, log_dir)
-        result = None
+            p = _run_live(cmd, prompt, log_dir, cfg=cfg, progress=progress)
         for line in p.stdout.splitlines():
             try:
                 ev = json.loads(line)
@@ -154,8 +158,7 @@ def discover(prd_text: str, cfg, spec: dict, log_dir: Path | None = None) -> dic
                     calls[blk.get("id")] = {"name": blk.get("name"), "input": blk.get("input")}
                 elif blk.get("type") == "tool_result" and blk.get("tool_use_id") in calls:
                     calls[blk["tool_use_id"]].update(output=blk.get("content"), is_error=bool(blk.get("is_error")))
-            if isinstance(ev, dict) and ev.get("type") == "result":
-                result = ev
+        result = _last_result(p.stdout)
         if result is None:
             raise ValueError(f"no result from claude (exit {p.returncode}): {p.stderr.strip()[:160]}")
         if result.get("is_error"):
@@ -169,40 +172,33 @@ def discover(prd_text: str, cfg, spec: dict, log_dir: Path | None = None) -> dic
         out["ok"] = True
     except (OSError, ValueError, subprocess.TimeoutExpired) as e:
         out["error"] = (str(e) if isinstance(e, ValueError) else f"{type(e).__name__}: {e}")[:200]
+    finally:
+        if own_dir:
+            shutil.rmtree(log_dir, ignore_errors=True)
     out["tool_calls"] = len(calls)
     out["seconds"] = round(time.monotonic() - t0, 1)
-    observe.llm_call("repo-discovery", model=model, prompt=prompt, output={"services": out["services"]},
-                     cost_usd=out["cost_usd"], usage=usage, seconds=out["seconds"], error=out["error"] or "",
-                     tool_calls=list(calls.values()))
+    if not _traced_by_agent(cfg):
+        observe.llm_call("repo-discovery", model=model, prompt=prompt, output={"services": out["services"]},
+                         cost_usd=out["cost_usd"], usage=usage, seconds=out["seconds"], error=out["error"] or "",
+                         tool_calls=list(calls.values()))
     return out
 
 
-def _on_axon(cfg) -> bool:
+def _on_pi_runtime(cfg) -> bool:
     from ..axon_agent import engine_for
 
-    return engine_for("scope", cfg) == "axon"
+    return engine_for("scope", cfg) in ("axon", "pi")
 
 
-def _axon_agent(prompt: str, model: str, cfg, log_dir: Path | None, *, label: str, use_context: bool,
-                timeout_s: int) -> tuple[str, dict]:
-    """One Scope helper agent on Axon (--engine axon): → (its Claude-shaped stream, the final `result` event).
-    Same prompt, no built-in tools; the discovery agent gets the fleetlens read tools, the summary none."""
-    import tempfile
+def _traced_by_agent(cfg) -> bool:
+    """The helper's own agent trace already carries its cost (Pi runtime, or per-call metrics on), so a
+    separate `llm_call` would bill it twice."""
+    return llm_metrics.enabled(cfg) or _on_pi_runtime(cfg)
 
-    from .. import axon_agent
-    from ..investigate import agent as ag  # late: investigate.agent imports this module
-    from ..investigate.progress import Progress
 
-    in_run = log_dir is not None and log_dir.name == "logs"
-    run_dir = log_dir.parent if in_run else Path(tempfile.mkdtemp(prefix=f"rfc-scope-{label}-"))
-    prog = Progress(run_dir, stage="scope") if in_run else None
-    spec = ag.AgentSpec(label, model, None, (), (), use_context=use_context, timeout_s=timeout_s)
-    res = axon_agent.run(spec, prompt, run_dir, cfg, on_event=prog.tick if prog else None, stage="scope")
-    try:
-        text = Path(res.stream).read_text(encoding="utf-8")
-    except OSError:
-        text = ""
-    result: dict = {}
+def _last_result(text: str) -> dict | None:
+    """The final `result` event of a Claude-shaped stream-json text, if any."""
+    result = None
     for line in text.splitlines():
         try:
             ev = json.loads(line)
@@ -210,24 +206,69 @@ def _axon_agent(prompt: str, model: str, cfg, log_dir: Path | None, *, label: st
             continue
         if isinstance(ev, dict) and ev.get("type") == "result":
             result = ev
+    return result
+
+
+def _scope_progress(log_dir: Path | None):
+    from ..investigate.progress import Progress
+
+    return Progress(log_dir.parent, stage="scope") if log_dir is not None and log_dir.name == "logs" else None
+
+
+def _axon_agent(prompt: str, model: str, cfg, log_dir: Path | None, *, label: str, use_context: bool,
+                timeout_s: int, progress=None) -> tuple[str, dict]:
+    """One Scope helper on Axon or vanilla Pi: → (its Claude-shaped stream, the final `result` event).
+    Same prompt, no built-in tools; the discovery agent gets the fleetlens read tools, the summary none."""
+    from .. import axon_agent
+    from ..investigate import agent as ag  # late: investigate.agent imports this module
+
+    in_run = log_dir is not None and log_dir.name == "logs"
+    run_dir = log_dir.parent if in_run else Path(tempfile.mkdtemp(prefix=f"rfc-scope-{label}-"))
+    prog = progress if progress is not None else _scope_progress(log_dir)
+    spec = ag.AgentSpec(label, model, None, (), (), use_context=use_context, timeout_s=timeout_s)
+    engine = axon_agent.engine_for("scope", cfg)
+    try:
+        res = axon_agent.run(spec, prompt, run_dir, cfg, on_event=prog.tick if prog else None, stage="scope",
+                             engine=engine)
+        try:
+            text = Path(res.stream).read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+    finally:
+        if not in_run:  # a scratch run folder: its MCP config carries the token
+            shutil.rmtree(run_dir, ignore_errors=True)
+    result = _last_result(text)
     if not result:
-        result = {"type": "result", "is_error": True, "result": res.error or "no result from axon"}
+        result = {"type": "result", "is_error": True, "result": res.error or f"no result from {engine}"}
         text += json.dumps(result) + "\n"
     return text, result
 
 
-def _run_live(cmd: list[str], prompt: str, log_dir: Path) -> subprocess.CompletedProcess:
+def _run_live(cmd: list[str], prompt: str, log_dir: Path, *, cfg=None, label="discovery",
+              timeout_s=None, progress=None) -> subprocess.CompletedProcess:
     """Run the discovery agent, writing its stream as it arrives. When log_dir is a run's logs/ folder, the
     agent also gets a card like every later agent (logs/agents/scope.discovery.log, a line in activity.log)."""
     from ..investigate import agent as ag  # late: investigate.agent imports this module
-    from ..investigate.progress import Progress
 
-    stream = log_dir / "scope.discovery.stream.jsonl"
-    prog = Progress(log_dir.parent, stage="scope") if log_dir.name == "logs" else None
-    res = ag.AgentResult(label="discovery", ok=False, stream=str(stream))
+    timeout_s = DISCOVERY_TIMEOUT_S if timeout_s is None else timeout_s
+    stream = log_dir / f"scope.{label}.stream.jsonl"
+    prog = progress if progress is not None else _scope_progress(log_dir)
+    res = ag.AgentResult(label=label, ok=False, stream=str(stream))
     t0 = time.monotonic()
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                            start_new_session=True)
+    model = cmd[cmd.index("--model") + 1]
+    trace = (observe.agent_started("repo-discovery" if label == "discovery" else "prd-summary",
+             stage="scope", step=None, model=model, prompt=prompt) if llm_metrics.enabled(cfg) else None)
+    calls = (llm_metrics.CallRecorder(stream, engine="claude-code", model=model, label=label, stage="scope",
+             trace=trace) if llm_metrics.enabled(cfg) else None)
+    try:
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                start_new_session=True)
+    except BaseException:
+        if calls is not None:
+            calls.finish()
+        if trace is not None:
+            trace.finish(ok=False, error="could not start subprocess")
+        raise
 
     def kill() -> None:  # the whole group: a child holding stdout open would keep the read loop waiting
         try:
@@ -235,7 +276,7 @@ def _run_live(cmd: list[str], prompt: str, log_dir: Path) -> subprocess.Complete
         except (ProcessLookupError, PermissionError):
             proc.kill()
 
-    killer = threading.Timer(DISCOVERY_TIMEOUT_S, kill)
+    killer = threading.Timer(timeout_s, kill)
     killer.start()
     lines: list[str] = []
     try:
@@ -249,20 +290,40 @@ def _run_live(cmd: list[str], prompt: str, log_dir: Path) -> subprocess.Complete
                 f.write(line)
                 f.flush()
                 lines.append(line)
-                ag._consume(line.strip(), res, prog.tick if prog else None, run_dir=log_dir.parent)
+                ag._consume(line.strip(), res, prog.tick if prog else None, trace=trace,
+                            run_dir=log_dir.parent, calls=calls)
         stderr = proc.stderr.read()
         proc.wait()
+    except BaseException:  # progress/export callbacks must not leave the subprocess spending in the background
+        kill()
+        with contextlib.suppress(Exception):
+            proc.wait(timeout=5)
+        raise
     finally:
         timed_out = not killer.is_alive() and proc.returncode not in (0, None)
         killer.cancel()
+        metrics = calls.finish() if calls is not None else {}
+        if timed_out:
+            error = f"timed out after {timeout_s}s"
+        elif proc.returncode:
+            error = f"exit {proc.returncode}"
+        elif res.extra.get("result_is_error"):  # e.g. a usage limit: Claude reports it and exits 0
+            error = res.final_text or "the agent reported an error"
+        else:
+            error = ""
+        if trace is not None:
+            trace.finish(ok=not error, error=error,
+                         model=res.extra.get("model") or model, output=res.final_text,
+                         cost_usd=res.cost_usd, usage=res.extra.get("usage"),
+                         metadata={"engine": "claude-code", "stream": str(stream), "llm_metrics": metrics,
+                                   "seconds": time.monotonic() - t0, "tool_calls": res.tool_calls})
         if prog:
-            prog.tick("discovery", "end", {
-                "ok": proc.returncode == 0 and not timed_out,
-                "error": f"timed out after {DISCOVERY_TIMEOUT_S}s" if timed_out else f"exit {proc.returncode}",
+            prog.tick(label, "end", {
+                "ok": not error, "error": error or f"exit {proc.returncode}",
                 "session_id": res.session_id, "tool_calls": res.tool_calls,
                 "seconds": round(time.monotonic() - t0, 1), "step": "run"})
     if timed_out:
-        raise subprocess.TimeoutExpired(cmd, DISCOVERY_TIMEOUT_S)
+        raise subprocess.TimeoutExpired(cmd, timeout_s)
     return subprocess.CompletedProcess(cmd, proc.returncode, "".join(lines), stderr)
 
 
@@ -296,7 +357,7 @@ PRD:
 """
 
 
-def summarise(prd_text: str, cfg) -> dict:
+def summarise(prd_text: str, cfg, log_dir: Path | None = None, *, progress=None) -> dict:
     """One Haiku call over the whole PRD → {ok, summary, surfaces, cost_usd, seconds, error}."""
     table = surfaces_of(cfg)
     binary = str((cfg.get("AGENT.CLAUDE_BIN") if cfg else None) or "claude")
@@ -311,14 +372,25 @@ def summarise(prd_text: str, cfg) -> dict:
     t0 = time.monotonic()
     usage: dict = {}
     try:
-        if _on_axon(cfg):
-            _, res = _axon_agent(prompt, model, cfg, None, label="summary", use_context=False,
-                                 timeout_s=SUMMARY_TIMEOUT_S)
+        if _on_pi_runtime(cfg):
+            _, res = _axon_agent(prompt, model, cfg, log_dir, label="summary", use_context=False,
+                                 timeout_s=SUMMARY_TIMEOUT_S, progress=progress)
         else:
-            p = subprocess.run([binary, "-p", "--model", model, "--tools", "", "--output-format", "json",
-                                "--setting-sources", "", "--strict-mcp-config"],
-                               input=prompt, capture_output=True, text=True, timeout=SUMMARY_TIMEOUT_S)
-            res = json.loads(p.stdout)
+            own_dir = log_dir is None
+            run_in = log_dir or Path(tempfile.mkdtemp(prefix="rfc-scope-summary-"))
+            run_in.mkdir(parents=True, exist_ok=True)
+            cmd = [binary, "-p", "--model", model, "--tools", "", "--output-format", "stream-json", "--verbose",
+                   *(["--include-partial-messages"] if llm_metrics.enabled(cfg) else []),
+                   "--setting-sources", "", "--strict-mcp-config"]
+            try:
+                p = _run_live(cmd, prompt, run_in, cfg=cfg, label="summary", timeout_s=SUMMARY_TIMEOUT_S,
+                              progress=progress)
+            finally:
+                if own_dir:
+                    shutil.rmtree(run_in, ignore_errors=True)
+            res = _last_result(p.stdout)
+            if res is None:
+                raise ValueError(f"no result from the summary agent (exit {p.returncode})")
         if res.get("is_error"):
             raise ValueError(str(res.get("result") or res.get("subtype") or "claude reported an error"))
         out["cost_usd"] = round(float(res.get("total_cost_usd") or 0), 4)
@@ -335,9 +407,10 @@ def summarise(prd_text: str, cfg) -> dict:
     except (OSError, ValueError, subprocess.TimeoutExpired) as e:
         out["error"] = (str(e) if isinstance(e, ValueError) else f"{type(e).__name__}: {e}")[:200]
     out["seconds"] = round(time.monotonic() - t0, 1)
-    observe.llm_call("prd-summary", model=model, prompt=prompt,
-                     output={"summary": out["summary"], "surfaces": out["surfaces"]}, cost_usd=out["cost_usd"],
-                     usage=usage, seconds=out["seconds"], error=out["error"] or "")
+    if not _traced_by_agent(cfg):
+        observe.llm_call("prd-summary", model=model, prompt=prompt,
+                         output={"summary": out["summary"], "surfaces": out["surfaces"]}, cost_usd=out["cost_usd"],
+                         usage=usage, seconds=out["seconds"], error=out["error"] or "")
     return out
 
 
@@ -389,9 +462,10 @@ def gather(cfg, spec: dict | None, layer_ok: bool, prd_text: str, repos_root: Pa
     exclude = {r.strip() for r in raw.split(",") if r.strip()} - set(named)
     why: dict[str, list[str]] = {r: ["named by you (--repos)"] for r in named}
     order = list(named)
+    progress = _scope_progress(log_dir)  # one owner/lock for both agents' status.json and sessions.json
     with ThreadPoolExecutor(max_workers=2) as pool:
-        f_disc = pool.submit(discover, prd_text, cfg, spec, log_dir) if (spec and layer_ok) else None
-        summ = summarise(prd_text, cfg)
+        f_disc = pool.submit(discover, prd_text, cfg, spec, log_dir, progress=progress) if (spec and layer_ok) else None
+        summ = summarise(prd_text, cfg, log_dir, progress=progress)
         disc = f_disc.result() if f_disc else None
     meta.update(summary=summ["summary"], summary_error=summ["error"], surfaces=summ["surfaces"],
                 discovery=({k: disc[k] for k in ("ok", "services", "error", "tool_calls", "seconds", "cost_usd")}

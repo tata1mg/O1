@@ -123,11 +123,19 @@ def _blob_images(text: str) -> int:
     return len(re.findall(r"!\[[^\]]*\]\(blob:", text))
 
 
+PI_ATLASSIAN_REFUSAL = ("vanilla Pi currently supports local Markdown PRDs only (no Confluence --prd URL, no --jira); "
+                        "use --stage-engine scope=claude-code or scope=axon for Atlassian inputs")
+
+
 def _axon_atlassian(cfg, model: str, run_dir: Path):
     """On Axon (D-22) the PRD comes through Axon's own Atlassian sign-in; None keeps Claude's connector."""
-    if not context._on_axon(cfg):
+    from ..axon_agent import engine_for, gateway_model, settings
+
+    engine = engine_for("scope", cfg)
+    if engine == "pi":
+        raise at.AtlassianError(PI_ATLASSIAN_REFUSAL)
+    if engine != "axon":
         return None
-    from ..axon_agent import gateway_model, settings
     from .atlassian_axon import AxonConnectorSession
 
     ax = settings(cfg)
@@ -215,6 +223,11 @@ def main(argv: list[str] | None = None) -> int:
 
         if pid or jira_key:
             with timer.step("atlassian_connect"):
+                from ..axon_agent import engine_for
+
+                if engine_for("scope", cfg) == "pi":  # before the site check: no site would help here
+                    _say(f"STOP: {PI_ATLASSIAN_REFUSAL}")
+                    return 1
                 _say("starting the Atlassian connector session …")
                 site = cfg.get("ATLASSIAN.SITE")
                 if not site:

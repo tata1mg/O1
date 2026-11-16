@@ -35,6 +35,13 @@ def test_a_small_user_file_gets_every_default(tmp_path):
     assert cfg.get("AGENT.RUN_TIMEOUT") == 2400, "a key the user never wrote comes from the defaults"
 
 
+def test_shipped_default_model_is_sonnet_5_5_with_1m_context(tmp_path, monkeypatch):
+    monkeypatch.delenv("RFC_AGENT_MODEL", raising=False)
+    local = tmp_path / "config.json"
+    local.write_text("{}")
+    assert Config(local=local).get("AGENT.DEFAULT_MODEL") == "claude-sonnet-5-5[1m]"
+
+
 def test_user_values_win_and_dicts_merge_key_by_key(tmp_path):
     user = {"ATLASSIAN": {"SITE": "https://team.atlassian.net"},
             "LANGFUSE": {"HOST": "https://langfuse.team", "SECRET_KEY": "sk"},

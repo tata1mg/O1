@@ -125,6 +125,14 @@ def test_confluence_page_without_a_site_stops_before_any_connector_call(tmp_path
     assert "ATLASSIAN.SITE is not set" in capsys.readouterr().err
 
 
+def test_confluence_page_on_pi_names_the_engine_not_the_site(tmp_path, cfg, capsys, monkeypatch):
+    monkeypatch.setenv("RFC_AGENT_ENGINE", "pi")
+    code = scope_cli.main(["--prd", "5541855972", "--run-dir", str(tmp_path / "run"), "--yes"])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "Confluence --prd URL" in err and "ATLASSIAN.SITE" not in err
+
+
 def test_a_named_repo_that_is_not_on_the_remote_is_dropped_loudly(tmp_path, cfg, prd, capsys):
     root = _repos_root(tmp_path)
     code = scope_cli.main(["--prd", str(prd), "--repos", "svc,ghost", "--repos-root", str(root),

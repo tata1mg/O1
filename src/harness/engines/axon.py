@@ -35,14 +35,13 @@ from .pi import _EXT_DIR, PiEngine, _older, _version_of
 
 RFC_TOOLS_JS = _EXT_DIR / "rfc-tools.js"
 
-# Claude tier -> gateway model (decisions.md D-07, revised 2026-11-05 when the gateway added Claude): the
-# stages' own models where the gateway has them. It has no Haiku, so that tier stays on the cheap Gemini.
+# Claude tier -> gateway model (decisions.md D-07): all three tiers use Claude 5.5 through the gateway.
 DEFAULT_MODELS: dict[str, str] = {
     "opus[1m]": "anthropic/claude-opus-5.5",
     "opus": "anthropic/claude-opus-5.5",
     "sonnet[1m]": "anthropic/claude-sonnet-5.5",
     "sonnet": "anthropic/claude-sonnet-5.5",
-    "haiku": "gemini-3.8-flash",
+    "haiku": "anthropic/claude-haiku-5.5",
 }
 
 # Claude's effort knob -> Pi's thinking level (Pi clamps to what the model supports).
@@ -68,7 +67,7 @@ _f("threshold_compaction", bool, False, "Allow Axon's early (threshold) compacti
 
 
 def model_tier(model: str) -> str | None:
-    """`claude-opus-5-5[1m]` -> `opus[1m]`; `claude-haiku-4-5-20251001` -> `haiku`; non-Claude -> None."""
+    """`claude-opus-5-5[1m]` -> `opus[1m]`; `claude-haiku-5-5` -> `haiku`; non-Claude -> None."""
     m = (model or "").lower()
     if "claude" not in m and not any(t == m.split("[")[0] for t in ("opus", "sonnet", "haiku")):
         return None
