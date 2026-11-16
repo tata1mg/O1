@@ -40,7 +40,10 @@ BROWSER_READ_TOOLS: tuple[str, ...] = (
 BROWSER_ACTION_TOOLS: tuple[str, ...] = (
     "browser_navigate",
     "browser_navigate_back",
+    "browser_reload",
     "browser_click",
+    "browser_check",
+    "browser_uncheck",
     "browser_hover",
     "browser_type",
     "browser_fill_form",

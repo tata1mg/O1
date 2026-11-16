@@ -30,9 +30,10 @@ if __package__ in (None, ""):  # run as a script: make `workflows.testing` impor
 GENERATE_STAGES = ("sources", "generate_cases", "render_xlsx", "store_cases", "prerequisites")
 #: Runs on demand (`/test-agent:evaluate`); never blocks or resumes generation, review or execution.
 EVALUATE_STAGE = "evaluate"
-EXECUTE_STAGES = ("derive_spec", "execute_be", "derive_ui", "execute_web", "publish_app")
+EXECUTE_STAGES = ("derive_spec", "execute_be", "derive_ui", "execute_web", "execute_ui_agent", "publish_app")
 #: Where each executor writes its results, by kind.
-RESULTS = {"backend": "qa/results.json", "web": "qa/ui/results.json", "app": "qa/app/results.json"}
+RESULTS = {"backend": "qa/results.json", "web": "qa/ui/results.json", "app": "qa/app/results.json",
+           "agent": "qa/agent/results.json"}
 
 
 def _load(path: Path, default=None):
@@ -126,9 +127,14 @@ def results_summary(run_dir: Path, rel: str = RESULTS["backend"]) -> dict | None
     res = _load(run_dir / rel)
     if not isinstance(res, dict):
         return None
-    failing = [{"extid": r.get("extid"), "status": r.get("status"), "detail": str(r.get("detail", ""))[:160]}
+    # an agent's row carries `summary` (its one-line breakdown) where a script's carries `detail`
+    failing = [{"extid": r.get("extid"), "status": r.get("status"),
+                "detail": str(r.get("detail") or r.get("summary") or "")[:160]}
                for r in res.get("results") or [] if r.get("status") != "PASS"]
     return {"tally": res.get("tally") or {}, "run_url": res.get("run_url"), "html_report": res.get("html_report"),
+            # execute_ui_agent only: how close the cases came, and the ones with nothing to judge against
+            "parts_met": res.get("parts_met"), "parts": res.get("parts"),
+            "not_executed": [r.get("extid") for r in res.get("not_executed") or []],
             "skipped_unconfirmed": len(res.get("skipped_unconfirmed") or []),
             "skipped_wrong_execution": len(res.get("skipped_wrong_execution") or []),
             "not_passing": failing[:20]}
@@ -278,6 +284,7 @@ def report(run_dir: Path, *, kiwi: bool = False) -> dict:
         "results": results_summary(run_dir),
         "results_web": results_summary(run_dir, RESULTS["web"]),
         "results_app": results_summary(run_dir, RESULTS["app"]),
+        "results_agent": results_summary(run_dir, RESULTS["agent"]),
         "ui_plan": ui_plan_summary(run_dir),
         "xlsx": next((str(p) for p in sorted((run_dir / "qa").glob("*.xlsx"))), None),
         "cost_usd": round(sum(r["cost_usd"] or 0 for r in st.values()), 2),
@@ -335,6 +342,12 @@ def milestone(run_dir: Path, stage: str) -> str:
         r = results_summary(run_dir, RESULTS[kind]) or {}
         tally = " · ".join(f"{v} {k}" for k, v in sorted((r.get("tally") or {}).items()))
         return f"{stage}: {tally or 'nothing ran'} · {r.get('run_url') or ''}{took}"
+    if stage == "execute_ui_agent":
+        r = results_summary(run_dir, RESULTS["agent"]) or {}
+        tally = " · ".join(f"{v} {k}" for k, v in sorted((r.get("tally") or {}).items()))
+        parts = f" · {r['parts_met']} of {r['parts']} parts met" if r.get("parts") else ""
+        idle = f" · {len(r['not_executed'])} not executed (no expected result)" if r.get("not_executed") else ""
+        return f"execute_ui_agent: {tally or 'nothing ran'}{parts}{idle} · {r.get('run_url') or ''}{took}"
     if stage == "derive_ui":
         p = ui_plan_summary(run_dir) or {"tests": 0, "skipped": []}
         return (f"derive_ui: {p['tests']} Playwright tests written, {len(p['skipped'])} cases left for a person"

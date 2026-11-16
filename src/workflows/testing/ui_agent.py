@@ -206,7 +206,12 @@ def _evidence_problem(evidence: str, folder: Path) -> str:
         return "is missing — save a screenshot or snapshot when you observe it and name the file"
     path = (folder / evidence).resolve()
     if not path.is_relative_to(folder.resolve()):
-        return f"{evidence!r} is outside the case's folder"
+        # named by its path from the run dir (qa/agent/<id>/shot.png) rather than by its bare name
+        path = folder.resolve() / Path(evidence).name
+        if Path(evidence).is_absolute() or ".." in Path(evidence).parts or not path.is_file():
+            return f"{evidence!r} is outside the case's folder"
+    elif not path.is_file():
+        path = folder.resolve() / Path(evidence).name
     if not path.is_file() or not path.stat().st_size:
         return f"{evidence!r} does not exist in {folder.name}/ (or is empty)"
     return ""
@@ -220,15 +225,47 @@ RUNNER_DIR = Path(__file__).resolve().parents[3] / "tools" / "ui-runner"
 MCP_CLI = RUNNER_DIR / "node_modules" / "@playwright" / "mcp" / "cli.js"
 
 
-def browser_problem() -> str:
-    """Why the browser server cannot be started, or "" when it can."""
+def browser_problem(browser: str = "") -> str:
+    """Why the browser server cannot be started, or "" when it can.
+
+    `browser` is `testing.agent_browser`. Empty means the server's bundled Chromium, and that build is
+    its OWN: @playwright/mcp carries a newer Playwright than the runner's, so `npx playwright install` in
+    tools/ui-runner installs a different revision. Checked here because the alternative is a paid session
+    per case that each discover the browser will not start.
+    """
+    import json
+    import os
     import shutil
+    import sys
 
     if not shutil.which("node"):
         return "node is not installed (Playwright MCP needs Node 18+)"
     if not MCP_CLI.is_file():
         return f"Playwright MCP is not installed: run `npm ci` in {RUNNER_DIR}"
-    return ""
+    if browser:
+        return ""
+    nested = MCP_CLI.parent / "node_modules"
+    try:
+        listed = json.loads((nested / "playwright-core" / "browsers.json").read_text())["browsers"]
+        revision = next(b["revision"] for b in listed if b["name"] == "chromium")
+    except (OSError, ValueError, KeyError, StopIteration):
+        return ""  # a package layout we do not recognise: let the server speak for itself
+    cache = os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or (
+        "~/Library/Caches/ms-playwright" if sys.platform == "darwin" else "~/.cache/ms-playwright")
+    if (Path(cache).expanduser() / f"chromium-{revision}").is_dir():
+        return ""
+    return (f"Playwright MCP needs Chromium build {revision}, which is not installed. Either run "
+            f"`node {nested / 'playwright' / 'cli.js'} install chromium`, or use an installed browser with "
+            f"--set testing.agent_browser=chrome.")
+
+
+_RE_SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,120}")
+
+
+def safe_id(extid: str) -> bool:
+    """Whether a case id can name the case's folder and log label. Ids this workflow writes always can; one
+    read from a hand-written Kiwi tag is free text, and `..` or a slash there would point outside."""
+    return bool(_RE_SAFE_ID.fullmatch(extid or "")) and ".." not in extid
 
 
 def browser_server(folder: Path, *, storage_state: str = "", device: str = "", headed: bool = False,
@@ -274,8 +311,8 @@ def host_problem(base_url: str, *, hosts: str = "", environments: str = "", temp
     if host and host in allowed:
         return ""
     return (f"execute_ui_agent drives a real browser as a real user, and {host or base_url!r} is not a named "
-            f"test environment. Add the host to testing.agent_hosts (never production), or use --env with "
-            f"testing.environments + testing.base_url_template.")
+            f"test environment. Name it: pass --hosts {host or '<host>'} to `execute ui-agent` (or set "
+            f"testing.agent_hosts), or add the environment to testing.environments. Never production.")
 
 
 def browser_calls(tool_calls: list[dict]) -> int:

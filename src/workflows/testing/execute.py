@@ -101,7 +101,7 @@ def bootstrap_run(root: Path, feature: str, plan_id: str = "", today: date | Non
 
 def command(kind: str, run_dir: Path, *, env: str = "", build: str = "", headed: bool = False,
             cases: str = "", curl: str = "", flags=None, only_existing: bool = False,
-            engine: str = "") -> list[str]:
+            engine: str = "", base_url: str = "", ui_auth: str = "", hosts: str = "") -> list[str]:
     """The harness command line for one kind, or SystemExit naming what is missing."""
     stages, enable, results = KINDS[kind]
     if kind == "web" and only_existing:
@@ -146,6 +146,15 @@ def command(kind: str, run_dir: Path, *, env: str = "", build: str = "", headed:
         cmd += ["--set", f"testing.cases={cases}"]
     if engine:  # the agents' engine (derive_spec, derive_ui); `/test` inside Axon passes axon
         cmd += ["--engine", engine]
+    # Where the browser goes and how it is logged in, for the two browser kinds. Without these the values
+    # come from config (testing.base_url_template + --env, testing.ui_auth, testing.agent_hosts).
+    if kind in ("web", "ui-agent"):
+        if base_url:
+            cmd += ["--base-url", base_url]
+        if ui_auth:
+            cmd += ["--ui-auth", str(Path(ui_auth).expanduser())]
+    if kind == "ui-agent" and hosts:
+        cmd += ["--set", f"testing.agent_hosts={hosts}"]
     return cmd
 
 
@@ -228,6 +237,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--headed", action="store_true")
     ap.add_argument("--cases", default="", help="comma-separated case ids (backend: narrows derive_spec)")
     ap.add_argument("--curl", default="")
+    ap.add_argument("--base-url", default="", help="web / ui-agent: the web app's origin on the environment")
+    ap.add_argument("--ui-auth", default="",
+                    help="web / ui-agent: a Playwright storage-state file with a logged-in session")
+    ap.add_argument("--hosts", default="",
+                    help="ui-agent: hosts the agent may drive, comma-separated (testing.agent_hosts); never "
+                         "production")
     ap.add_argument("--engine", default="", help="engine for the agent stages (default: the harness's)")
     ap.add_argument("--feature", help="run a Kiwi plan with no earlier run: the run folder is created (or reused) "
                                       "for this feature")
@@ -260,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
     for kind in (ALL_KINDS if args.kind == "all" else (args.kind,)):
         cmd = command(kind, run_dir, env=args.env, build=args.build, headed=args.headed, cases=args.cases,
                       curl=args.curl, flags=flags, only_existing=args.only_existing,
-                      engine=args.engine)
+                      engine=args.engine, base_url=args.base_url, ui_auth=args.ui_auth, hosts=args.hosts)
         print(" ".join(shlex.quote(c) for c in cmd), flush=True)
         if not args.print_only:
             log = run_dir / "logs" / f"run.{kind}.out"  # one log per launch, as /test-agent:test writes them

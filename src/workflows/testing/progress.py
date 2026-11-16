@@ -48,6 +48,7 @@ DEFAULT_PHASE = {
     "evaluate": "starting", "store_cases": "uploading to Kiwi", "prerequisites": "starting",
     "derive_spec": "deriving the request spec", "execute_be": "sending the requests",
     "derive_ui": "starting", "execute_web": "running the browser tests", "publish_app": "recording the Maestro run",
+    "execute_ui_agent": "agents are working through the cases in browsers",
 }
 #: Silence after which a model stage is reported as thinking: it logs a 💭 line only once a thought ENDS.
 QUIET_S = 90
@@ -186,6 +187,10 @@ class Tracker:
         if cur.stage == "generate_cases" and cur.phase == "writing scenarios":
             n = count_ids(self.run_dir / "qa/scenarios.json", "TS-")
             return f"{n} scenarios so far" if n else ""
+        if cur.stage == "execute_ui_agent":
+            done = [p for p in (self.run_dir / "qa/agent").glob("*/verdict.json")
+                    if not p.parent.name.endswith(".confirm")]
+            return f"{len(done)} verdicts so far" if done else ""
         if cur.stage == "derive_ui" and cur.phase == "writing Playwright tests":
             n = len(list((self.run_dir / "qa/ui/tests").glob("TC-*.spec.ts")))
             return f"{n} so far" if n else ""

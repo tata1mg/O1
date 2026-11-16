@@ -130,3 +130,15 @@ def test_pending_for_ui_agent_reports_errors_not_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(execute, "resolved_flags", lambda cfg=None: SimpleNamespace(get=lambda n, d=None: d))
     monkeypatch.setattr(preflight, "store_for", boom)
     assert execute.pending_agent(execute.bootstrap_run(tmp_path, "F-9"))["error"] == "RuntimeError: no kiwi"
+
+
+def test_the_browser_settings_can_be_given_on_the_command_line(tmp_path):
+    """Dry run, 2026-11-16: `execute ui-agent` had no way to name the host, the address or the session."""
+    from workflows.testing import execute
+
+    run = execute.bootstrap_run(tmp_path, "DRY-1")
+    cmd = execute.command("ui-agent", run, env="prestag", build="b1", base_url="https://web.test",
+                          ui_auth=str(tmp_path / "state.json"), hosts="web.test")
+    joined = " ".join(cmd)
+    assert "--base-url https://web.test" in joined and f"--ui-auth {tmp_path / 'state.json'}" in joined
+    assert "--set testing.agent_hosts=web.test" in joined

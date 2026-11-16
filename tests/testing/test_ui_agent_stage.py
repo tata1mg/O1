@@ -67,7 +67,7 @@ class AgentEngine:
             if isinstance(step, list):
                 step = step.pop(0) if step else None
             if callable(step):
-                step(folder)
+                step(folder, req)
             elif step is not None:
                 (folder / "a.png").write_bytes(b"png")
                 (folder / ui_agent.VERDICT).write_text(json.dumps(step))
@@ -88,7 +88,7 @@ def case(extid: str, expected: str = "The listing opens.") -> Case:
 @pytest.fixture
 def agent_ctx(tmp_path, ctx_factory, monkeypatch):
     """A run that may drive https://web.test, with the browser server taken as installed."""
-    monkeypatch.setattr(ui_agent, "browser_problem", lambda: "")
+    monkeypatch.setattr(ui_agent, "browser_problem", lambda browser="": "")
     return ctx_factory(tmp_path / "run", flags={"testing.agent_hosts": "web.test"},
                        inputs={"feature": "RSE-1", "env": "prestag", "build": "b1",
                                "base_url": "https://web.test"})
@@ -183,7 +183,7 @@ def test_what_one_batch_learns_reaches_the_next(agent_ctx, monkeypatch):
     agent_ctx.flags._v["testing.agent_parallel"] = 1
     given(monkeypatch, case(WEB), case(WEB2))
 
-    def learns(folder: Path) -> None:
+    def learns(folder: Path, req) -> None:
         (folder / "a.png").write_bytes(b"png")
         (folder / ui_agent.VERDICT).write_text(json.dumps(passing(WEB)))
         (folder / ui_agent.NOTES).write_text("- a city picker appears first; choose Gurgaon\n")
@@ -207,7 +207,10 @@ def test_no_verdict_is_the_harnesss_error_never_a_fail(agent_ctx, monkeypatch):
 
 def test_running_out_of_actions_is_blocked(agent_ctx, monkeypatch):
     given(monkeypatch, case(WEB))
-    res = run(agent_ctx, AgentEngine({WEB: lambda folder: (folder / ".actions").write_text("40")}))
+    def spends(folder: Path, req) -> None:      # what the browser guard's counter would hold by then
+        Path(req.env[guard_browser.COUNT_FILE_ENV]).write_text("40")
+
+    res = run(agent_ctx, AgentEngine({WEB: spends}))
     row = by_id(res)[WEB]
     assert row["status"] == "BLOCKED" and row["blocked_on"] == "limit" and "40 actions" in row["reason"]
     assert STAGE.gate(agent_ctx) == []
@@ -216,7 +219,7 @@ def test_running_out_of_actions_is_blocked(agent_ctx, monkeypatch):
 def test_a_verdict_without_its_evidence_is_rejected_and_kept(agent_ctx, monkeypatch):
     given(monkeypatch, case(WEB))
 
-    def claims(folder: Path) -> None:
+    def claims(folder: Path, req) -> None:
         (folder / ui_agent.VERDICT).write_text(json.dumps(passing(WEB)))     # names a.png, saves none
 
     res = run(agent_ctx, AgentEngine({WEB: claims}))
@@ -233,7 +236,7 @@ def test_a_verdict_the_session_did_not_work_for_is_rejected(agent_ctx, monkeypat
 def test_a_session_that_dies_costs_only_its_own_case(agent_ctx, monkeypatch):
     given(monkeypatch, case(WEB), case(WEB2))
 
-    def dies(folder: Path) -> None:
+    def dies(folder: Path, req) -> None:
         raise RuntimeError("connection dropped")
 
     res = run(agent_ctx, AgentEngine({WEB: dies, WEB2: passing(WEB2)}))
@@ -287,7 +290,6 @@ def test_nothing_confirmed_calls_no_agent(agent_ctx, monkeypatch):
     ({"inputs": {"base_url": ""}}, "needs --base-url"),
     ({"inputs": {"build": ""}}, "needs --env and --build"),
     ({"inputs": {"ui_auth": "/no/such/state.json"}}, "does not exist"),
-    ({"inputs": {"ui_login": "/some/login.json"}}, "recorded session only"),
 ])
 def test_the_stage_refuses_before_any_browser_starts(agent_ctx, monkeypatch, change, match):
     agent_ctx.flags._v.update(change.get("flags", {}))
@@ -298,6 +300,87 @@ def test_the_stage_refuses_before_any_browser_starts(agent_ctx, monkeypatch, cha
     with pytest.raises(EngineFailure, match=match):
         STAGE.engine(STAGE, agent_ctx)
     assert engine.requests == []
+
+
+def test_the_stage_refuses_an_engine_without_the_browser_guard(agent_ctx, monkeypatch):
+    given(monkeypatch, case(WEB))
+    engine = AgentEngine({WEB: passing(WEB)})
+    engine.name = "axon"
+    agent_ctx.engine = engine
+    with pytest.raises(EngineFailure, match="claude-code engine only"):
+        STAGE.engine(STAGE, agent_ctx)
+    assert engine.requests == []
+
+
+def test_a_missing_browser_build_is_named_before_any_session(agent_ctx, monkeypatch):
+    monkeypatch.setattr(ui_agent, "browser_problem", lambda browser="": "" if browser else "needs Chromium build 1")
+    given(monkeypatch, case(WEB))
+    engine = AgentEngine({WEB: passing(WEB)})
+    agent_ctx.engine = engine
+    with pytest.raises(EngineFailure, match="needs Chromium build"):
+        STAGE.engine(STAGE, agent_ctx)
+    agent_ctx.flags._v["testing.agent_browser"] = "chrome"
+    assert by_id(run(agent_ctx, engine))[WEB]["status"] == "PASS"
+
+
+def test_a_login_file_is_ignored_and_the_cases_run_logged_out(agent_ctx, monkeypatch):
+    agent_ctx.inputs["ui_login"] = "/some/login.json"
+    given(monkeypatch, case(WEB))
+    engine = AgentEngine({WEB: passing(WEB)})
+    run(agent_ctx, engine)
+    assert "NOT logged in" in engine.requests[0].prompt and "/some/login.json" not in engine.requests[0].prompt
+
+
+def test_a_visible_browser_runs_one_case_at_a_time(agent_ctx, monkeypatch):
+    agent_ctx.flags._v["testing.ui_headed"] = True
+    ids = [f"TC-X-{i:02d}" for i in range(4)]
+    given(monkeypatch, *[case(e) for e in ids])
+    engine = AgentEngine({e: passing(e) for e in ids}, sleep=0.02)
+    run(agent_ctx, engine)
+    assert engine.peak == 1 and len(engine.requests) == 4
+
+
+def test_a_case_id_that_cannot_name_a_folder_is_not_executed(agent_ctx, monkeypatch):
+    given(monkeypatch, case(WEB), case(".."), case("a/b"))
+    engine = AgentEngine({WEB: passing(WEB)})
+    res = run(agent_ctx, engine)
+    assert len(engine.requests) == 1 and sorted(r["extid"] for r in res["not_executed"]) == ["..", "a/b"]
+    assert agent_ctx.path("qa").is_dir() and STAGE.gate(agent_ctx) == []
+
+
+def test_the_agent_cannot_reach_its_own_action_counter(agent_ctx, monkeypatch):
+    given(monkeypatch, case(WEB))
+    engine = AgentEngine({WEB: passing(WEB)})
+    run(agent_ctx, engine)
+    count = Path(engine.requests[0].env[guard_browser.COUNT_FILE_ENV]).resolve()
+    assert not count.is_relative_to(agent_ctx.run_dir.resolve())
+
+
+def test_last_runs_notes_do_not_reach_this_run(agent_ctx, monkeypatch):
+    stale = agent_ctx.path(stage_mod.NOTES_OUT)
+    stale.parent.mkdir(parents=True)
+    stale.write_text("- from another build: ignore the city picker\n")
+    given(monkeypatch, case(WEB))
+    engine = AgentEngine({WEB: passing(WEB)})
+    run(agent_ctx, engine)
+    assert "another build" not in engine.requests[0].prompt
+
+
+def test_evidence_named_by_its_run_dir_path_is_found(tmp_path):
+    folder = ui_agent.case_dir(tmp_path, WEB)
+    folder.mkdir(parents=True)
+    (folder / "a.png").write_bytes(b"png")
+    v = passing(WEB)
+    v["parts"][0]["expected"][0]["evidence"] = f"{ui_agent.AGENT_DIR}/{WEB}/a.png"
+    assert ui_agent.validate_verdict(v, WEB, folder) == []
+
+
+def test_the_screenshot_path_in_the_prompt_is_inside_the_case_folder(agent_ctx, monkeypatch):
+    given(monkeypatch, case(WEB))
+    engine = AgentEngine({WEB: passing(WEB)})
+    run(agent_ctx, engine)
+    assert f"`{ui_agent.AGENT_DIR}/{WEB}/a-listing.png`" in engine.requests[0].prompt
+    assert "one browser call per message" in engine.requests[0].prompt
 
 
 def test_an_environment_named_in_config_is_a_test_environment():

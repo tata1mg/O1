@@ -147,8 +147,8 @@ NAMES = (
        "execute_web: the web base URL for an environment, with {env} (e.g. https://{env}.1mg.com). Used when "
        "--base-url is not given."),
     _f("ui_headed", bool, False,
-       "execute_web: run the browser visibly, one test at a time, so a person can watch the suite. Off for "
-       "unattended runs."),
+       "execute_web / execute_ui_agent: run the browser visibly, one test (or case) at a time, so a person "
+       "can watch. Off for unattended runs."),
     _f("ui_login", str, "",
        "execute_web: a JSON file {\"phone\", \"otp\"} for a test account whose number and OTP stay fixed "
        "on the environment (--ui-login). derive_ui writes a login step that runs before every test run, so "

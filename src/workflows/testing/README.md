@@ -51,6 +51,7 @@ pipeline left out).
 | `execute_be` | python | `qa/spec.json` | `qa/results.json` | every row carries extid/status/detail/http_status/duration_s; status in PASS/FAIL/BLOCKED/ERROR; the tally matches the rows |
 | `derive_ui` | python + model (`skills/qa-ui-playwright`) | `qa/sources.json` | `qa/ui/cases.json`, `qa/ui/roots.json`, `qa/ui/settings.json`, `qa/ui/plan.json`, `qa/ui/tests/*.spec.ts` (+ `login.setup.ts` with `--ui-login`) | every CONFIRMED web UI case tested or skipped with a reason (never both); one test per spec, titled with its case id; no absolute URL, credential literal, fixed sleep or undeclared `page.route` in a spec; every locator cites a file:line that exists in the source snapshot; `playwright test --list` loads exactly the tested ids. No CONFIRMED web case = no model call. `retry_on_gate_failure=1`, `revise_on_retry=True` |
 | `execute_web` | python | `qa/ui/plan.json` | `qa/ui/results.json` | as `execute_be`'s: every row complete, status in the four, tally matches |
+| `execute_ui_agent` | python + one model session per case (`skills/qa-ui-agent`) | — | `qa/agent/results.json`, `qa/agent/<extid>/verdict.json` + screenshots, `qa/agent/notes.md` | every result row's status is PASS/FAIL/BLOCKED/ERROR and matches its `verdict.json`; the tally matches; not every case ERROR. Each verdict is checked before it counts: every clause met / not met / not reached, evidence files exist, status recomputed from the parts, and at least as many browser calls in the session's trace as parts judged |
 | `publish_app` | python | — | `qa/app/results.json` | at least one case recorded; status in the four; tally matches |
 
 Decisions recorded (`logs/decisions.jsonl`): `source_missing`, `xlsx_skipped`,
@@ -199,6 +200,42 @@ cases have a test and which do not; the chat command uses it to offer that choic
 command without running it. The backend curl's path can be stored once with
 `preflight setup-web --curl <file>`.
 
+### An agent in a browser instead of a script: `ui-agent`
+
+`/test-agent:execute ui-agent` (stage `execute_ui_agent`, flag `testing.execute_ui_agent`) is the alternative
+to `derive_ui -> execute_web`. Nothing is derived: one agent per CONFIRMED web UI case reads the case, looks
+at the live page through Playwright MCP, acts, looks again, finds another route when the written one does
+not work, and writes `qa/agent/<extid>/verdict.json` with a screenshot for every clause it judged.
+
+- **Verdicts.** A case is split into parts; each clause of a part's expected result is `met`, `not met` or
+  `not reached`. Any clause not met = FAIL; otherwise any not reached = BLOCKED; otherwise PASS. There is no
+  partial pass — how close a case came is reported beside the status (`2 of 3 parts met`). FAIL and BLOCKED
+  carry a cause: `product`, `environment`, `case` or `test data`. A FAIL is run a second time in a fresh
+  browser (`testing.agent_confirm_fail`); it stays FAIL either way and is marked flaky when it did not
+  repeat. ERROR means no usable verdict came back. A case with no expected result is not executed.
+- **Batches.** `testing.agent_parallel` cases at a time (5), one browser each; one at a time with
+  `--headed`. What a batch learns about the environment (`qa/agent/notes.md`, this run's only) is given to
+  the next. Each batch is recorded in the store as it finishes.
+- **Limits.** `testing.agent_max_actions` browser actions (40; looking at the page is free), enforced by
+  the browser guard, and `testing.agent_case_timeout_s` (480).
+- **Containment.** This is the one stage whose MCP tools act. Only the tools in
+  `rfc_agent.mcp_tools.BROWSER_*` are granted (no script evaluation, upload, cookie or route tools);
+  `rfc_agent/hooks/guard_browser.py` refuses a navigation off the run's base address; the base address must
+  be a named test environment (`testing.agent_hosts`, or `testing.base_url_template` with an environment
+  from `testing.environments`; `execute ui-agent --hosts <host>` passes it); and the agent is never given a
+  credential — login is a recorded session (`--ui-auth`), `testing.ui_login` is ignored, and without a
+  session the cases run logged out. Claude Code engine only: the guard is a Claude Code hook. The guard cannot see where a click leads, so none of this
+  makes the stage safe to point at production.
+- **Needs.** `npm ci` in `tools/ui-runner` (pins `@playwright/mcp`), and either that package's own Chromium
+  build (`node tools/ui-runner/node_modules/@playwright/mcp/node_modules/playwright/cli.js install chromium`
+  — not the runner's `npx playwright install`, which installs another revision) or
+  `testing.agent_browser=chrome`. The stage checks this before any session starts.
+- **Straight from Kiwi.** `execute ui-agent --feature <F> [--kiwi-plan <id>]` needs no earlier run: it
+  creates the run folder and reads the plan as it is (`testing.kiwi_direct`): a CONFIRMED case with no
+  `extid:` tag is `KIWI-<case id>`, and one with no `exec:` tag is treated as a UI case. Without the
+  generated prerequisites a case must state its own preconditions, or it ends BLOCKED (`test data`).
+- **Cost.** A model session per case on every run, where a script is written once. Not yet measured.
+
 ### Evidence and Kiwi's upload limit
 
 Failure screenshots are uploaded as JPEG at 720 px wide (Pillow, else macOS `sips`): a 918 KB PNG becomes
@@ -257,6 +294,17 @@ drops `derive_spec` and `execute_be`, since both read from the store. The harnes
 | `testing.execute` | bool | `False` | Run `execute_be` |
 | `testing.execute_web` | bool | `False` | Run `derive_ui` and `execute_web` (Playwright, web UI cases) |
 | `testing.publish_app` | bool | `False` | Run `publish_app` (a Maestro report, app UI cases) |
+| `testing.execute_ui_agent` | bool | `False` | Run `execute_ui_agent` (an agent drives a browser through each web UI case) |
+| `testing.agent_hosts` | str | `""` | `execute_ui_agent`: hosts the agent may drive, comma-separated; never production |
+| `testing.agent_parallel` | int | `5` | `execute_ui_agent`: cases per batch, one browser each |
+| `testing.agent_max_actions` | int | `40` | `execute_ui_agent`: browser actions per case |
+| `testing.agent_case_timeout_s` | int | `480` | `execute_ui_agent`: wall time per case |
+| `testing.agent_confirm_fail` | bool | `True` | `execute_ui_agent`: re-run a FAIL once in a fresh browser |
+| `testing.agent_include_manual` | bool | `False` | `execute_ui_agent`: also take CONFIRMED web cases tagged `exec:manual` |
+| `testing.agent_code_context` | bool | `False` | `execute_ui_agent`: give the agent read-only code lookup (fleetlens), for finding a route only |
+| `testing.agent_browser` | str | `""` | `execute_ui_agent`: browser or channel for Playwright MCP; empty = its bundled Chromium |
+| `testing.kiwi_plan_id` | str | `""` | Read cases from, and record into, this Kiwi plan by id (`--kiwi-plan`) |
+| `testing.kiwi_direct` | bool | `False` | Run a Kiwi plan this workflow did not upload; set by `execute --feature … --kiwi-plan …` |
 | `testing.xlsx` | bool | `True` | Render the workbook (needs the optional extra) |
 | `testing.require_case_per_scenario` | bool | `True` | Gate every scenario to at least one case |
 | `testing.dry_run` | bool | `False` | Execute but write nothing to the store |
