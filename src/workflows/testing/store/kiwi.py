@@ -144,12 +144,17 @@ class KiwiCaseStore:
                  web: str = "https://localhost:8443", insecure: bool = True,
                  product_prefix: str = "Diagno / ",
                  plan_template: str = "{feature} — imported test cases",
-                 run_template: str = "{feature} · {env} · {build}", rpc=None) -> None:
+                 run_template: str = "{feature} · {env} · {build}", rpc=None,
+                 plan_id: str = "", direct: bool = False) -> None:
         self.url, self.user, self.password, self.web = url, user, password, web
         self.insecure = insecure
         self.product_prefix = product_prefix
         self.plan_template = plan_template
         self.run_template = run_template
+        #: a plan this workflow did not create, by id; "" = the plan named by `plan_template`
+        self.plan_id = str(plan_id or "")
+        #: a Kiwi plan someone else wrote: cases need no `extid:`/`exec:`/`surface:` tags (see `_identity`)
+        self.direct = direct
         self._rpc_obj = rpc  # injectable for tests; None -> connect on first use
         #: whether `_apply_context` managed to attach our SSLContext to the transport. False with
         #: `insecure=True` means the connection relied on the narrowly-scoped default swap instead.
@@ -239,6 +244,41 @@ class KiwiCaseStore:
         if any_plan:
             return any_plan[0]  # a plan created under a different template still holds the cases
         raise RuntimeError(f"kiwi: no test plan for product {product['name']!r}")
+
+    def _product_and_plan(self, rpc, feature: str) -> tuple[dict, dict]:
+        """(product, plan) for the feature — the one place both are resolved.
+
+        WHY by id when `plan_id` is set: a plan someone else built lives under whatever product they chose,
+        so the name rule in `_product` would miss it. The plan then names its own product (`product` is the
+        product's id) and the name lookups are not made at all.
+        """
+        if not self.plan_id:
+            product = self._product(rpc, feature)
+            return product, self._plan(rpc, product, feature)
+        plans = rpc.TestPlan.filter({"id": int(self.plan_id)})
+        if not plans:
+            raise RuntimeError(f"kiwi: no test plan with id {self.plan_id}")
+        plan = plans[0]
+        products = rpc.Product.filter({"id": plan["product"]})
+        if not products:
+            raise RuntimeError(f"kiwi: test plan {self.plan_id} names product {plan['product']}, which does not exist")
+        return products[0], plan
+
+    def _identity(self, case_id, tags) -> tuple[str | None, tuple[str, ...]]:
+        """(extid, effective tags) of one Kiwi case — the only place either is read from a case.
+
+        The extid is the `extid:` tag's value. With `direct` a case without one is `KIWI-<case id>`; without
+        `direct` it has none and callers skip it, as they always did. With `direct` the tags also get the
+        defaults a hand-written case lacks: `exec:ui` when it has no `exec:` tag at all, `surface:web` when it
+        has no `surface:` tag at all — never over a tag the case does carry, so an `exec:http` case stays http.
+        """
+        tags = tuple(tags)
+        extid = next((t.split(":", 1)[1] for t in tags if t.startswith("extid:")), None)
+        if not self.direct:
+            return extid, tags
+        extra = [t for prefix, t in (("exec:", "exec:ui"), ("surface:", "surface:web"))
+                 if not any(x.startswith(prefix) for x in tags)]
+        return extid or f"KIWI-{case_id}", (*tags, *extra)
 
     # ---- CaseStore --------------------------------------------------------------------------------
     def upsert_cases(self, feature: str, cases: list[dict]) -> dict:
@@ -393,16 +433,14 @@ class KiwiCaseStore:
     def list_cases(self, feature: str, *, status: str | None = None,
                    tags: tuple[str, ...] = ()) -> list[Case]:
         rpc = self._rpc()
-        product = self._product(rpc, feature)
-        plan = self._plan(rpc, product, feature)
+        _, plan = self._product_and_plan(rpc, feature)
         out: list[Case] = []
         for case in rpc.TestCase.filter({"plan": plan["id"]}):
-            case_tags_ = tuple(t["name"] for t in rpc.Tag.filter({"case": case["id"]}))
+            extid, case_tags_ = self._identity(case["id"], (t["name"] for t in rpc.Tag.filter({"case": case["id"]})))
             if status is not None and case["case_status__name"] != status:
                 continue
             if any(t not in case_tags_ for t in tags):
                 continue
-            extid = next((t.split(":", 1)[1] for t in case_tags_ if t.startswith("extid:")), None)
             if not extid:
                 continue
             # unescaped: derive_spec parses this text, and `Assert body.x == "ok"` must not arrive as
@@ -415,8 +453,7 @@ class KiwiCaseStore:
     def create_run(self, feature: str, build: str, env: str, extids: list[str] | None = None,
                    require_tag: str | None = None) -> Run:
         rpc = self._rpc()
-        product = self._product(rpc, feature)
-        plan = self._plan(rpc, product, feature)
+        product, plan = self._product_and_plan(rpc, feature)
 
         versions = rpc.Version.filter({"product": product["id"]})
         if not versions:
@@ -443,8 +480,8 @@ class KiwiCaseStore:
 
         attached, skipped, untagged = [], [], []
         for case in rpc.TestCase.filter({"plan": plan["id"]}):
-            case_tags_ = [t["name"] for t in rpc.Tag.filter({"case": case["id"]})]
-            extid = next((t.split(":", 1)[1] for t in case_tags_ if t.startswith("extid:")), None)
+            extid, case_tags_ = self._identity(case["id"], (t["name"] for t in rpc.Tag.filter({"case": case["id"]})))
+            case_tags_ = list(case_tags_)
             if extids is not None and extid not in extids:
                 continue
             if case["case_status__name"] != "CONFIRMED":
@@ -476,7 +513,7 @@ class KiwiCaseStore:
 
         target = None
         for ex in rpc.TestExecution.filter({"run": int(run_id)}):
-            if f"extid:{extid}" in [t["name"] for t in rpc.Tag.filter({"case": ex["case"]})]:
+            if self._identity(ex["case"], (t["name"] for t in rpc.Tag.filter({"case": ex["case"]})))[0] == extid:
                 target = ex
                 break
         if target is None:

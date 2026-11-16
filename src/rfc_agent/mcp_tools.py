@@ -24,7 +24,37 @@ HOOK_GUARDED_TOOLS: dict[str, str] = {
     "use_figma": "rfc_agent.hooks.guard_writes.USE_FIGMA_SCRIPTS",
 }
 
+# The browser tools of the testing workflow's `execute_ui_agent` stage (@playwright/mcp). These ACT — an
+# agent clicks and types on a live test environment while reading page text nobody vetted — so this is
+# the one server granted for what it does rather than for what it reads. The exception is bounded three
+# ways: only the tools below are granted (no script evaluation, no file upload, no cookie or route
+# tools); every call passes guard_browser.py, which denies a navigation off the run's own origin and
+# denies everything when no origin is set; and the stage never hands the agent a credential.
+BROWSER_GUARD = "rfc_agent.hooks.guard_browser.denial"
+BROWSER_READ_TOOLS: tuple[str, ...] = (
+    "browser_snapshot",
+    "browser_take_screenshot",
+    "browser_console_messages",
+    "browser_network_requests",
+)
+BROWSER_ACTION_TOOLS: tuple[str, ...] = (
+    "browser_navigate",
+    "browser_navigate_back",
+    "browser_click",
+    "browser_hover",
+    "browser_type",
+    "browser_fill_form",
+    "browser_select_option",
+    "browser_press_key",
+    "browser_wait_for",
+    "browser_handle_dialog",
+    "browser_tabs",
+)
+HOOK_GUARDED_TOOLS.update(dict.fromkeys(BROWSER_ACTION_TOOLS, BROWSER_GUARD))
+
 READONLY_TOOLS: dict[str, tuple[str, ...]] = {
+    # NOT read-only: see BROWSER_ACTION_TOOLS above — every action tool is a named HOOK_GUARDED exception
+    "playwright": BROWSER_READ_TOOLS + BROWSER_ACTION_TOOLS,
     "bitbucket": (
         "search_code",
         "get_file_content",

@@ -111,6 +111,8 @@ class ClaudeCodeEngine:
             extra_env=dict(req.env) or None,
             steer_epoch=req.steer_epoch,
             effort=req.effort,
+            # a server the request DEFINES ({name: spec}); a bare {name: {}} only names a configured one
+            mcp_overrides={n: s for n, s in req.containment.mcp_servers.items() if s} or None,
         )
         duration = time.monotonic() - t0
         # `run_claude` already wrote the trace at its default location, so this is usually the second

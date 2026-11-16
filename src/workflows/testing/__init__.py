@@ -38,6 +38,7 @@ from .stages.derive_spec import STAGE as DERIVE_SPEC
 from .stages.derive_ui import STAGE as DERIVE_UI
 from .stages.evaluate import STAGE as EVALUATE
 from .stages.execute_be import STAGE as EXECUTE_BE
+from .stages.execute_ui_agent import STAGE as EXECUTE_UI_AGENT
 from .stages.execute_web import STAGE as EXECUTE_WEB
 from .stages.generate_cases import STAGE as GENERATE_CASES
 from .stages.prerequisites import STAGE as PREREQUISITES
@@ -73,7 +74,8 @@ def compose_pipeline(flags) -> tuple[str, ...]:
 
     The UI executors follow the same rule as `execute_be`: off by default, and only with the store, since
     each reads CONFIRMED cases from it. `testing.execute_web` adds `derive_ui -> execute_web`,
-    `testing.publish_app` adds `publish_app`.
+    `testing.publish_app` adds `publish_app`, and `testing.execute_ui_agent` adds `execute_ui_agent` — an
+    agent driving a browser through each web case, with no script derived first.
 
     The harness calls this (`Workflow.compose_pipeline`) for every run that does not pass --pipeline.
     """
@@ -95,6 +97,8 @@ def compose_pipeline(flags) -> tuple[str, ...]:
         stages += ["derive_spec", "execute_be"]
     if store and on("execute_web", False):
         stages += ["derive_ui", "execute_web"]
+    if store and on("execute_ui_agent", False):
+        stages.append("execute_ui_agent")
     if store and on("publish_app", False):
         stages.append("publish_app")
     return tuple(stages)
@@ -193,7 +197,7 @@ def config_get(cfg):
 WORKFLOW = Workflow(
     name="testing",
     stages=(SOURCES, GENERATE_CASES, RENDER_XLSX, EVALUATE, STORE_CASES, PREREQUISITES, DERIVE_SPEC,
-            EXECUTE_BE, DERIVE_UI, EXECUTE_WEB, PUBLISH_APP),
+            EXECUTE_BE, DERIVE_UI, EXECUTE_WEB, EXECUTE_UI_AGENT, PUBLISH_APP),
     default_pipeline=DEFAULT_PIPELINE,
     description="QA suite generation, evaluation, storage, and backend / web UI / app UI execution (ported "
                 "from test_agent).",

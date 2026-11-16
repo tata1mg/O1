@@ -576,3 +576,93 @@ def test_kiwi_escaping_is_not_a_change_and_is_undone_on_read(clean_cases):
     assert store(rpc).upsert_cases("RSE-1", quoted)["unchanged"] == 1
     case = store(rpc).list_cases("RSE-1")[0]
     assert "'You'" in case.summary and '"ok"' in case.text
+
+
+# ---- a plan by id, and cases a person wrote (Kiwi-direct) ----------------------------------------------
+def _hand_plan(rpc, *, tags_by_case, product_name="Some Other Product"):
+    """A plan built by hand in Kiwi under a product the name rule cannot find; every case CONFIRMED."""
+    rpc.Product.rows.append({"id": 501, "name": product_name})
+    rpc.Version.rows.append({"id": 50, "product": 501, "value": "unspecified"})
+    rpc.TestPlan.rows.append({"id": 900, "name": "Hand written", "product": 501})
+    rpc.TestRun.rows = []
+    confirmed = next(s["id"] for s in rpc.TestCaseStatus.rows if s["name"] == "CONFIRMED")
+    ids = {}
+    for key, tags in tags_by_case.items():
+        row = rpc.TestCase.create({"summary": key, "text": f"text {key}", "case_status": confirmed})
+        rpc.tags[row["id"]] = list(tags)
+        rpc.plan_cases.setdefault(900, []).append(row["id"])
+        ids[key] = row["id"]
+    return ids
+
+
+def test_a_plan_by_id_is_read_without_the_name_lookups():
+    rpc = FakeRPC()
+    ids = _hand_plan(rpc, tags_by_case={"a": ["extid:TC-A"]})
+    calls = []
+    plain = rpc.Product.filter
+    rpc.Product.filter = lambda q: calls.append(dict(q or {})) or plain(q)
+    s = store(rpc, plan_id="900")
+    assert [c.extid for c in s.list_cases("Anything")] == ["TC-A"] and ids
+    assert calls == [{"id": 501}]                       # the product by id; never the whole list by name
+    assert not any(e[0] == "TestPlan" for e in rpc.log)
+
+
+def test_an_unknown_plan_id_names_the_id():
+    with pytest.raises(RuntimeError, match="999"):
+        store(FakeRPC(), plan_id="999").list_cases("F")
+
+
+def test_direct_lists_an_untagged_case_as_its_kiwi_id_and_leaves_http_alone():
+    rpc = FakeRPC()
+    ids = _hand_plan(rpc, tags_by_case={"bare": [], "http": ["exec:http"], "manual": ["exec:manual"],
+                                        "mobile": ["surface:app"], "tagged": ["extid:TC-T"]})
+    want = ("exec:ui", "surface:web")
+    direct = store(rpc, plan_id="900", direct=True).list_cases("F", status="CONFIRMED", tags=want)
+    assert sorted(c.extid for c in direct) == sorted([f"KIWI-{ids['bare']}", "TC-T"])
+    by_id = {c.extid: c for c in direct}
+    assert {"exec:ui", "surface:web"} <= set(by_id[f"KIWI-{ids['bare']}"].tags)
+    assert "exec:ui" not in by_id["TC-T"].tags or "exec:manual" not in by_id["TC-T"].tags
+    # `surface:app` has a surface tag, so it is not a web case; `exec:manual` is not given exec:ui
+    assert all(c.extid not in (f"KIWI-{ids['http']}", f"KIWI-{ids['manual']}", f"KIWI-{ids['mobile']}")
+               for c in direct)
+    plain = store(rpc, plan_id="900").list_cases("F", status="CONFIRMED")
+    assert [c.extid for c in plain] == ["TC-T"]         # not direct: untagged cases are skipped, as before
+
+
+def test_direct_attaches_and_records_against_the_right_kiwi_case():
+    rpc = FakeRPC()
+    ids = _hand_plan(rpc, tags_by_case={"bare": [], "http": ["exec:http"]})
+    s = store(rpc, plan_id="900", direct=True)
+    run = s.create_run("F", "b1", "env", require_tag="exec:ui")
+    assert run.attached == (f"KIWI-{ids['bare']}",)
+    assert run.skipped_wrong_execution == (f"KIWI-{ids['http']} (exec:http)",)
+    assert run.plan_id == "900"
+    rpc.TestExecution.rows = [{"id": 700 + i, "run": int(run.run_id), "case": cid}
+                              for i, cid in enumerate(ids.values())]
+    ex_id = s.record_execution(run.run_id, f"KIWI-{ids['bare']}", "PASS")
+    assert ex_id == "700"
+    assert any(e[:3] == ("TestExecution", "update", 700) for e in rpc.log)
+    with pytest.raises(RuntimeError, match="no execution"):
+        store(rpc, plan_id="900").record_execution(run.run_id, f"KIWI-{ids['bare']}", "PASS")
+
+
+def test_not_direct_create_run_skips_an_untagged_case():
+    rpc = FakeRPC()
+    _hand_plan(rpc, tags_by_case={"bare": []})
+    run = store(rpc, plan_id="900").create_run("F", "b1", "env", require_tag="exec:ui")
+    assert run.attached == () and run.skipped_wrong_execution == ("None (no exec: tag)",)
+
+
+def test_get_store_passes_plan_id_and_direct(tmp_path):
+    from workflows.testing.preflight import store_for
+
+    class Flags:
+        def __init__(self, v):
+            self.v = v
+
+        def get(self, name, default=None):
+            return self.v.get(name, default)
+
+    s = store_for(Flags({"testing.storage": "kiwi", "testing.kiwi_plan_id": "900", "testing.kiwi_direct": True}),
+                  tmp_path)
+    assert s.plan_id == "900" and s.direct is True

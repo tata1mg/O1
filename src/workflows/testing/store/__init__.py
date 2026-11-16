@@ -161,5 +161,7 @@ def get_store(ctx) -> CaseStore:
             product_prefix=ctx.flag("testing.product_prefix", "Diagno / "),
             plan_template=ctx.flag("testing.plan_template", "{feature} — imported test cases"),
             run_template=ctx.flag("testing.run_template", "{feature} · {env} · {build}"),
+            plan_id=str(ctx.flag("testing.kiwi_plan_id", "") or ""),
+            direct=bool(ctx.flag("testing.kiwi_direct", False)),
         )
     raise ValueError(f"unknown testing.storage {backend!r}; known: json, kiwi")

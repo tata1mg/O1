@@ -160,6 +160,39 @@ NAMES = (
     _f("ui_source_roots", str, "",
        "derive_ui: comma-separated source trees to take locators from. Empty = every repo snapshot of the "
        "RFC run (<rfc run>/_snap/*)."),
+    # ---- agent-driven UI execution ---------------------------------------------------------------------
+    _f("execute_ui_agent", bool, False,
+       "Run the execute_ui_agent stage: an agent drives a real browser through each CONFIRMED web UI case "
+       "and returns a verdict with evidence — no Playwright script is derived. OFF by default: it acts on a "
+       "live test environment as a real user, and costs a model session per case on every run."),
+    _f("agent_max_actions", int, 40,
+       "execute_ui_agent: browser actions one case may take before it stops and marks what is left "
+       "`not reached`."),
+    _f("agent_case_timeout_s", int, 480, "execute_ui_agent: wall time for one case, in seconds."),
+    _f("agent_parallel", int, 5,
+       "execute_ui_agent: cases run in batches of this many, one agent and one browser per case."),
+    _f("agent_confirm_fail", bool, True,
+       "execute_ui_agent: re-run a FAIL once in a fresh browser. FAIL twice = FAIL; otherwise the case is "
+       "reported as flaky with both reasons."),
+    _f("agent_hosts", str, "",
+       "execute_ui_agent: hosts the agent may drive, comma-separated (e.g. prestag.1mg.com). The stage acts "
+       "on a live site, so it refuses a base address that is neither listed here nor the "
+       "base_url_template of an environment named in `environments`. Never list production."),
+    _f("agent_include_manual", bool, False,
+       "execute_ui_agent: also hand the agent CONFIRMED web cases tagged exec:manual. The agent needs no "
+       "source code, so a case a script could not be written for may still be one a browser can verify."),
+    _f("agent_code_context", bool, False,
+       "execute_ui_agent: give the agent the fleetlens MCP server (read-only code lookup), to find where a "
+       "feature lives or which route opens it when it is stuck. Never to decide what the expected result is."),
+    _f("agent_browser", str, "",
+       "execute_ui_agent: the browser or channel Playwright MCP drives (chrome, msedge, firefox, webkit). "
+       "Empty = its bundled Chromium, which must be installed for the pinned @playwright/mcp version."),
+    _f("kiwi_plan_id", str, "",
+       "The Kiwi test plan to read cases from and record into, by id (--kiwi-plan). Empty = the plan named "
+       "by plan_template under the feature's product. Set to run a plan this workflow did not create."),
+    _f("kiwi_direct", bool, False,
+       "Run a Kiwi plan this workflow did not upload: a CONFIRMED case with no extid: tag is identified as "
+       "KIWI-<case id>, and a case with no exec: tag is treated as a UI case. Set by `execute --kiwi-plan`."),
     _f("maestro_report", str, "", "publish_app: the JUnit report of a Maestro run (--maestro-report)."),
     _f("maestro_flows", str, "",
        "publish_app: the flows folder the run used, <druid>/.maestro/flows (--maestro-flows). Its headers' "

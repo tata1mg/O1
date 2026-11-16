@@ -21,27 +21,20 @@ OFF by default (`testing.execute_web`): it drives a browser against a live envir
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 
 from harness.contracts import EngineFailure, GateFailure, RunContext, Stage
 
-from ... import ui_web
+from ... import ui_record, ui_web
 from ...store import get_store
 from .. import feature_of, python_stage, read_json, read_json_gated, write_json
 
 RESULTS_OUT = f"{ui_web.UI_DIR}/results.json"
 PLAN_IN = f"{ui_web.UI_DIR}/{ui_web.PLAN}"
-#: Playwright attachment name -> the file name it is stored under on the execution. The screenshot only: a
-#: trace is 1-2 MB, which XML-RPC sends base64 in one request, and plutokiwi-agent answered such an upload
-#: with 503 and stayed down (2026-11-04). The trace stays in the local HTML report; the comment says where.
-EVIDENCE = {"screenshot": "screenshot-{extid}"}  # + the extension compact_screenshot gives
 
 
 @python_stage
 def _run(stage: Stage, ctx: RunContext) -> str:
-    from rfc_agent import decisions
-
     feature = feature_of(ctx)
     plan = read_json(ctx.path(PLAN_IN), {}) or {}
     tested = [t["extid"] for t in plan.get("tests") or [] if isinstance(t, dict) and t.get("extid")]
@@ -94,70 +87,11 @@ def _run(stage: Stage, ctx: RunContext) -> str:
     for row in ui_web.results(report):
         if row["extid"] not in attached:
             continue  # not CONFIRMED any more, or retagged since derive_ui: nowhere to record it
-        for value in (login or {}).values():
-            row["detail"] = row["detail"].replace(value, "***")  # an error quoting a typed value
-        finished_at = row["finished_at"] or datetime.now(UTC)
         tally[row["status"]] = tally.get(row["status"], 0) + 1
-        execution_id = store.record_execution(
-            run.run_id, row["extid"], row["status"], actual=row["detail"], duration_s=row["duration_s"],
-            props={"environment": env_name, "build": build, "base_url": base_url,
-                   "playwright_status": row["playwright_status"]},
-            finished_at=finished_at)
-        attached_now, too_big = [], []
-        for att in row["attachments"]:
-            name = EVIDENCE.get(att["name"], "").format(extid=row["extid"])
-            path = Path(att["path"])
-            if not name or not path.is_file():
-                continue
-            data, ext = ui_web.compact_screenshot(path)
-            name += ext
-            if len(data) > ui_web.MAX_ATTACH:
-                too_big.append(path)
-                continue
-            if store.attach("execution", execution_id, name, data, replace=True):
-                attached_now.append(name)
-                decisions.record(ctx, stage.name, "ui_evidence_attached",
-                                 why="the failure's screenshot (as JPEG) kept beside the execution it explains",
-                                 extid=row["extid"], name=name, bytes=len(data), original_bytes=path.stat().st_size)
-        if row["status"] != "PASS":
-            # Kiwi's run page renders an execution's comments, not its attachments or long properties:
-            # the comment is where a QA reads why it failed.
-            store.comment_execution(execution_id, _evidence_comment(row, header, store, execution_id,
-                                                                    attached_now, login, too_big))
-        results.append({k: row[k] for k in ("extid", "status", "playwright_status", "detail", "duration_s")})
+        results.append(ui_record.record_row(ctx, stage.name, store, run.run_id, row, header, login))
     write_json(ctx.path(RESULTS_OUT), {**header, "results": results, "tally": tally,
                                        "html_report": str(ui / ui_web.HTML_REPORT)})
     return "  ".join(f"{k}={v}" for k, v in sorted(tally.items())) or "nothing recorded"
-
-
-def _evidence_comment(row: dict, header: dict, store, execution_id: str, attached: list[str],
-                      login: dict | None, too_big: list[Path] = ()) -> str:
-    trace = next((Path(a["path"]) for a in row["attachments"] if a["name"] == "trace"), None)
-    failed = ui_web.failed_requests(trace, header["base_url"]) if trace and trace.is_file() else []
-    lines = [f"## {row['extid']} — {row['status']}", "",
-             f"- environment: {header['environment']} · build `{header['build']}` · {header['base_url']}",
-             f"- browser: {header['device']} · login: {header['login']}",
-             f"- Playwright: {row['playwright_status']} after {row['duration_s']}s", "",
-             "**Why**", "", "```", row["detail"][:4000], "```", ""]
-    if failed:
-        lines += ["### Requests that failed on the page (from the trace)", ""] + [f"- `{f}`" for f in failed] + [
-            "", "_A 5xx here is the environment's backend, not the page under test._", ""]
-    lines += ["### Evidence", ""]
-    for name in attached:
-        url = store.attachment_url("execution", execution_id, name)
-        lines.append(f"- screenshot: [{name}]({url})" if url else f"- screenshot: `{name}` (attached)")
-        if url:
-            lines += ["", f"![failure screenshot]({url})", ""]
-    for path in too_big:
-        lines.append(f"- screenshot (kept locally, {path.stat().st_size // 1024} KB is over the upload limit): "
-                     f"`{path}`")
-    if trace and trace.is_file():
-        lines.append(f"- trace (kept locally, not uploaded): `{trace}` — open with "
-                     f"`npx playwright show-trace {trace}` from tools/ui-runner")
-    text = "\n".join(lines)
-    for value in (login or {}).values():
-        text = text.replace(value, "***")
-    return text
 
 
 def _login(ctx: RunContext) -> dict | None:

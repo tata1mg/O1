@@ -41,6 +41,9 @@ DECISIONS: tuple[str, ...] = (
     "ui_case_not_automated",     # derive_ui: a case skipped with a reason (stays in the run for a person)
     "ui_evidence_attached",      # execute_web / publish_app: a screenshot, trace or timeline on an execution
     "app_case_unattributed",     # publish_app: a CONFIRMED app case no flow in the report covers
+    "ui_agent_cases_selected",   # execute_ui_agent: the cases handed to agents, and those with nothing to judge
+    "ui_agent_case_not_passed",  # execute_ui_agent: a FAIL / BLOCKED / ERROR, with its one-line breakdown
+    "ui_agent_case_not_executed",  # execute_ui_agent: a case with no expected result, left for QA input
 )
 
 

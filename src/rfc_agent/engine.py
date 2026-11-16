@@ -42,6 +42,7 @@ from .streams import StreamResult, parse_stream, stream_event_label
 
 _STAGES_DIR = Path(__file__).parent / "stages"
 _GUARD = Path(__file__).parent / "hooks" / "guard_writes.py"
+_GUARD_BROWSER = Path(__file__).parent / "hooks" / "guard_browser.py"
 _APPROVE_RO = Path(__file__).parent / "hooks" / "approve_readonly.py"
 _REPO_HISTORY = Path(__file__).parent / "hooks" / "repo_history.py"
 _STAGE_TOOLS = Path(__file__).parent / "hooks" / "stage_tools.py"
@@ -155,6 +156,12 @@ def _hook_settings(disabled: set[str]) -> dict:
         "approve_readonly": ("PreToolUse", {
             "matcher": "Bash",
             "hooks": [{"type": "command", "command": f"{sys.executable} {_APPROVE_RO}"}],
+        }),
+        # the browser tools of execute_ui_agent (mcp_tools.BROWSER_ACTION_TOOLS) act on a live site:
+        # every call is held to the run's own origin. Inert for a stage with no `playwright` server.
+        "guard_browser": ("PreToolUse", {
+            "matcher": "mcp__playwright__.*",
+            "hooks": [{"type": "command", "command": f"{sys.executable} {_GUARD_BROWSER}"}],
         }),
         # continuous byte-budget accounting: the 50KB ceiling used to be visible
         # only at the terminal gate (v1 binary-searched it for 4.3 min, v2's
@@ -926,6 +933,7 @@ def run_claude(
     extra_env: dict[str, str] | None = None,
     steer_epoch: float | None = None,
     effort: str | None = None,
+    mcp_overrides: dict | None = None,
 ) -> StreamResult:
     """ONE headless claude invocation under the stage's full containment (materialized MCP subset,
     write-guard, read-only allowlist, --setting-sources project).
@@ -950,7 +958,11 @@ def run_claude(
     logs.mkdir(parents=True, exist_ok=True)
     err_path = logs / f"{label}.stderr"
     mcp_servers = stage_mcp_servers(stage, ctx)
-    mcp_path = cfg.materialize_mcp(mcp_servers, logs / f"{label}.mcp.json")
+    # mcp_overrides: per-invocation server definitions (see Config.materialize_mcp). Passed only when
+    # there are some, so a config object that predates the argument keeps working unchanged.
+    mcp_dest = logs / f"{label}.mcp.json"
+    mcp_path = cfg.materialize_mcp(mcp_servers, mcp_dest, mcp_overrides) if mcp_overrides else \
+        cfg.materialize_mcp(mcp_servers, mcp_dest)
 
     # per-stage model override (AGENT.STAGE_MODELS, e.g. {"generate": "<fast-writer>"}): the write leg's
     # speed is a MODEL property (Cursor's whole Composer thesis — a fast model for the high-token leg);

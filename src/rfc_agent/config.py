@@ -159,13 +159,20 @@ class Config:
         val = _dig(self.config, dotted)
         return default if val is None else val
 
-    def materialize_mcp(self, names: tuple[str, ...], dest: Path) -> Path:
+    def materialize_mcp(self, names: tuple[str, ...], dest: Path, overrides: dict | None = None) -> Path:
         """Write the SUBSET of configured MCP servers named in `names` to `dest` in the claude
         {"mcpServers": {...}} schema and return dest. Always writes — an empty subset writes
         {"mcpServers": {}}, which with --strict-mcp-config guarantees a no-MCP stage.
-        Unknown names fail loudly. `~` in stdio arg paths is expanded."""
+        Unknown names fail loudly. `~` in stdio arg paths is expanded.
+
+        `overrides` ({name: spec}) supplies a server's definition for THIS invocation, in place of (or
+        in the absence of) the configured one — for a server whose arguments belong to the call rather
+        than to the machine (the testing workflow's browser: one profile and output folder per case).
+        It only defines servers; which are exposed is still `names`, and which tools are callable is
+        still the per-tool allowlist."""
         servers = (self.config.get("MCP") or {}).get("mcpServers") or {}
         servers = {k: v for k, v in servers.items() if not k.startswith("_")}
+        servers = {**servers, **(overrides or {})}
         unknown = [n for n in names if n not in servers]
         if unknown:
             raise RuntimeError(f"stage references MCP server(s) not in MCP.mcpServers "
