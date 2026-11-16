@@ -15,7 +15,7 @@ plugin into Figma. It takes about
 | What | Why | Where to get it |
 |---|---|---|
 | Claude Code, already installed | The plugin runs inside it | — |
-| Access to the GitHub repo `tata1mg/O1` | It's where the plugin is installed from https://github.com/tata1mg/O1 | Your team |
+| Access to the GitHub repo `tata1mg/O1`, **or** the plugin zip (`rfc-agent-<version>.zip`) | It's where the plugin is installed from https://github.com/tata1mg/O1 | Your team |
 | An account on your team's **Confluence / Jira** site | PRDs and tickets are read from there | Your team |
 | The **team values**: Atlassian site, fleetlens URL, product surfaces, service inventory | Settings shared by the whole team. Not secret | A teammate |
 | A running **fleetlens** server (the context layer), its URL and token | Scope, Investigate and Review use it to find and trace code across repos. fleetlens is open source: [github.com/tata1mg/fleetlens](https://github.com/tata1mg/fleetlens) | Your team runs it. The token is in the team vault |
@@ -55,7 +55,10 @@ separate from the desktop app's.
 **Check:** `claude plugin list --json` has `rfc-agent@rfc-agent-marketplace` with `"enabled": true`. If so, skip to
 "Find the plugin folder".
 
-Install from GitHub:
+Ask (AskUserQuestion) "How are you installing rfc-agent?": "From GitHub (Recommended)" if the user has access to
+`tata1mg/O1`, or "From a zip file".
+
+**From GitHub:**
 
 ```bash
 claude plugin marketplace add tata1mg/O1
@@ -63,6 +66,20 @@ claude plugin install rfc-agent@rfc-agent-marketplace
 ```
 
 This tracks the repo's default branch, which is what the team installs from.
+
+**From a zip file:** ask for the zip's path (usually `~/Downloads/rfc-agent-<version>.zip`). Unzip it into
+`~/rfc-agent`, a folder that stays put: the plugin runs straight from it, so don't delete or move it. If
+`~/rfc-agent` already exists, look at it first, and replace it only if it holds an older rfc-agent (it has
+`.claude-plugin/plugin.json` with `"name": "rfc-agent"`).
+
+```bash
+unzip -q <zip-path> -d ~/rfc-agent-unzip && rm -rf ~/rfc-agent && mv ~/rfc-agent-unzip/rfc-agent ~/rfc-agent && rmdir ~/rfc-agent-unzip
+claude plugin marketplace add ~/rfc-agent
+claude plugin install rfc-agent@rfc-agent-marketplace
+```
+
+**Check:** `~/rfc-agent/.claude-plugin/marketplace.json` exists, and `claude plugin list` shows
+`rfc-agent@rfc-agent-marketplace` read from `~/rfc-agent`.
 
 **Find the plugin folder.** In `claude plugin list --json`, the `rfc-agent@rfc-agent-marketplace` entry gives:
 
@@ -124,6 +141,10 @@ Ask Claude: "Update rfc-agent". It runs:
 claude plugin marketplace update rfc-agent-marketplace
 claude plugin update rfc-agent@rfc-agent-marketplace
 ```
+
+Installed from a zip? Get the new zip first and replace `~/rfc-agent` with it (the same unzip command as in
+Step 2), then run the two commands above. Your settings live in `~/.config/rfc-agent/`, so replacing the folder
+loses nothing.
 
 Then restart Claude Code and run `/rfc-agent:setup` once. A new version can add settings, and setup fills them
 in.

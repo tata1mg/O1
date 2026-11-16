@@ -1,8 +1,9 @@
-"""Scope repo discovery: the fleetlens discovery agent, the Haiku PRD summary, the surface table, fallbacks."""
+"""Scope repo discovery: the Opus discovery agent over fleetlens (two tiers), PRD mentions, fallbacks."""
 
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -22,8 +23,9 @@ if "stream-json" in sys.argv:  # the discovery agent
         {"type": "tool_use", "id": "t1", "name": "mcp__fleetlens__get_service_graph", "input": {}}]}}
     res = {"type": "user", "message": {"content": [
         {"type": "tool_result", "tool_use_id": "t1", "content": "graph", "is_error": False}]}}
-    services = {"services": [{"service": "service:API-Gateway", "why": "routes the new endpoint"},
-                             {"service": "svc_a", "why": "  owns the order\n patient name "},
+    services = {"services": [{"service": "ns_gateway", "tier": "maybe", "why": "may need a template"},
+                             {"service": "service:API-Gateway", "tier": "changes", "why": "routes the new endpoint"},
+                             {"service": "svc_a", "tier": "CHANGES", "why": "  owns the order\n patient name "},
                              {"service": "svc_a_admin_service", "why": "same repo"}]}
     draft = json.dumps({"services": [{"service": "draft"}]})
     text = {"ok": f"Looked around. {draft} then {json.dumps(services)}", "nojson": "I could not decide."}.get(mode, "")
@@ -35,24 +37,8 @@ if "stream-json" in sys.argv:  # the discovery agent
                                                                      for k in mcp["mcpServers"]]}, use, res, final):
         print(json.dumps(ev))
     sys.exit(0)
-open(os.environ["FAKE_PROMPT"], "w").write(prompt)
-if mode in ("ok", "nojson"):
-    summary = "Consumer web checkout lets users pick an existing patient; patient service checks similar names."
-    res = {"result": json.dumps({"summary": summary, "surfaces": ["consumer_web", "phlebo_app", "nope"]}),
-           "total_cost_usd": 0.012}
-elif mode == "limit":
-    res = {"is_error": True, "result": "You've hit your weekly limit"}
-else:
-    res = {"result": "sorry, no json"}
-print(json.dumps(res))
+sys.exit(3)  # only the discovery agent (stream-json) exists now
 '''
-
-
-# the org's surface table (config.json SCOPE.SURFACES) — nothing org-specific ships in the code
-SURFACES = {
-    "consumer_web": {"what": "customer website: storefront, cart, checkout", "repos": ["web_repo"]},
-    "phlebo_app": {"what": "home sample collection app used by field staff", "repos": []},
-}
 
 
 class Cfg:
@@ -69,35 +55,7 @@ def _fake(tmp_path, monkeypatch, mode="ok"):
     fake.chmod(0o755)
     monkeypatch.setenv("FAKE_PROMPT", str(tmp_path / "prompt.txt"))
     monkeypatch.setenv("FAKE_MODE", mode)
-    return Cfg(**{"AGENT.CLAUDE_BIN": str(fake), "SCOPE.SURFACES": SURFACES})
-
-
-def test_summary_and_known_surfaces_only(tmp_path, monkeypatch):
-    cfg = _fake(tmp_path, monkeypatch)
-    s = c.summarise(PRD, cfg)
-    assert s["ok"] and s["summary"].startswith("Consumer web checkout") and s["cost_usd"] == 0.012
-    assert s["surfaces"] == ["consumer_web", "phlebo_app"]  # unknown names dropped
-    prompt = (tmp_path / "prompt.txt").read_text()
-    assert "- phlebo_app:" in prompt and "source_url" not in prompt and "Labs checkout" in prompt
-
-
-def test_summary_failures_are_reported_not_raised(tmp_path, monkeypatch):
-    cfg = _fake(tmp_path, monkeypatch, "limit")
-    s = c.summarise(PRD, cfg)
-    assert not s["ok"] and "weekly limit" in s["error"]
-    monkeypatch.setenv("FAKE_MODE", "garbage")
-    s = c.summarise(PRD, cfg)
-    assert not s["ok"] and s["error"] == "no summary in the reply"
-    assert c.summarise(PRD, Cfg())["error"].startswith("test guard")  # the real claude is never started in tests
-
-
-def test_surface_table_from_config_and_unmapped():
-    table = {"_note": "x", "consumer_web": {"what": "w", "repos": ["web_a", "web_b"]}, "phlebo_app": {"what": "p"}}
-    cfg = Cfg(**{"SCOPE.SURFACES": table})
-    hits, unmapped = c.surface_candidates(["consumer_web", "phlebo_app"], cfg, exclude={"web_b"})
-    assert [h["repo"] for h in hits] == ["web_a"] and unmapped == ["phlebo_app"]
-    assert set(c.surfaces_of(cfg)) == {"consumer_web", "phlebo_app"}
-    assert c.surfaces_of(None) == {}, "no org table -> no surfaces (nothing org-specific in the code)"
+    return Cfg(**{"AGENT.CLAUDE_BIN": str(fake)})
 
 
 def test_discovery_agent_is_isolated_and_parsed(tmp_path, monkeypatch):
@@ -105,9 +63,11 @@ def test_discovery_agent_is_isolated_and_parsed(tmp_path, monkeypatch):
     spec = {"type": "http", "url": "http://fl/mcp", "headers": {"Authorization": "Bearer t"}}
     d = c.discover(PRD, cfg, spec, log_dir=tmp_path / "logs")
     assert d["ok"] and d["cost_usd"] == 0.42 and d["tool_calls"] == 1 and d["error"] is None
-    assert d["services"] == [{"service": "API-Gateway", "why": "routes the new endpoint"},
-                             {"service": "svc_a", "why": "owns the order patient name"},
-                             {"service": "svc_a_admin_service", "why": "same repo"}], "the LAST services JSON wins"
+    assert d["services"] == [{"service": "API-Gateway", "tier": "changes", "why": "routes the new endpoint"},
+                             {"service": "svc_a", "tier": "changes", "why": "owns the order patient name"},
+                             {"service": "svc_a_admin_service", "tier": "changes", "why": "same repo"},
+                             {"service": "ns_gateway", "tier": "maybe", "why": "may need a template"}], \
+        "the LAST services JSON wins; a missing tier counts as changes; maybe goes last"
     argv = json.loads((tmp_path / "prompt.txt.argv").read_text())
     assert argv[argv.index("--tools") + 1] == "" and "--strict-mcp-config" in argv, "no built-ins, no other MCP"
     grants = argv[argv.index("--allowedTools") + 1].split(",")
@@ -123,6 +83,17 @@ def test_discovery_agent_is_isolated_and_parsed(tmp_path, monkeypatch):
     assert "discovery ▶ started" in (tmp_path / "logs" / "activity.log").read_text()
     prompt = (tmp_path / "prompt.txt.disc").read_text()
     assert "Labs checkout" in prompt and "source_url" not in prompt and "untrusted" in prompt
+    assert "frontend" in prompt, "the agent is asked for UI repos too (no surface table any more)"
+    assert '"maybe"' in prompt and "recall" in prompt and "passes through unchanged" not in prompt
+    assert argv[argv.index("--model") + 1] == c.DISCOVERY_MODEL == "claude-opus-5-5"
+
+
+def test_discovery_model_from_config(tmp_path, monkeypatch):
+    cfg = _fake(tmp_path, monkeypatch)
+    cfg.d["SCOPE.DISCOVERY_MODEL"] = "claude-sonnet-5-5"
+    assert c.discover(PRD, cfg, {"url": "u"}, log_dir=tmp_path / "logs")["ok"]
+    argv = json.loads((tmp_path / "prompt.txt.argv").read_text())
+    assert argv[argv.index("--model") + 1] == "claude-sonnet-5-5"
 
 
 def test_discovery_failures_are_reported_not_raised(tmp_path, monkeypatch):
@@ -147,27 +118,40 @@ def test_agent_services_become_repos(tmp_path, monkeypatch):
     assert got[0]["why"] == "context layer: routes it" and got[2]["why"] == "context layer: service c"
 
 
+def test_maybe_only_when_every_service_behind_the_repo_is_maybe(tmp_path, monkeypatch):
+    monkeypatch.setattr(c, "repo_for_service", lambda root, svc, aliases, config=None:
+                        "svc_a" if svc.startswith("svc_a") else svc)
+    found = [{"service": "svc_a_admin_service", "tier": "maybe", "why": "variant"},
+             {"service": "svc_a", "tier": "changes", "why": "owns orders"},
+             {"service": "email", "tier": "maybe", "why": "attachments"}]
+    got = c.context_candidates(found, tmp_path, None, set())
+    assert got == [{"repo": "svc_a", "why": "context layer: owns orders", "maybe": False},
+                   {"repo": "email", "why": "context layer (maybe): attachments", "maybe": True}]
+
+
 def test_gather_order_and_meta(tmp_path, monkeypatch):
     cfg = _fake(tmp_path, monkeypatch)
-    cfg.d["SCOPE.SURFACES"] = {"consumer_web": {"what": "w", "repos": ["web"]}, "phlebo_app": {"what": "p"}}
     monkeypatch.setattr(c, "_repo_for", lambda root, svc, aliases, cfg: svc.lower())
-    monkeypatch.setattr(c, "prd_mentioned", lambda *a: [])
+    monkeypatch.setattr(c, "prd_mentioned", lambda *a: [{"repo": "named_in_prd", "why": "the PRD mentions it"}])
     meta: dict = {}
     out = c.gather(cfg, {"url": "u"}, True, PRD, tmp_path, ["mine"], meta=meta, log_dir=tmp_path / "logs")
-    assert [o["repo"] for o in out] == ["mine", "api-gateway", "svc_a", "svc_a_admin_service", "web"]
+    named = c.gather(cfg, {"url": "u"}, True, PRD, tmp_path, ["ns_gateway"], log_dir=tmp_path / "logs")
+    assert all(o["include"] for o in named if o["repo"] == "ns_gateway"), "named by you wins over maybe"
+    assert [o["repo"] for o in out] == ["mine", "api-gateway", "svc_a", "svc_a_admin_service", "ns_gateway",
+                                        "named_in_prd"]
+    assert [o["repo"] for o in out if not o["include"]] == ["ns_gateway"], "a maybe is proposed unticked"
     assert meta["discovery"]["ok"] and meta["discovery"]["tool_calls"] == 1 and meta["discovery_error"] is None
-    assert meta["surfaces"] == ["consumer_web", "phlebo_app"] and meta["unmapped_surfaces"] == ["phlebo_app"]
-    assert meta["cost_usd"] == 0.432  # agent + summary
+    assert meta["cost_usd"] == 0.42 and "summary" not in meta and "surfaces" not in meta
     json.dumps(meta)  # goes into scope.json
 
 
-def test_gather_without_the_layer_still_uses_surfaces(tmp_path, monkeypatch):
+def test_gather_without_the_layer_has_named_and_mentioned_repos(tmp_path, monkeypatch):
     cfg = _fake(tmp_path, monkeypatch)
     monkeypatch.setattr(c, "discover", lambda *a, **k: pytest.fail("no agent when the layer is down"))
-    monkeypatch.setattr(c, "prd_mentioned", lambda *a: [])
+    monkeypatch.setattr(c, "prd_mentioned", lambda *a: [{"repo": "named_in_prd", "why": "the PRD mentions it"}])
     meta: dict = {}
-    out = c.gather(cfg, {"url": "u"}, False, PRD, tmp_path, [], meta=meta)
-    assert [o["repo"] for o in out] == ["web_repo"] and meta["discovery"] is None
+    out = c.gather(cfg, {"url": "u"}, False, PRD, tmp_path, ["mine"], meta=meta)
+    assert [o["repo"] for o in out] == ["mine", "named_in_prd"] and meta["discovery"] is None
 
 
 def test_discovery_timeout_kills_the_agent_and_closes_its_card(tmp_path, monkeypatch):
@@ -180,3 +164,67 @@ def test_discovery_timeout_kills_the_agent_and_closes_its_card(tmp_path, monkeyp
     d = c.discover(PRD, cfg, {"url": "u"}, log_dir=tmp_path / "logs")
     assert not d["ok"] and "TimeoutExpired" in d["error"] and d["seconds"] < 10
     assert "■ FAILED: timed out after 1s" in (tmp_path / "logs" / "agents" / "scope.discovery.log").read_text()
+
+
+def test_scratch_folder_with_the_token_is_removed(tmp_path, monkeypatch):
+    """No run folder → the MCP config (it carries the fleetlens token) goes in a scratch folder that is deleted."""
+    import tempfile
+
+    cfg = _fake(tmp_path, monkeypatch)
+    made: list[str] = []
+    real = tempfile.mkdtemp
+    monkeypatch.setattr(tempfile, "mkdtemp", lambda **kw: made.append(real(dir=tmp_path, **kw)) or made[-1])
+    assert c.discover(PRD, cfg, {"url": "u", "headers": {"Authorization": "Bearer t"}})["ok"]
+    assert made and not any(os.path.exists(d) for d in made), "the token-bearing scratch folder is gone"
+
+
+def test_exit_zero_error_keeps_its_reason_on_the_card(tmp_path, monkeypatch):
+    """Claude reports a usage limit and exits 0: the card says why, not `exit 0`."""
+    cfg = _fake(tmp_path, monkeypatch, "limit")
+    d = c.discover(PRD, cfg, {"url": "u"}, log_dir=tmp_path / "logs")
+    assert not d["ok"] and "weekly limit" in d["error"]
+    card = (tmp_path / "logs" / "agents" / "scope.discovery.log").read_text()
+    assert "FAILED" in card and "weekly limit" in card and "exit 0" not in card
+
+
+def test_a_failing_callback_kills_the_agent(tmp_path, monkeypatch):
+    """A progress callback that raises must not leave the agent running (and spending) in the background."""
+    import time
+
+    from rfc_agent.investigate import agent as ag
+
+    cfg = _fake(tmp_path, monkeypatch)
+    slow = tmp_path / "slow"
+    pid = tmp_path / "child.pid"
+    slow.write_text(f"#!/bin/sh\necho $$ > {pid}\ncat >/dev/null\n"
+                    "echo '{\"type\":\"system\",\"subtype\":\"init\"}'\nsleep 30\n")
+    slow.chmod(0o755)
+    cfg.d["AGENT.CLAUDE_BIN"] = str(slow)
+
+    def boom(*a, **k):
+        raise RuntimeError("callback failed")
+
+    monkeypatch.setattr(ag, "_consume", boom)
+    t0 = time.monotonic()
+    with pytest.raises(RuntimeError, match="callback failed"):
+        c.discover(PRD, cfg, {"url": "u"}, log_dir=tmp_path / "logs")
+    assert time.monotonic() - t0 < 10, "did not wait for the 30 s sleep"
+    child = int(pid.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(child, 0)  # gone
+
+
+def test_model_names_that_are_not_plain_repo_names_are_dropped(tmp_path, monkeypatch):
+    monkeypatch.setattr(c, "repo_for_service", lambda root, svc, aliases, config=None: svc)
+    found = [{"service": s, "why": "x"} for s in ("..", "../other", "a/b", ".hidden", "-rf", "ok_repo", "Good-Repo.v2")]
+    got = c.context_candidates(found, tmp_path, None, set())
+    assert [p["repo"] for p in got] == ["ok_repo", "good-repo.v2"]
+
+
+def test_plus_name_rejects_path_like_names():
+    from rfc_agent.scope import confirm
+    items = [confirm.Item("repo", "svc_a", "svc_a")]
+    err = confirm.apply(items, "+../x, fine", lambda n: confirm.Item("repo", n, n))
+    assert err and "../x" in err and [it.key for it in items] == ["svc_a"], "nothing is added when one name is bad"
+    assert confirm.apply(items, "+fine", lambda n: confirm.Item("repo", n, n)) is None
+    assert [it.key for it in items] == ["svc_a", "fine"]

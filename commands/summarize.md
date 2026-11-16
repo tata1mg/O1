@@ -1,6 +1,6 @@
 ---
 description: The summarize stage — a concise, human-readable copy of the final RFC (runs automatically after Revise)
-argument-hint: --run-dir <run dir after Revise> [--fresh]
+argument-hint: --run-dir <run dir after Revise> [--fresh] [--engine claude-code|axon] [--stage-engine STAGE=ENGINE]
 ---
 
 Run rfc-agent's Summarize for: `$ARGUMENTS` — normally it already ran at the end of Revise; use this after

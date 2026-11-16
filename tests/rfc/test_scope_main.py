@@ -1,7 +1,7 @@
 """Scope's whole flow (`python -m rfc_agent.scope`) with a local PRD file and throwaway git remotes.
 
 Nothing here touches the network or a model: no `fleetlens` is configured, so the context layer reports itself
-unavailable, and the PRD summary refuses to start a real `claude` while RFC_AGENT_NO_REAL_CLAUDE is set.
+unavailable and the discovery agent never starts.
 """
 
 import json
@@ -82,6 +82,15 @@ def test_local_prd_gets_a_provenance_header(tmp_path, cfg, prd):
                     "--yes", "--no-figma"])
     head = (run / "raw" / "prd.md").read_text(encoding="utf-8").split("\n\n", 1)[0]
     assert str(prd) in head and "fetched_at" in head
+
+
+def test_prd_without_a_design_is_flagged_and_yes_goes_on(tmp_path, cfg, prd, capsys):
+    root = _repos_root(tmp_path)
+    run = tmp_path / "run"
+    assert scope_cli.main(["--prd", str(prd), "--repos", "svc", "--repos-root", str(root), "--run-dir", str(run),
+                           "--yes"]) == 0
+    assert "going on without a design" in capsys.readouterr().err
+    assert json.loads((run / "scope.json").read_text())["no_design"] == "the PRD links no Figma design"
 
 
 def test_snapshot_is_cleaned_up_without_touching_the_run(tmp_path, cfg, prd, capsys):
