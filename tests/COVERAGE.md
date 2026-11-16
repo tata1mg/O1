@@ -57,7 +57,7 @@ Found by checking every flag, config key, file and constant named in `docs/` aga
 |---|---|---|
 | SCOPE | `--figma-wait`, `--reuse-figma ask\|always\|never` | not tested (needs the Figma exporter faked) |
 | SCOPE | `RFC_AGENT_REPO_CACHE` env override | not tested (read once at import) |
-| SCOPE | `SCOPE.DISCOVERY_MODEL`, `SCOPE.SUMMARY_MODEL`, `STEERING.REPO_ALIASES` | not tested |
+| SCOPE | `STEERING.REPO_ALIASES` | not tested |
 | INVESTIGATE / DRAFT | model, effort and timeout settings actually reaching the `claude` command line | settings resolution is tested, the hand-off is not |
 | REVISE | `LEAD_TIMEOUT_S`, `CONFIRM_TIMEOUT_S` reaching the agent | resolution tested, hand-off not |
 | OBSERVABILITY | `LANGFUSE_TRACING_ENVIRONMENT` | not tested |

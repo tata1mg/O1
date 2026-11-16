@@ -90,7 +90,7 @@ Open it (`open -t ~/.config/rfc-agent/config.json`) and fill in:
 | `MCP.mcpServers.fleetlens.url` | The fleetlens URL |
 | `MCP.mcpServers.fleetlens.headers` | `{"Authorization": "Bearer <token from the vault>"}` |
 | `LANGFUSE.PUBLIC_KEY`, `LANGFUSE.SECRET_KEY` | From the vault. Required: every run is traced |
-| `SCOPE.SURFACES`, `SERVICES_MAP` | Team values. Optional: without them, name repos with `--repos` |
+| `SERVICES_MAP` | Team value. Optional: without them, name repos with `--repos` |
 
 A teammate's file carries their personal values too. Replace `REPOS_ROOT`, `RUNS_ROOT`, the keys, and
 `OBS.USER_ID` with your own. Every field is described in [SETUP.md](../SETUP.md).

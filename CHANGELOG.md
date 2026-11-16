@@ -22,6 +22,31 @@ versions match `.claude-plugin/plugin.json`.
   sign-in (`axon pi mcp login atlassian`), so `--engine axon` no longer needs `claude`. The Axon doctor checks
   the sign-in.
 
+### Changed
+
+- **Scope finds repos with one Opus agent, in two tiers.** The Haiku PRD summary and the surface table
+  (`SCOPE.SURFACES`, `SCOPE.SUMMARY_MODEL`) are gone. One agent (`claude-opus-5-5`, `SCOPE.DISCOVERY_MODEL`)
+  explores fleetlens and returns "changes" repos (proposed ticked) and "maybe" repos (proposed unticked, with a
+  reason), backend and frontend, up to 15. Same on Claude Code and Axon.
+- **Langfuse Python SDK v5, ready for the Langfuse v4 platform.** `langfuse>=5,<6` (5.2.0 locked). A trace's
+  input and output are now its root observation's own (`set_trace_io` / `set_current_trace_io` are gone in v5).
+  The secret scrubber decodes v5's JSON-encoded metadata and input/output before scrubbing, so redacting a key
+  no longer corrupts the JSON. `scripts/mine_reasons.py` reads the Observations API v2
+  (`/api/public/v2/observations`, cursor pages, `--days`) instead of the v1 endpoint Langfuse Cloud retires on
+  2026-11-16. `tests/infra/test_langfuse_v5.py` fails on any call v5 removed or any retired endpoint.
+
+### Fixed
+
+- **Axon: a recovered retry no longer fails the agent.** A failed model attempt that Pi retried successfully
+  kept its error; now only exhausted retries and aborts fail.
+- **Scope: the fleetlens token is no longer left on disk.** Without a run folder, the discovery agent's MCP
+  config went to `$TMPDIR` and stayed there; it now goes in a scratch folder that is deleted.
+- **Scope: a failing progress callback kills the discovery agent** instead of leaving it running.
+- **Scope: an error Claude reports with exit 0 (e.g. a usage limit) keeps its reason** on the agent card
+  instead of "exit 0".
+- **Rate limits are counted from protocol fields** and failed-result text (`API Error: 429`, Pi's
+  `rate_limit_error`), not from any message that mentions rate limits.
+
 ## 0.1.1 (pilot)
 
 ### Changed
