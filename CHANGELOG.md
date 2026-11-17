@@ -23,6 +23,18 @@ versions match `.claude-plugin/plugin.json`.
 
 - A stopped run (a stage failure, Ctrl-C or a stop) prints the feedback command for that run folder:
   `/rfc-agent:feedback --run-dir <folder>`.
+- **Feedback for a stopped or failed run.** The run records how each attempt ended (`logs/attempts.jsonl`: user stop,
+  failure with a cause category and a scrubbed excerpt, or killed) and scores it on the trace (`rfc_run_stop_kind`,
+  `rfc_run_failure_cause`). `/rfc-agent:feedback` reads that and opens on the matching path, so nobody is asked how the
+  run ended: a stopped run asks the main reason (one choice, typed Other) and whether to run it again; a failed run asks
+  whether the recorded cause is right and whether to run it again. Scores: `rfc_run_stop_reason`,
+  `rfc_failure_cause_confirmed`, `rfc_failure_cause_reported`, `rfc_rerun`, and `rfc_run_end` only when the run has no
+  end record. Only answered questions are written.
+- **Feedback is kept per attempt.** A run that was stopped, rated, resumed and finished keeps the stopped attempt's
+  feedback; the finished attempt gets its own rating. Each score's metadata has `attempt`, `attempts` and `run_state`.
+  See [docs/FEEDBACK.md](docs/FEEDBACK.md#a-run-that-stopped-or-failed).
+- A process that is killed without a chance to write anything is recorded as `killed` on the next start
+  (`logs/attempt_open.json`).
 
 ## 0.1.1 (pilot)
 

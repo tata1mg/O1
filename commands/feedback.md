@@ -1,5 +1,5 @@
 ---
-description: Rate an rfc-agent run — a thumb, and what was wrong in each area; saved on that run's Langfuse trace so it can be charted later
+description: Rate an rfc-agent run — a thumb and what was wrong in each area, or why it stopped or failed; saved on that run's Langfuse trace so it can be charted later
 argument-hint: [--run-dir <run dir>] [up|down]
 ---
 
@@ -26,9 +26,27 @@ uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m rfc_agent.feedback --run-dir 
 ```
 
 prints JSON with `line`: the run's measured numbers (time, cost, tokens, PRD size, requirement counts; may be
-empty). Show it in the run question so the answer is anchored on the numbers.
+empty), and how the latest attempt ended, taken from the run's own record:
 
-## 3. Ask (AskUserQuestion — skip any answer already given in `$ARGUMENTS`)
+- `end`: `finished`, `stopped` (you stopped it), `failed`, or `unknown` (no end record: killed, still running, or an old run);
+- `recorded`: one line saying so (stage, cause), to show at the top of the first question;
+- `cause` and `excerpt`: the recorded failure cause (failed only); `stage`; `attempt` of `attempts`;
+- `earlier`: attempts before this one that did not finish (they keep their own feedback).
+
+Show `recorded` above the first question so the person sees which path they are on. **Never ask how the run ended
+when `end` is not `unknown`**: go straight to the path below.
+
+| `end` | Go to |
+|---|---|
+| `finished` | section 3a (the RFC form) |
+| `stopped` | section 3b |
+| `failed` | section 3c |
+| `unknown` | one question first, "How did this run end?" (`It finished` · `I stopped it` · `It failed` · `Later`), pass the answer as `--run-end finished|stopped|failed`, then the matching path. `Later`: ask nothing more |
+
+## 3a. Ask for a finished run (AskUserQuestion — skip any answer already given in `$ARGUMENTS`)
+
+If `earlier` is not empty, say in one line that attempt(s) N stopped or failed and keep their own feedback, and that
+anything more about them can be typed under Other here. Do not ask which attempt to rate: this rates the finished one.
 
 Each area is asked once, with its gaps in the same question, so the person says what is wrong while it is fresh.
 The thumb is asked alone first, so a plain 👍 or `Later` never shows the area questions.
@@ -100,7 +118,49 @@ the gap wins.
 - No other questions. If the user volunteered a comment in `$ARGUMENTS` or in a reply, pass it as `--comment`; don't
   prompt for one.
 
+## 3b. Ask for a stopped run (two questions, one screen each)
+
+The stage it stopped at is already known: do not ask it. No thumb, no areas, no time questions.
+
+1. **"What was the main reason you stopped it?"** (single choice; pick the most relevant):
+   - It was taking too long (`too_slow`)
+   - Cost or tokens were too high (`too_costly`)
+   - Wrong repos or pages were picked (`wrong_repos_or_pages`)
+   - The PRD or Figma input was wrong (`bad_input`)
+   - I changed my mind, or no longer need it (`changed_mind`)
+   - Other (type it) (`other`)
+   Text typed under Other may name more than one reason: pass it as `--note stop=<text>`, as typed, with
+   `--stop-reason other`. An option picked plus typed text: pass both.
+2. **"Would you run it again?"** — `Yes` (`yes`) · `No` (`no`).
+
+Record: `--stop-reason <v> --rerun <v> [--note stop=…]`, and no `--rating`.
+
+## 3c. Ask for a failed run (two questions, one screen each)
+
+The run already recorded why (`cause`, `excerpt`): do not ask for the cause.
+
+1. **"Is that what happened?"** — show `cause` and `excerpt`. `Yes, that is what happened` (`yes`) · `No, something else
+   happened` (`no`; pass any text typed as `--note failure=<text>`). → `--failure-check <v>`.
+   If `cause` is empty (the process was killed, so nothing was recorded), ask instead **"What made it fail?"** —
+   `A usage or login limit` (`usage_or_login_limit`) · `Atlassian, Figma or another connector` (`connector`) ·
+   `Connection or network` (`connection`) · `Other (type it)` (`other`, text as `--note failure=<text>`) →
+   `--failure-reported <v>`.
+2. **"Would you run it again?"** — `Yes` · `No` → `--rerun <v>`.
+
+Record: `--failure-check <v>` (or `--failure-reported <v>`) `--rerun <v>`, and no `--rating`.
+
 ## 4. Record
+
+For a stopped or failed run:
+
+```
+uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m rfc_agent.feedback --run-dir "$RUN" \
+  [--run-end <stopped|failed|finished>] [--stop-reason <v>] [--failure-check <yes|no>] [--failure-reported <v>] \
+  --rerun <yes|no> [--note <stop|failure>=<text>]
+```
+
+Pass `--run-end` only when `end` was `unknown`. It is scored on the attempt it was given on, so a resume and a finish
+later keeps this feedback and gets its own rating. For a finished run:
 
 ```
 uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m rfc_agent.feedback --run-dir "$RUN" --rating <up|down> \

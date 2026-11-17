@@ -31,10 +31,9 @@ import json
 import signal
 import sys
 import time
-from datetime import UTC, datetime
 from pathlib import Path
 
-from . import feedback, observe, run_facts
+from . import feedback, observe, run_end, run_facts
 from .legacy_names import OLD_FROM, migrate_run_dir
 
 STAGES = ("scope", "investigate", "draft", "review", "revise")
@@ -248,50 +247,47 @@ def main(argv: list[str] | None = None) -> int:
     mains = _mains()
     ran: list[dict] = []
     code = 0
-    for stage in STAGES[start:]:
-        print(f"  [rfc] ── {LABELS[stage]} ──", file=sys.stderr, flush=True)
-        t0 = time.monotonic()
-        try:
-            code = mains[stage](stage_args(args, stage, run_dir)) or 0
-        except KeyboardInterrupt:  # Ctrl-C or a stop: end the agents, then record the attempt like any other stop
-            from .investigate.agent import kill_live_agents
+    kind = "resume" if existed else "new"
+    run_end.open_attempt(run_dir, kind=kind, start_stage=STAGES[start])  # closes the last one first if it was killed
+    tail_text = ""  # the last lines the run printed, to say why a failed attempt failed
+    with run_end.capture_stderr() as tail:
+        for stage in STAGES[start:]:
+            print(f"  [rfc] ── {LABELS[stage]} ──", file=sys.stderr, flush=True)
+            run_end.mark_stage(run_dir, stage)
+            t0 = time.monotonic()
+            try:
+                code = mains[stage](stage_args(args, stage, run_dir)) or 0
+            except KeyboardInterrupt:  # Ctrl-C or a stop: end the agents, then record the attempt like any other stop
+                from .investigate.agent import kill_live_agents
 
-            n = kill_live_agents()
-            print(f"  [rfc] interrupted{f' — stopped {n} running agent(s)' if n else ''}", file=sys.stderr)
-            code = 130
-        except SystemExit as e:  # a stage stopping with SystemExit("message") or exit code
-            code = e.code if isinstance(e.code, int) else 1
-            if not isinstance(e.code, int) and e.code:
-                print(f"  [rfc] {e.code}", file=sys.stderr)
-        ran.append({"stage": stage, "exit": code, "seconds": round(time.monotonic() - t0, 1)})
-        if code != 0:
-            print(
-                f"  [rfc] STOPPED at {LABELS[stage]} (exit {code}). Fix the cause, then resume this run with "
-                f"--run-dir {run_dir} — finished work is kept.",
-                file=sys.stderr,
-            )
-            print(
-                f"  [rfc] Feedback on this run (optional, it helps tune the pipeline): "
-                f"/rfc-agent:feedback --run-dir {run_dir}",
-                file=sys.stderr,
-            )
-            break
+                n = kill_live_agents()
+                print(f"  [rfc] interrupted{f' — stopped {n} running agent(s)' if n else ''}", file=sys.stderr)
+                code = 130
+            except SystemExit as e:  # a stage stopping with SystemExit("message") or exit code
+                code = e.code if isinstance(e.code, int) else 1
+                if not isinstance(e.code, int) and e.code:
+                    print(f"  [rfc] {e.code}", file=sys.stderr)
+            ran.append({"stage": stage, "exit": code, "seconds": round(time.monotonic() - t0, 1)})
+            if code != 0:
+                tail_text = tail.text()
+                print(
+                    f"  [rfc] STOPPED at {LABELS[stage]} (exit {code}). Fix the cause, then resume this run with "
+                    f"--run-dir {run_dir} — finished work is kept.",
+                    file=sys.stderr,
+                )
+                print(
+                    f"  [rfc] Feedback on this run (optional, it helps tune the pipeline): "
+                    f"/rfc-agent:feedback --run-dir {run_dir}",
+                    file=sys.stderr,
+                )
+                break
     summary = _summary(run_dir, ran)
     summary["status"] = "done" if code == 0 else f"stopped at {ran[-1]['stage']}"
     prev = _read(run_dir / "logs" / "run.json") or {}  # read before it is overwritten below
-    with (run_dir / "logs" / "attempts.jsonl").open("a", encoding="utf-8") as f:
-        f.write(
-            json.dumps(
-                {
-                    "ts": datetime.now(UTC).isoformat(timespec="seconds"),
-                    "kind": "resume" if existed else "new",
-                    "from": STAGES[start],
-                    "exit": code,
-                    "status": summary["status"],
-                }
-            )
-            + "\n"
-        )
+    run_end.close_attempt(
+        run_dir, kind=kind, start_stage=STAGES[start], code=code, status=summary["status"],
+        stage=ran[-1]["stage"] if code != 0 else None, tail_text=tail_text,
+    )  # fmt: skip
     attempts = len((run_dir / "logs" / "attempts.jsonl").read_text(encoding="utf-8").splitlines())
     summary["attempts"], summary["resumes"] = attempts, attempts - 1  # one run, however many tries it took
     summary["seconds_all_attempts"] = round(

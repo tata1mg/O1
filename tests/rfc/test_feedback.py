@@ -658,3 +658,92 @@ def test_record_sets_status_and_a_skip_replaces_earlier_minutes(tmp_path, monkey
     assert not any(s["name"] == "rfc_minutes_saved" for s in second)  # no number written when skipped
     log = [json.loads(x) for x in (tmp_path / "logs" / feedback.FEEDBACK_FILE).read_text().splitlines()]
     assert [e["minutes_status"] for e in log] == ["given", "skipped"]
+
+
+# ---- feedback on a stopped or failed attempt ------------------------------------------------------------------------
+
+
+def _attempts(run, *lines):
+    (run / "logs").mkdir(parents=True, exist_ok=True)
+    (run / "logs" / "attempts.jsonl").write_text("\n".join(json.dumps(x) for x in lines) + "\n")
+
+
+def test_run_end_scores_write_only_what_was_answered():
+    base = dict(trace_id="T1", session_id="s", run_name="r", version=None)
+    assert feedback.build_run_end_scores(**base) == []
+    got = {s["name"]: s["value"] for s in feedback.build_run_end_scores(**base, stop_reason="too_slow", rerun="yes")}
+    assert got == {"rfc_run_stop_reason": "too_slow", "rfc_rerun": "yes"}  # no "not_rated" placeholders
+    sc = feedback.build_run_end_scores(**base, failure_check="no", notes={"failure": "VPN was off"})
+    assert sc[0]["name"] == "rfc_failure_cause_confirmed" and sc[0]["comment"] == "VPN was off"
+    assert sc[0]["score_id"] == "fb:T1:failure_confirmed"
+
+
+def test_a_stopped_attempt_is_rated_without_a_thumb(tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(feedback, "_send", lambda cfg, scores: sent.append(scores) or None)
+    _traces(tmp_path, ("T1", "rfc"))
+    _attempts(tmp_path, {"exit": 130, "stop_kind": "user_stop", "stage": "review", "status": "stopped at review"})
+    note = {"stop": "cost, and slow too"}
+    res = feedback.record(tmp_path, None, stop_reason="too_costly", rerun="no", notes=note, cfg=KEYS)
+    assert res["sent"] and res["target"] == "trace"
+    by = {s["name"]: s for s in sent[0]}
+    assert set(by) == {"rfc_run_stop_reason", "rfc_rerun"}  # no headline, no areas
+    assert by["rfc_run_stop_reason"]["comment"] == "cost, and slow too"
+    meta = by["rfc_rerun"]["metadata"]
+    assert meta["attempt"] == 1 and meta["run_state"] == "stopped at review"
+    entry = json.loads((tmp_path / "logs" / feedback.FEEDBACK_FILE).read_text().splitlines()[-1])
+    assert entry["rating"] is None and entry["stop_reason"] == "too_costly" and entry["attempt"] == 1
+
+
+def test_a_finished_attempt_does_not_override_the_stopped_attempts_feedback(tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(feedback, "_send", lambda cfg, scores: sent.append(scores) or None)
+    _traces(tmp_path, ("T1", "rfc"))
+    _attempts(tmp_path, {"exit": 130, "stop_kind": "user_stop", "stage": "review"})
+    feedback.record(tmp_path, None, stop_reason="changed_mind", rerun="yes", cfg=KEYS)
+    _traces(tmp_path, ("T1", "rfc"), ("T2", "rfc"))  # the resume is a new trace
+    _attempts(tmp_path, {"exit": 130, "stop_kind": "user_stop", "stage": "review"}, {"exit": 0})
+    feedback.record(tmp_path, "down", cfg=KEYS)
+    stopped_ids = {s["score_id"] for s in sent[0]}
+    finished_ids = {s["score_id"] for s in sent[1]}
+    assert all(i.startswith("fb:T1:") for i in stopped_ids) and all(i.startswith("fb:T2:") for i in finished_ids)
+    assert not stopped_ids & finished_ids  # nothing of attempt 1 can be replaced by attempt 2
+    meta = next(s for s in sent[1] if s["name"] == "rfc_feedback")["metadata"]
+    assert (meta["attempt"], meta["attempts"], meta["run_state"]) == (2, 2, "done")
+
+
+def test_rating_the_same_stopped_attempt_again_replaces_only_that_attempt(tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(feedback, "_send", lambda cfg, scores: sent.append(scores) or None)
+    _traces(tmp_path, ("T1", "rfc"))
+    _attempts(tmp_path, {"exit": 1, "stop_kind": "failure", "stage": "scope", "failure_cause": "other"})
+    feedback.record(tmp_path, None, failure_check="no", rerun="yes", notes={"failure": "first"}, cfg=KEYS)
+    feedback.record(tmp_path, None, failure_check="yes", rerun="yes", cfg=KEYS)
+    first, second = ({s["name"]: s for s in x} for x in sent)
+    assert first["rfc_failure_cause_confirmed"]["score_id"] == second["rfc_failure_cause_confirmed"]["score_id"]
+    assert second["rfc_failure_cause_confirmed"]["comment"] == ""  # the old note is cleared
+
+
+def test_unknown_values_are_dropped(tmp_path, monkeypatch):
+    monkeypatch.setattr(feedback, "_send", lambda cfg, scores: None)
+    bad = dict(run_end="bogus", stop_reason="bogus", failure_check="maybe", rerun="sometimes")
+    feedback.record(tmp_path, None, cfg=KEYS, **bad)
+    entry = json.loads((tmp_path / "logs" / feedback.FEEDBACK_FILE).read_text().splitlines()[-1])
+    assert entry["run_end"] is entry["stop_reason"] is entry["failure_check"] is entry["rerun"] is None
+
+
+def test_context_says_how_the_run_ended_and_whether_earlier_attempts_did_not_finish(tmp_path):
+    _attempts(tmp_path, {"exit": 1, "stop_kind": "failure", "stage": "scope", "failure_cause": "usage_or_login_limit"})
+    ctx = feedback.context(tmp_path)
+    assert ctx["end"] == "failed" and ctx["cause"] == "usage_or_login_limit"
+    assert ctx["recorded"].startswith("Failed at scope · usage or login limit")
+    _attempts(tmp_path, {"exit": 130, "stop_kind": "user_stop", "stage": "review"}, {"exit": 0})
+    ctx = feedback.context(tmp_path)
+    assert ctx["end"] == "finished" and ctx["earlier"] == [{"attempt": 1, "end": "stopped", "stage": "review"}]
+
+
+def test_cli_accepts_run_end_answers_without_a_rating(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(feedback, "_send", lambda cfg, scores: None)
+    monkeypatch.setattr(observe, "_load_cfg", lambda: KEYS)
+    assert feedback.main(["--run-dir", str(tmp_path), "--stop-reason", "too_slow", "--rerun", "yes"]) == 0
+    assert feedback.main(["--run-dir", str(tmp_path)]) == 2  # nothing at all is still a usage error

@@ -4,6 +4,8 @@
     python -m rfc_agent.feedback --run-dir <run> --rating up|down [--verdict DIM=V]... [--issue DIM=V]...
         [--run-speed V] [--run-cost V] [--start-ready V] [--minutes-saved N] [--minutes-spent N]
         [--minutes-skipped] [--note KEY=TEXT]... [--comment "..."] [--stage S]
+    python -m rfc_agent.feedback --run-dir <run> [--run-end stopped|failed|finished] [--stop-reason V]
+        [--failure-check yes|no] [--failure-reported V] --rerun yes|no [--note stop|failure=TEXT]
 
 The rating becomes scores on the trace that run produced (its id is in <run>/logs/traces.jsonl, written by
 observe.py), so every thumb is joined to the run's cost, gates, stages and session in Langfuse and a dashboard
@@ -30,6 +32,21 @@ is just a score chart. Scores:
     rfc_feedback_stage    CATEGORICAL  only with --stage: which stage the rating is about
 
 A 👍 can carry issues too: an approved RFC may still have gaps worth charting.
+
+A run that stopped or failed has no RFC to rate. `--context` says how the latest attempt ended (`end`: finished,
+stopped, failed or unknown), taken from the run's own record (run_end.py), so the form opens on the matching path.
+A stopped or failed attempt is rated with these scores, each written only when asked:
+
+    rfc_run_stop_reason          CATEGORICAL  stopped: the main reason (STOP_REASON); --note stop=... is its comment
+    rfc_failure_cause_confirmed  CATEGORICAL  failed: yes/no, was the recorded cause what happened; --note failure=...
+    rfc_failure_cause_reported   CATEGORICAL  failed with no recorded cause (killed): what the person says
+    rfc_rerun                    CATEGORICAL  yes/no, would you run it again
+    rfc_run_end                  CATEGORICAL  the person's answer, only when the run has no end record (killed)
+
+Each attempt of a run is its own trace, so feedback belongs to the attempt it was given on: a run that was stopped,
+rated, resumed and finished keeps the stopped attempt's feedback and gets a separate rating for the finished one.
+Rating the same attempt again replaces only that attempt's feedback. Every score carries `attempt`, `attempts` (how
+many there were) and `run_state` (how the run stood when it was rated) in its metadata.
 
 Every rating also carries a `run_brief` (on the headline score's metadata, and saved as <run>/logs/run_brief.md): a
 short plain-text account of the run, its review rounds and what the reviewer said, so whoever reads a rating in
@@ -61,6 +78,7 @@ import time
 from pathlib import Path
 
 from . import observe, run_facts
+from .run_end import state as run_end_state
 
 FEEDBACK_FILE = "feedback.jsonl"
 
@@ -107,13 +125,19 @@ DIMENSIONS: dict[str, dict[str, tuple[str, ...]]] = {
 }
 for _gaps in DIMENSIONS.values():
     _gaps["other_see_comment"] = ()  # typed under Other and matching no listed gap: the stage to check is unknown
-NOTE_KEYS = (*DIMENSIONS, "run")  # the questions a typed Other can belong to (the thumb's is --comment)
+# the questions a typed Other can belong to (the thumb's is --comment)
+NOTE_KEYS = (*DIMENSIONS, "run", "stop", "failure")
 VERDICTS = ("usable", "usable_with_gaps", "not_usable")
 PROBLEM_VERDICTS = VERDICTS[1:]
 RUN_SPEED = ("fine", "too_slow_to_run", "too_slow_to_review", "too_slow_to_run_and_review")
 RUN_COST = ("worth_it", "too_token_heavy")
 START_READY = ("yes", "after_a_few_clarifications", "after_many_clarifications", "no")
 MINUTES_STATUS = ("given", "partial", "skipped", "not_rated")
+RUN_END = ("finished", "stopped", "failed")  # the person's answer, asked only when the run has no end record
+STOP_REASON = ("too_slow", "too_costly", "wrong_repos_or_pages", "bad_input", "changed_mind", "other")
+FAILURE_CHECK = ("yes", "no")  # was the cause the run recorded what happened
+FAILURE_REPORTED = ("usage_or_login_limit", "connector", "connection", "other")  # when no cause was recorded
+RERUN = ("yes", "no")
 _COMMENT_CAP = 2000
 
 
@@ -247,6 +271,7 @@ def build_scores(
     cleared_notes: tuple[str, ...] = (),
     had_comment: bool = False,
     had_stage: bool = False,
+    attempt_meta: dict | None = None,
 ) -> list[dict]:
     """The `create_score` kwargs for one piece of feedback (pure — tests assert on this).
 
@@ -261,7 +286,7 @@ def build_scores(
         k: v
         for k, v in {"run": run_name, "session_id": session_id, "stage": stage, "plugin_version": version}.items()
         if v
-    } | (facts or {})
+    } | (facts or {}) | (attempt_meta or {})
     verdicts, issues, notes = verdicts or {}, issues or {}, notes or {}
 
     def score(name: str, value, sid: str, note: str | None = None, clear: bool = False, **extra) -> dict:
@@ -339,6 +364,66 @@ def build_scores(
     return scores
 
 
+def build_run_end_scores(
+    *,
+    trace_id: str | None,
+    session_id: str,
+    run_name: str,
+    version: str | None,
+    facts: dict | None = None,
+    attempt_meta: dict | None = None,
+    run_end: str | None = None,
+    stop_reason: str | None = None,
+    failure_check: str | None = None,
+    failure_reported: str | None = None,
+    rerun: str | None = None,
+    notes: dict[str, str] | None = None,
+    cleared_notes: tuple[str, ...] = (),
+    brief: str | None = None,
+) -> list[dict]:
+    """The `create_score` kwargs for feedback on a stopped or failed attempt (pure). Only what was answered is
+    written. Ids are per (trace, name): rating the same attempt again replaces its feedback and nothing else."""
+    target = {"trace_id": trace_id} if trace_id else {"session_id": session_id}
+    key = trace_id or f"session:{session_id}"
+    meta = {
+        k: v
+        for k, v in {"run": run_name, "session_id": session_id, "plugin_version": version}.items()
+        if v
+    } | (facts or {}) | (attempt_meta or {})
+    notes = notes or {}
+    scores: list[dict] = []
+    for name, sid, value, note_key in (
+        ("rfc_run_end", "run_end", run_end, None),
+        ("rfc_run_stop_reason", "stop_reason", stop_reason, "stop"),
+        ("rfc_failure_cause_confirmed", "failure_confirmed", failure_check, "failure"),
+        ("rfc_failure_cause_reported", "failure_reported", failure_reported, "failure"),
+        ("rfc_rerun", "rerun", rerun, None),
+    ):
+        if not value:
+            continue
+        note = notes.get(note_key) if note_key else None
+        scores.append(
+            dict(
+                name=name,
+                value=value,
+                data_type="CATEGORICAL",
+                score_id=f"fb:{key}:{sid}",
+                metadata=meta | ({"run_brief": brief} if brief and not scores else {}),
+                **({"comment": note} if note else {"comment": ""} if note_key in cleared_notes else {}),
+                **target,
+            )
+        )
+    return scores
+
+
+def _attempt_meta(run_dir: Path, state: dict) -> dict:
+    """Which attempt this feedback is about and how the run stood when it was given."""
+    end, stage = state["end"], state.get("stage")
+    states = {"finished": "done", "stopped": f"stopped at {stage}", "failed": f"failed at {stage}"}
+    run_state = states.get(end, "unknown")
+    return {"attempt": state["attempt"], "attempts": state["attempts"], "run_state": run_state}
+
+
 def _plugin_version() -> str | None:
     with contextlib.suppress(Exception):
         p = Path(__file__).resolve().parents[2] / ".claude-plugin" / "plugin.json"
@@ -373,7 +458,7 @@ def _previous(run_dir: Path, trace_id: str | None, session_id: str):
 
 def record(
     run_dir: Path,
-    rating: str,
+    rating: str | None,
     *,
     comment: str | None = None,
     stage: str | None = None,
@@ -385,10 +470,17 @@ def record(
     minutes_saved: int | None = None,
     minutes_spent: int | None = None,
     minutes_skipped: bool = False,
+    run_end: str | None = None,
+    stop_reason: str | None = None,
+    failure_check: str | None = None,
+    failure_reported: str | None = None,
+    rerun: str | None = None,
     notes: dict[str, str] | None = None,
     cfg=None,
 ) -> dict:
-    """Record one piece of feedback; returns what happened (`sent`, `target`, `local`, `note`)."""
+    """Record one piece of feedback; returns what happened (`sent`, `target`, `local`, `note`).
+
+    `rating` None is feedback on a stopped or failed attempt (the run-end answers): no RFC scores are written."""
     run_dir = run_dir.expanduser().resolve()
     comment = _clean_comment(comment)
     notes = {k: t for k, v in (notes or {}).items() if k in NOTE_KEYS and (t := _clean_comment(v))}
@@ -398,7 +490,14 @@ def record(
     minutes_saved = minutes_saved if minutes_saved is not None and minutes_saved >= 0 else None
     minutes_spent = minutes_spent if minutes_spent is not None and minutes_spent >= 0 else None
     status = minutes_status(minutes_saved, minutes_spent, minutes_skipped)
+    run_end = run_end if run_end in RUN_END else None
+    stop_reason = stop_reason if stop_reason in STOP_REASON else None
+    failure_check = failure_check if failure_check in FAILURE_CHECK else None
+    failure_reported = failure_reported if failure_reported in FAILURE_REPORTED else None
+    rerun = rerun if rerun in RERUN else None
     verdicts, issues = _norm_form(verdicts, issues, notes)
+    state = run_end_state(run_dir)
+    attempt_meta = _attempt_meta(run_dir, state)
     trace_id = pick_trace(run_dir, stage)
     session_id = _session_id(run_dir)
     prev_issues, prev_stages, prev_notes, had_comment, had_stage = _previous(run_dir, trace_id, session_id)
@@ -410,7 +509,7 @@ def record(
     with contextlib.suppress(OSError):
         (run_dir / "logs").mkdir(parents=True, exist_ok=True)
         (run_dir / "logs" / "run_brief.md").write_text(brief + "\n", encoding="utf-8")
-    scores = build_scores(
+    scores = [] if rating not in ("up", "down") else build_scores(
         rating=rating,
         comment=comment,
         stage=stage,
@@ -434,10 +533,25 @@ def record(
         cleared_notes=tuple(sorted(prev_notes)),
         had_comment=had_comment,
         had_stage=had_stage,
-    )
+        attempt_meta=attempt_meta,
+    )  # fmt: skip
+    scores += build_run_end_scores(
+        trace_id=trace_id, session_id=session_id, run_name=run_dir.name, version=_plugin_version(), facts=facts,
+        attempt_meta=attempt_meta, run_end=run_end, stop_reason=stop_reason, failure_check=failure_check,
+        failure_reported=failure_reported, rerun=rerun, notes=notes, cleared_notes=tuple(sorted(prev_notes)),
+        brief=brief if rating not in ("up", "down") else None,
+    )  # fmt: skip
     entry = {
         "ts": time.time(),
         "rating": rating,
+        "run_end": run_end,
+        "stop_reason": stop_reason,
+        "failure_check": failure_check,
+        "failure_reported": failure_reported,
+        "rerun": rerun,
+        "attempt": attempt_meta["attempt"],
+        "attempts": attempt_meta["attempts"],
+        "run_state": attempt_meta["run_state"],
         "verdicts": verdicts,
         "issues": issues,
         "stages": suspect_stages(issues),
@@ -582,10 +696,34 @@ def summary_line(facts: dict) -> str:
     return " · ".join(bits)
 
 
+_END_WORD = {"finished": "Finished", "stopped": "Stopped", "failed": "Failed", "unknown": "No end record"}
+
+
+def recorded_line(state: dict, line: str) -> str:
+    """The run's own account of how the latest attempt ended, shown at the top of the form."""
+    end, stage = state["end"], state.get("stage")
+    bits = [_END_WORD[end] + (f" at {stage}" if stage else "")]
+    if end == "stopped":
+        bits.append("you stopped it (Ctrl-C or a stop)")
+    elif end == "failed" and state.get("cause"):
+        bits.append(str(state["cause"]).replace("_", " "))
+    elif end == "unknown":
+        bits.append("the process was killed or is still running")
+    if line:
+        bits.append(line)
+    return " · ".join(bits)
+
+
 def context(run_dir: Path) -> dict:
-    """What the rating prompt needs: the run's measured numbers in one line."""
+    """What the rating prompt needs: the run's measured numbers in one line, and how the latest attempt ended.
+
+    `end` is finished, stopped, failed or unknown (no end record): the form opens on that path and asks "how did it
+    end?" only for unknown. `cause`/`excerpt` are the recorded failure cause. `earlier` lists the attempts before this
+    one that did not finish; they keep their own feedback."""
     run_dir = run_dir.expanduser().resolve()
-    return {"line": summary_line(run_facts.collect(run_dir, _prd_ref(run_dir)))}
+    line = summary_line(run_facts.collect(run_dir, _prd_ref(run_dir)))
+    state = run_end_state(run_dir)
+    return {"line": line, "recorded": recorded_line(state, line), **state}
 
 
 def _pair(allowed: dict[str, tuple[str, ...]]):
@@ -629,6 +767,13 @@ def main(argv: list[str] | None = None) -> int:
         metavar="DIM=ISSUE",
         help="repeatable; kept only on a dimension whose verdict has gaps",
     )
+    ap.add_argument("--run-end", choices=RUN_END,
+                    help="how the run ended, by the person; only when the run has no end record")
+    ap.add_argument("--stop-reason", choices=STOP_REASON, help="a stopped run: the main reason you stopped it")
+    ap.add_argument("--failure-check", choices=FAILURE_CHECK, help="a failed run: was the recorded cause what happened")
+    ap.add_argument("--failure-reported", choices=FAILURE_REPORTED,
+                    help="a failed run with no recorded cause: what made it fail")
+    ap.add_argument("--rerun", choices=RERUN, help="a stopped or failed run: would you run it again")
     ap.add_argument("--run-speed", choices=RUN_SPEED)
     ap.add_argument("--run-cost", choices=RUN_COST)
     ap.add_argument("--start-ready", choices=START_READY, help="could implementation start from this RFC")
@@ -657,15 +802,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.context:
         print(json.dumps(context(args.run_dir)))
         return 0
-    if not args.rating:
-        print("--rating is required (or pass --context)", file=sys.stderr)
+    ended = (args.run_end, args.stop_reason, args.failure_check, args.failure_reported, args.rerun)
+    if not args.rating and not any(ended):
+        print("--rating is required for a finished run, or give the stopped/failed answers (or pass --context)",
+              file=sys.stderr)
         return 2
     issues: dict[str, list[str]] = {}
     for dim, issue in args.issue:
         issues.setdefault(dim, []).append(issue)
     res = record(
         args.run_dir,
-        args.rating,
+        args.rating,  # None for a stopped or failed attempt: only the run-end answers are recorded
         comment=args.comment,
         stage=args.stage,
         verdicts=dict(args.verdict),
@@ -676,6 +823,11 @@ def main(argv: list[str] | None = None) -> int:
         minutes_saved=args.minutes_saved,
         minutes_spent=args.minutes_spent,
         minutes_skipped=args.minutes_skipped,
+        run_end=args.run_end,
+        stop_reason=args.stop_reason,
+        failure_check=args.failure_check,
+        failure_reported=args.failure_reported,
+        rerun=args.rerun,
         notes=dict(args.note),
     )
     if res["sent"]:
