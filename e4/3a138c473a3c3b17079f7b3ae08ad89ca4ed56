@@ -1,0 +1,39 @@
+CHANGELOG.md
+  s_461c157c616dc4::t_5de8778e34548e 40-44
+tests/rfc/test_feedback_summary.py
+  s_461c157c616dc4::t_c94cd7447899d4 32-33
+  s_461c157c616dc4::t_4a210563f5d783 1-31,34-58
+src/rfc_agent/feedback_summary.py
+  s_461c157c616dc4::t_c94cd7447899d4 108-109
+  s_461c157c616dc4::t_0fe141d8380aeb 103-104
+  s_461c157c616dc4::t_058f835802e26a 1-102,105-107,110-151
+commands/feedback.md
+  s_461c157c616dc4::t_5de8778e34548e 52-53,56-72,201-206
+  s_461c157c616dc4::t_bd014d9261e9e8 187,197
+tests/rfc/test_feedback.py
+  s_461c157c616dc4::t_9c973a87bfe723 103
+  s_461c157c616dc4::t_4a210563f5d783 924-953,955-1004
+  s_461c157c616dc4::t_c94cd7447899d4 102,954
+docs/FEEDBACK.md
+  s_461c157c616dc4::t_5de8778e34548e 177-212,221-222
+src/rfc_agent/feedback.py
+  s_461c157c616dc4::t_96a601c401f3f3 6,776-779,985-989,1014,1040-1041,1043-1046,1051
+  s_461c157c616dc4::t_cb78577b39ec48 80,556-562,570,587-588,591,595,599-608,629-630,633,635-636,640-662,681-700
+  s_461c157c616dc4::t_7e20ce9f43fb2c 637-638
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e43a138c473a3c3b17079f7b3ae08ad89ca4ed56",
+  "prompts": {},
+  "sessions": {
+    "s_461c157c616dc4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "faed9c0f-737d-4a1e-9864-b080199796c8",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}
