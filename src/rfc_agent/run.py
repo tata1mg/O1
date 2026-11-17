@@ -270,6 +270,11 @@ def main(argv: list[str] | None = None) -> int:
                 f"--run-dir {run_dir} — finished work is kept.",
                 file=sys.stderr,
             )
+            print(
+                f"  [rfc] Feedback on this run (optional, it helps tune the pipeline): "
+                f"/rfc-agent:feedback --run-dir {run_dir}",
+                file=sys.stderr,
+            )
             break
     summary = _summary(run_dir, ran)
     summary["status"] = "done" if code == 0 else f"stopped at {ran[-1]['stage']}"

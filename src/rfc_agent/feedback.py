@@ -2,7 +2,8 @@
 
     python -m rfc_agent.feedback --run-dir <run> --context
     python -m rfc_agent.feedback --run-dir <run> --rating up|down [--verdict DIM=V]... [--issue DIM=V]...
-        [--run-speed V] [--run-cost V] [--start-ready V] [--note KEY=TEXT]... [--comment "..."] [--stage S]
+        [--run-speed V] [--run-cost V] [--start-ready V] [--minutes-saved N] [--minutes-spent N]
+        [--minutes-skipped] [--note KEY=TEXT]... [--comment "..."] [--stage S]
 
 The rating becomes scores on the trace that run produced (its id is in <run>/logs/traces.jsonl, written by
 observe.py), so every thumb is joined to the run's cost, gates, stages and session in Langfuse and a dashboard
@@ -21,6 +22,11 @@ is just a score chart. Scores:
                                        --note run=... too
     rfc_run_cost          CATEGORICAL  worth_it, too_token_heavy, not_rated; --note run=... too
     rfc_start_ready       CATEGORICAL  could implementation start from the RFC: yes, after_a_few_clarifications/many, no
+    rfc_minutes_status    CATEGORICAL  given (both minutes typed), partial (one typed), skipped (--minutes-skipped),
+                                       not_rated (no answer passed). Written on every rating, so a re-rate replaces it.
+    rfc_minutes_saved     NUMERIC      minutes the RFC saved versus writing it yourself (--minutes-saved; only if given)
+    rfc_minutes_spent     NUMERIC      minutes the person spent reviewing and correcting the RFC after it was generated
+                                       (--minutes-spent; only if given). The run itself and pauses are already on the trace.
     rfc_feedback_stage    CATEGORICAL  only with --stage: which stage the rating is about
 
 A 👍 can carry issues too: an approved RFC may still have gaps worth charting.
@@ -85,7 +91,7 @@ DIMENSIONS: dict[str, dict[str, tuple[str, ...]]] = {
         "marked_covered_but_not_addressed": ("draft", "review"),
     },
     "approach": {  # the chosen option fits our infra and engineering standards
-        "ignores_existing_infra": ("draft", "investigate"),
+        "poor_approach": ("draft", "investigate"),  # wrong service or place, or worse given how our systems work
         "ignores_engineering_standards": ("draft",),
         "generic_industry_choice_over_local_fit": ("draft",),
         "tradeoff_not_justified": ("draft",),
@@ -107,6 +113,7 @@ PROBLEM_VERDICTS = VERDICTS[1:]
 RUN_SPEED = ("fine", "too_slow_to_run", "too_slow_to_review", "too_slow_to_run_and_review")
 RUN_COST = ("worth_it", "too_token_heavy")
 START_READY = ("yes", "after_a_few_clarifications", "after_many_clarifications", "no")
+MINUTES_STATUS = ("given", "partial", "skipped", "not_rated")
 _COMMENT_CAP = 2000
 
 
@@ -200,6 +207,16 @@ def _norm_form(
     return out_v, out_i
 
 
+def minutes_status(saved: int | None, spent: int | None, skipped: bool = False) -> str:
+    """given (both typed), partial (one typed), skipped (the person said skip), else not_rated (no answer passed)."""
+    answered = (saved is not None) + (spent is not None)
+    if answered == 2:
+        return "given"
+    if answered == 1:
+        return "partial"
+    return "skipped" if skipped else "not_rated"
+
+
 def suspect_stages(issues: dict[str, list[str]]) -> list[str]:
     """The stages the picked gaps point at, once each (a gap can name two)."""
     return sorted({st for dim, picked in issues.items() for i in picked for st in DIMENSIONS.get(dim, {}).get(i, ())})
@@ -220,6 +237,9 @@ def build_scores(
     run_speed: str | None = None,
     run_cost: str | None = None,
     start_ready: str | None = None,
+    minutes_saved: int | None = None,
+    minutes_spent: int | None = None,
+    minutes_skipped: bool = False,
     notes: dict[str, str] | None = None,
     cleared_issues: tuple[tuple[str, str], ...] = (),
     cleared_stages: tuple[str, ...] = (),
@@ -292,6 +312,26 @@ def build_scores(
     )
     scores.append(score("rfc_run_cost", run_cost or "not_rated", "run_cost", notes.get("run"), "run" in cleared_notes))
     scores.append(score("rfc_start_ready", start_ready or "not_rated", "start_ready"))
+    status = minutes_status(minutes_saved, minutes_spent, minutes_skipped)
+    # The status is written on every rating, so a re-rate always replaces it. The numbers are NUMERIC and written only
+    # when typed (a score cannot be "not rated"): when the status is not `given` or `partial`, the numbers left on
+    # the trace by an earlier rating are stale, and the status is the one to read.
+    scores.append(score("rfc_minutes_status", status, "minutes_status"))
+    for name, sid, value in (
+        ("rfc_minutes_saved", "minutes_saved", minutes_saved),
+        ("rfc_minutes_spent", "minutes_spent", minutes_spent),
+    ):
+        if value is not None:
+            scores.append(
+                dict(
+                    name=name,
+                    value=float(value),
+                    data_type="NUMERIC",
+                    score_id=f"fb:{key}:{sid}",
+                    metadata=meta,
+                    **target,
+                )
+            )
     if stage:
         scores.append(score("rfc_feedback_stage", stage, "stage"))
     elif had_stage:  # an earlier rating of this trace named a stage and this one does not
@@ -342,6 +382,9 @@ def record(
     run_speed: str | None = None,
     run_cost: str | None = None,
     start_ready: str | None = None,
+    minutes_saved: int | None = None,
+    minutes_spent: int | None = None,
+    minutes_skipped: bool = False,
     notes: dict[str, str] | None = None,
     cfg=None,
 ) -> dict:
@@ -352,6 +395,9 @@ def record(
     run_speed = run_speed if run_speed in RUN_SPEED else None
     run_cost = run_cost if run_cost in RUN_COST else None
     start_ready = start_ready if start_ready in START_READY else None
+    minutes_saved = minutes_saved if minutes_saved is not None and minutes_saved >= 0 else None
+    minutes_spent = minutes_spent if minutes_spent is not None and minutes_spent >= 0 else None
+    status = minutes_status(minutes_saved, minutes_spent, minutes_skipped)
     verdicts, issues = _norm_form(verdicts, issues, notes)
     trace_id = pick_trace(run_dir, stage)
     session_id = _session_id(run_dir)
@@ -379,6 +425,9 @@ def record(
         run_speed=run_speed,
         run_cost=run_cost,
         start_ready=start_ready,
+        minutes_saved=minutes_saved,
+        minutes_spent=minutes_spent,
+        minutes_skipped=minutes_skipped,
         notes=notes,
         cleared_issues=tuple(sorted(prev_issues)),
         cleared_stages=tuple(sorted(prev_stages)),
@@ -395,6 +444,9 @@ def record(
         "run_speed": run_speed,
         "run_cost": run_cost,
         "start_ready": start_ready,
+        "minutes_saved": minutes_saved,
+        "minutes_spent": minutes_spent,
+        "minutes_status": status,
         "notes": notes,
         "comment": comment,
         "stage": stage,
@@ -580,6 +632,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--run-speed", choices=RUN_SPEED)
     ap.add_argument("--run-cost", choices=RUN_COST)
     ap.add_argument("--start-ready", choices=START_READY, help="could implementation start from this RFC")
+    ap.add_argument("--minutes-saved", type=int, default=None, metavar="N",
+                    help="minutes this RFC saved you versus writing it yourself (a whole number, 0 or more)")
+    ap.add_argument("--minutes-spent", type=int, default=None, metavar="N",
+                    help="minutes you spent reviewing and correcting the RFC after it was generated")
+    ap.add_argument("--minutes-skipped", action="store_true",
+                    help="the person skipped the time questions (pass only when no minutes were typed)")
     ap.add_argument(
         "--note",
         action="append",
@@ -615,6 +673,9 @@ def main(argv: list[str] | None = None) -> int:
         run_speed=args.run_speed,
         run_cost=args.run_cost,
         start_ready=args.start_ready,
+        minutes_saved=args.minutes_saved,
+        minutes_spent=args.minutes_spent,
+        minutes_skipped=args.minutes_skipped,
         notes=dict(args.note),
     )
     if res["sent"]:

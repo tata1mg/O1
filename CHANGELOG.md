@@ -3,6 +3,27 @@
 All notable changes to this project. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions match `.claude-plugin/plugin.json`.
 
+## 0.1.2 (pilot)
+
+### Changed
+
+- **Approach gaps: one "poor approach" gap.** `ignores_existing_infra` is replaced by `poor_approach` ("poor approach
+  for our systems, e.g. the wrong service or place to build it"). `ignores_engineering_standards` stays separate.
+- **Plainer gap labels.** Coverage: "RFC says it's covered, but the software design in the RFC doesn't address it."
+  Buildability: "Too vague to start coding", "Ambiguous interface or API contract", "Doesn't say what to build first or
+  what depends on what", "A source is cited but doesn't say that".
+- **Time questions after the thumb** (after 👍 with notes or 👎, skippable; a plain 👍 stays one tap): minutes this RFC saved you versus writing it yourself,
+  and minutes you spent reviewing and correcting the RFC after it was generated. Stored as numeric scores
+  (`rfc_minutes_saved`, `rfc_minutes_spent`), written only when typed.
+- **`rfc_minutes_status`** (`given`, `partial`, `skipped`, `not_rated`) is written on every rating, so a re-rate always
+  replaces it. `--minutes-skipped` records a skip. Read the status before the minutes: numbers left by an earlier
+  rating are stale when the status is not `given` or `partial`.
+
+### Added
+
+- A stopped run (a stage failure, Ctrl-C or a stop) prints the feedback command for that run folder:
+  `/rfc-agent:feedback --run-dir <folder>`.
+
 ## 0.1.1 (pilot)
 
 ### Changed

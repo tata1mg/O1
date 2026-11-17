@@ -45,6 +45,9 @@ area with gaps gets the gaps. A 👍 can carry gaps too: the thumb is the headli
 | `rfc_run_speed` | CATEGORICAL | `fine`, `too_slow_to_run`, `too_slow_to_review`, `too_slow_to_run_and_review`, `not_rated` | always written; its comment is what was typed under Other on the run question |
 | `rfc_run_cost` | CATEGORICAL | `worth_it`, `too_token_heavy`, `not_rated` | always written; same comment as `rfc_run_speed` |
 | `rfc_start_ready` | CATEGORICAL | `yes`, `after_a_few_clarifications`, `after_many_clarifications`, `no`, `not_rated` | could implementation start |
+| `rfc_minutes_status` | CATEGORICAL | `given`, `partial`, `skipped`, `not_rated` | written on every rating, so a re-rate replaces it; read this before the minutes |
+| `rfc_minutes_saved` | NUMERIC | minutes | minutes the RFC saved versus writing it yourself; written only when typed; stale if the status is not `given` or `partial` |
+| `rfc_minutes_spent` | NUMERIC | minutes | minutes the person spent reviewing and correcting the RFC after it was generated; written only when typed |
 | `rfc_feedback_stage` | CATEGORICAL | scope, investigate, draft, review, revise | only with `--stage` |
 
 Areas and their gaps (`feedback.DIMENSIONS`):
@@ -55,7 +58,7 @@ Areas and their gaps (`feedback.DIMENSIONS`):
 | `buildability` | a coding agent could build from `rfc.md` | `too_thin_to_build_from` (Draft, Investigate), `interface_or_contract_unclear`, `build_order_or_dependency_missing` (Draft), `citation_does_not_support_claim` (Draft, Investigate) |
 | `context_layer` | right code, APIs and existing services found | `wrong_or_stale_code_fact` (Investigate, Scope), `missed_existing_code_or_service` (Investigate), `ignored_existing_pattern` (Investigate, Draft), `wrong_repos_or_pages` (Scope) |
 | `coverage` | PRD and Figma flows handled, "covered" claims true | `missing_prd_flow`, `unneeded_flow_included` (Investigate), `missing_figma_flow_or_state` (Investigate, Scope), `marked_covered_but_not_addressed` (Draft, Review) |
-| `approach` | the choice fits our infra and engineering standards | `ignores_existing_infra` (Draft, Investigate), `ignores_engineering_standards`, `generic_industry_choice_over_local_fit`, `tradeoff_not_justified`, `missing_alternative` (Draft) |
+| `approach` | the choice fits our infra and engineering standards | `poor_approach` (Draft, Investigate), `ignores_engineering_standards`, `generic_industry_choice_over_local_fit`, `tradeoff_not_justified`, `missing_alternative` (Draft) |
 | `rollout_risk` | rollout, rollback, compatibility, performance, security, monitoring | `missing_rollout_rollback`, `missing_compatibility_or_migration`, `missing_performance_or_scale`, `missing_security_or_privacy`, `missing_monitoring` (Draft) |
 
 Contradictory ticks resolve the same way everywhere: the problem wins. The chat tool cannot make an option
@@ -66,7 +69,7 @@ kept as given: it shows up as an unexplained 👎.
 
 `not_rated` means the question was not answered. A gap given for an area marked `usable` makes it
 `usable_with_gaps` (the gap wins), and so does a gap given with no verdict. An unknown area or value is dropped. The end-of-run question skips a
-stopped run (`commands/rfc.md`), but `/rfc-agent:feedback --run-dir <folder>` rates any run folder, and areas the run
+stopped run (`commands/rfc.md`); the stop message prints the `/rfc-agent:feedback --run-dir <folder>` line instead, and `/rfc-agent:feedback --run-dir <folder>` rates any run folder, and areas the run
 never reached stay `not_rated`.
 
 How the person is asked (`commands/feedback.md`): a thumb with four choices (`👍 Good`, `👍 Good, with notes`,
@@ -75,7 +78,8 @@ How the person is asked (`commands/feedback.md`): a thumb with four choices (`�
 readable summary, rollout and risk, and the run questions are not asked by default; they are asked only on request,
 and otherwise stay `not_rated`. The thumb is asked alone first, so `👍 Good` and `Later` never show the area
 questions. `👍 Good` is one tap and records the headline only, so
-every area is `not_rated`. The chat tool allows four options per question, so the gaps not
+every area is `not_rated`. The two time questions (minutes saved, minutes reviewing and correcting) follow the two
+ratings that continue to screen 2, and are skippable; a skip is recorded as `rfc_minutes_status` = `skipped`. The chat tool allows four options per question, so the gaps not
 shown (`unneeded_flow_included`, `citation_does_not_support_claim`, `missing_alternative`, `generic_industry_choice_over_local_fit`,
 `ignored_existing_pattern`, `wrong_emphasis`, `missing_performance_or_scale`, `missing_monitoring`) are set when the person types
 them under Other. What is typed under Other is kept against the question it was typed on (`--note <area>=…`, or `run`), next to

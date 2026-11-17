@@ -58,9 +58,9 @@ the gap wins.
 
 | dimension | question hint | gaps shown (value) | not shown: add when typed under Other (value) |
 |---|---|---|---|
-| `coverage` | are all PRD and Figma flows handled, and are the "covered" claims true? | missing PRD flow (`missing_prd_flow`) · missing Figma flow or state (`missing_figma_flow_or_state`) · marked covered but is not (`marked_covered_but_not_addressed`) | flow not needed (`unneeded_flow_included`) |
-| `buildability` | could a coding agent build from `rfc.md` without guessing? | too thin to build from (`too_thin_to_build_from`) · ambiguous interface or contract (`interface_or_contract_unclear`) · missing build order or dependency (`build_order_or_dependency_missing`) | a citation does not support its claim (`citation_does_not_support_claim`) |
-| `approach` | does the chosen option fit our infra and engineering standards? | ignores existing infra (`ignores_existing_infra`) · ignores engineering standards (`ignores_engineering_standards`) · tradeoff not justified (`tradeoff_not_justified`) | missing alternative (`missing_alternative`) · a generic industry choice over local fit (`generic_industry_choice_over_local_fit`) |
+| `coverage` | are all PRD and Figma flows handled, and are the "covered" claims true? | missing PRD flow (`missing_prd_flow`) · missing Figma flow or state (`missing_figma_flow_or_state`) · RFC says it's covered, but the software design in the RFC doesn't address it (`marked_covered_but_not_addressed`) | flow not needed (`unneeded_flow_included`) |
+| `buildability` | could a coding agent build from `rfc.md` without guessing? | Too vague to start coding (`too_thin_to_build_from`) · Ambiguous interface or API contract (`interface_or_contract_unclear`) · Doesn't say what to build first or what depends on what (`build_order_or_dependency_missing`) | A source is cited but doesn't say that (`citation_does_not_support_claim`) |
+| `approach` | does the chosen option fit our infra and engineering standards? | poor approach for our systems, e.g. the wrong service or place to build it (`poor_approach`) · ignores engineering standards (`ignores_engineering_standards`) · tradeoff not justified (`tradeoff_not_justified`) | missing alternative (`missing_alternative`) · a generic industry choice over local fit (`generic_industry_choice_over_local_fit`) |
 | `context_layer` | did it find the right code, APIs and existing services? | wrong or stale code fact (`wrong_or_stale_code_fact`) · missed existing code, service or API (`missed_existing_code_or_service`) · wrong repos or pages (`wrong_repos_or_pages`) | ignored an existing pattern (`ignored_existing_pattern`) |
 | `readable` | can you review `rfc.readable.md` quickly, and does it match `rfc.md`? | too long or repetitive (`too_long_or_repetitive`) · hard to navigate (`hard_to_navigate`) · leaves out something important (`leaves_out_something_important`) | wrong emphasis (`wrong_emphasis`) |
 | `rollout_risk` | rollout, rollback, compatibility, performance, security, monitoring? | missing rollout or rollback (`missing_rollout_rollback`) · missing compatibility or migration (`missing_compatibility_or_migration`) · missing security or privacy (`missing_security_or_privacy`) | missing performance or scale (`missing_performance_or_scale`) · missing monitoring (`missing_monitoring`) |
@@ -88,6 +88,15 @@ the gap wins.
   `Nothing wrong` / `Fine` as not ticked, and say so in one line when you relay the result (for example
   "Coverage had both Nothing wrong and a gap ticked; recorded the gap").
 - `--start-ready yes` when buildability is `Nothing wrong`; otherwise pass nothing (it is not asked).
+- **Time, two plain questions in chat after screen 2** (not multiple choice: type a whole number of minutes, or
+  `skip`). Ask both, in this order, only for `👍 Good, with notes` and `👎 Needs work` (the two that go on to screen
+  2); a plain `👍 Good` stays one tap, and `Later` asks nothing:
+  1. "How many minutes did this RFC save you versus writing it yourself? (a number, or skip)" →
+     `--minutes-saved N`.
+  2. "After the RFC was generated, how many minutes did you spend reviewing it and correcting it yourself? (a number,
+     or skip; leave out the run itself and any pauses, which are already measured)" → `--minutes-spent N`.
+  Pass only a whole number of 0 or more. Anything else, or `skip`, means pass nothing for it. If both are skipped
+  (no number at all), pass `--minutes-skipped`. Always ask both for the two rated screen-2 answers, so the answer is never blank.
 - No other questions. If the user volunteered a comment in `$ARGUMENTS` or in a reply, pass it as `--comment`; don't
   prompt for one.
 
@@ -96,7 +105,7 @@ the gap wins.
 ```
 uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m rfc_agent.feedback --run-dir "$RUN" --rating <up|down> \
   [--verdict <dimension>=<value> …] [--issue <dimension>=<issue> …] [--run-speed <v>] [--run-cost <v>] \
-  [--start-ready <v>] [--note <key>=<text> …] [--comment "<their line>"] \
+  [--start-ready <v>] [--minutes-saved <n>] [--minutes-spent <n>] [--minutes-skipped] [--note <key>=<text> …] [--comment "<their line>"] \
   [--stage <scope|investigate|draft|review|revise>]
 ```
 

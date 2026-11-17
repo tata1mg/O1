@@ -94,7 +94,7 @@ def test_record_sends_and_logs_locally(tmp_path, monkeypatch):
     secret = "sk-ant-api03-" + "a" * 40
     res = feedback.record(tmp_path, "down", comment=f"  token {secret}  ", cfg=KEYS)
     assert res == {"sent": True, "target": "trace", "local": True, "note": None}
-    assert len(sent) == 1 + 6 + 3  # the headline, then every area, speed, cost and start-ready: always written
+    assert len(sent) == 1 + 6 + 3 + 1  # headline, every area, speed, cost, start-ready, minutes status: always written
     assert sent[0]["name"] == "rfc_feedback"
     assert secret not in (sent[0]["comment"] or "")  # secrets scrubbed
     saved = json.loads((tmp_path / "logs" / feedback.FEEDBACK_FILE).read_text())
@@ -609,3 +609,52 @@ def test_rating_again_without_a_stage_clears_the_stage_of_the_earlier_rating(tmp
     sink.sent.clear()
     feedback.record(tmp_path, "down", cfg=KEYS)
     assert sink.by_name("rfc_feedback_stage") == {"fb:T1:stage": "none"}
+
+
+def test_minutes_are_numeric_scores_only_when_typed():
+    base = dict(rating="up", comment=None, stage=None, trace_id="T1", session_id="s", run_name="r", version=None)
+    typed = feedback.build_scores(**base, minutes_saved=45, minutes_spent=20)
+    got = {s["name"]: (s["value"], s["data_type"]) for s in typed if s["name"] in ("rfc_minutes_saved", "rfc_minutes_spent")}
+    assert got == {"rfc_minutes_saved": (45.0, "NUMERIC"), "rfc_minutes_spent": (20.0, "NUMERIC")}
+    untyped = feedback.build_scores(**base)
+    assert not [s for s in untyped if s["name"] in ("rfc_minutes_saved", "rfc_minutes_spent")]
+
+
+def test_approach_gap_is_poor_approach_and_infra_is_folded_into_it():
+    gaps = feedback.DIMENSIONS["approach"]
+    assert "poor_approach" in gaps and "ignores_existing_infra" not in gaps
+    assert "ignores_engineering_standards" in gaps  # standards stay a separate checklist
+
+
+def test_record_keeps_minutes_in_the_local_log(tmp_path, monkeypatch):
+    monkeypatch.setattr(feedback, "_send", lambda cfg, scores: None)
+    feedback.record(tmp_path, "up", minutes_saved=-3, minutes_spent=12, cfg=KEYS)  # negative is dropped
+    entry = json.loads((tmp_path / "logs" / feedback.FEEDBACK_FILE).read_text().splitlines()[-1])
+    assert entry["minutes_saved"] is None and entry["minutes_spent"] == 12
+
+
+def _status(**kw):
+    base = dict(rating="up", comment=None, stage=None, trace_id="T1", session_id="s", run_name="r", version=None)
+    got = feedback.build_scores(**base, **kw)
+    return next(s["value"] for s in got if s["name"] == "rfc_minutes_status")
+
+
+def test_minutes_status_says_what_the_latest_rating_had():
+    assert _status(minutes_saved=10, minutes_spent=5) == "given"
+    assert _status(minutes_saved=10) == "partial"
+    assert _status(minutes_skipped=True) == "skipped"
+    assert _status() == "not_rated"
+
+
+def test_record_sets_status_and_a_skip_replaces_earlier_minutes(tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(feedback, "_send", lambda cfg, scores: sent.append(scores) or None)
+    feedback.record(tmp_path, "up", minutes_saved=30, minutes_spent=10, cfg=KEYS)
+    feedback.record(tmp_path, "up", minutes_skipped=True, cfg=KEYS)  # the re-rate skips the time questions
+    first, second = sent
+    assert next(s["value"] for s in first if s["name"] == "rfc_minutes_status") == "given"
+    assert next(s["value"] for s in second if s["name"] == "rfc_minutes_status") == "skipped"
+    assert any(s["name"] == "rfc_minutes_saved" for s in first)
+    assert not any(s["name"] == "rfc_minutes_saved" for s in second)  # no number written when skipped
+    log = [json.loads(x) for x in (tmp_path / "logs" / feedback.FEEDBACK_FILE).read_text().splitlines()]
+    assert [e["minutes_status"] for e in log] == ["given", "skipped"]
