@@ -1,6 +1,6 @@
 ---
 description: Execute the CONFIRMED cases of an existing testing run — web UI (Playwright), backend (HTTP), or both — recorded in Kiwi; run the already-written web tests at once, or write tests for newly confirmed cases first; or have an agent drive a browser through each web case (ui-agent), also straight from a Kiwi plan with no earlier run
-argument-hint: [web|backend|ui-agent|all] [--only-existing] [--run-dir <testing run>] [--feature F --kiwi-plan ID] [--env E] [--build B] [--base-url U] [--ui-auth FILE] [--hosts H] [--headed] [--cases TC-…,TC-…] [--curl FILE]
+argument-hint: [web|backend|ui-agent|all] [--only-existing] [--run-dir <testing run>] [--feature F --kiwi-plan ID] [--env E] [--build B] [--base-url U] [--ui-auth FILE] [--hosts H] [--production] [--headed] [--cases TC-…,TC-…] [--curl FILE]
 ---
 
 Execute cases for: `$ARGUMENTS`
@@ -49,6 +49,13 @@ Execute cases for: `$ARGUMENTS`
      accept production. `--base-url <origin>` and `--ui-auth <session file>` are passed the same way when
      config does not already hold them.
    - `ENGINE FAILURE … needs Chromium build` → post the two fixes the message names and ask which.
+   - **Production.** When the user asks to run on production, or the address is the live site, add
+     `--production` (then `--hosts` is not needed). If the run is logged in (`--ui-auth`, or a session in
+     config), FIRST ask (AskUserQuestion): **"This will drive production (<host>) logged in. The agent adds
+     to the cart and changes what the account sees. Is the session a test account?"** with `Yes, a test
+     account` and `No — stop`. Only on yes add `--test-account`; on no, stop, or offer to run as a guest
+     (no `--ui-auth`). Never add `--test-account` yourself. A guest run on production is not asked. Say
+     once that checkout, payment, coupons, NeuCoins, Care Plan and address changes stay refused there.
    - Otherwise post the run dir, kind(s), env and build in one line. When the kind includes `web` and
      `--headed` was not given, ask once: `Watch the browser` (add `--headed`) or `Run in the background`.
 

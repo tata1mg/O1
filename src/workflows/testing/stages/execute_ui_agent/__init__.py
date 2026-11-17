@@ -80,9 +80,18 @@ def _settings(ctx: RunContext) -> dict:
     problem = ui_agent.host_problem(base_url, hosts=str(ctx.flag("testing.agent_hosts", "") or ""),
                                     environments=str(ctx.flag("testing.environments", "") or ""),
                                     template=template)
-    if problem:
+    # Production is allowed when someone has said, in so many words, that this run is on production
+    # (`--production`) — never by a production host slipping in as a "named test environment".
+    production = bool(problem) and bool(ctx.flag("testing.agent_production", False))
+    if problem and not production:
         raise EngineFailure(problem)
     auth = str(ctx.inputs.get("ui_auth") or ctx.flag("testing.ui_auth", "") or "")
+    test_account = bool(ctx.flag("testing.agent_test_account", False))
+    if production and auth and not test_account:
+        raise EngineFailure("execute_ui_agent: this is a logged-in run on production, and nobody has confirmed "
+                            "the session belongs to a TEST account. The agent adds to the cart and changes what "
+                            "the account sees. Re-run `execute ui-agent --production` and answer its question "
+                            "(or pass --test-account), or run as a guest without --ui-auth.")
     if auth and not Path(auth).expanduser().is_file():
         raise EngineFailure(f"--ui-auth {auth} does not exist. Record it with `npx playwright codegen "
                             f"--save-storage=<file> <base url>` and log in.")
@@ -104,6 +113,7 @@ def _settings(ctx: RunContext) -> dict:
             "headed": bool(ctx.flag("testing.ui_headed", False)),
             "browser": browser,
             "read_only": bool(ctx.flag("testing.agent_read_only", False)),
+            "production": production, "test_account": bool(production and auth and test_account),
             "forbid": str(ctx.flag("testing.agent_forbid", "") or ""),
             "max_actions": int(ctx.flag("testing.agent_max_actions", 60)),
             "case_timeout_s": int(ctx.flag("testing.agent_case_timeout_s", 900))}
@@ -142,6 +152,10 @@ def build_prompt(case, folder: Path, settings: dict, notes: str, code_context: b
         f"`filename` as a path from the run directory, e.g. `{rel}/a-listing.png` (a bare name would land "
         f"outside your folder and the verdict would be rejected). Name the file as the clause's `evidence`.",
         "Make one browser call per message and look at its result before the next.",
+        *(["This is the PRODUCTION site. " + (
+            "The account is a test account, but an order, a payment or a coupon here is still a real one."
+            if settings.get("test_account") else "You are a guest: nothing you do reaches an account.")]
+          if settings.get("production") else []),
         *(["Some actions are refused in this run whatever the case says: anything that redeems or spends "
            "(NeuCoins, wallet, applying a coupon), checkout and payment, adding or removing a Care Plan, "
            "editing an address, patient or profile, uploading a prescription, logging out. Do not try them "
@@ -342,6 +356,22 @@ def _row(verdict: dict) -> dict:
             "attachments": [{"name": "screenshot", "path": str(Path(verdict["folder"]) / shot)}] if shot else []}
 
 
+def _keep_previous_summary(ctx: RunContext) -> None:
+    """Set the last run's results.json / results.md aside under their own time, instead of writing over them.
+
+    A run folder is per feature, not per run: `execute --feature F` reuses the newest one. A guest run then
+    replaced a logged-in run's summary an hour after it was written (2026-11-17), and the only copy of what
+    that run had found was the per-case folders. The summary is small; keep every one.
+    """
+    for rel in (RESULTS_OUT, TABLE_OUT):
+        path = ctx.path(rel)
+        if path.is_file():
+            stamp = datetime.fromtimestamp(path.stat().st_mtime, UTC).strftime("%Y%m%dT%H%M%SZ")
+            target = path.with_name(f"{path.stem}.{stamp}{path.suffix}")
+            if not target.exists():
+                path.replace(target)
+
+
 def _store_down(doing: str, exc: Exception) -> EngineFailure:
     """A store that cannot be reached, said in a sentence instead of a traceback (third pilot: Kiwi answered
     503 and the run ended in an xmlrpc ProtocolError). Both calls it guards come before any session starts."""
@@ -356,6 +386,7 @@ def _engine(stage: Stage, ctx: RunContext) -> StageResult:
     t0 = time.monotonic()
     feature = feature_of(ctx)
     store = get_store(ctx)
+    _keep_previous_summary(ctx)
     include_manual = bool(ctx.flag("testing.agent_include_manual", False))
     try:
         cases = ui_agent.select_cases(store, feature, include_manual=include_manual, only=only_cases(ctx))
@@ -397,6 +428,7 @@ def _engine(stage: Stage, ctx: RunContext) -> StageResult:
     header = {"feature": feature, "environment": settings["environment"], "build": settings["build"],
               "base_url": settings["base_url"], "device": settings["device"] or "desktop",
               "login": "recorded session" if settings["auth"] else "none",
+              "production": settings["production"], "test_account_confirmed": settings["test_account"],
               "run_id": run.run_id, "run_url": run.url}
     not_executed = []
     for extid, why in unusable.items():

@@ -143,3 +143,32 @@ def test_the_browser_settings_can_be_given_on_the_command_line(tmp_path):
     assert "--base-url https://web.test" in joined and f"--ui-auth {tmp_path / 'state.json'}" in joined
     assert "--set testing.agent_hosts=web.test" in joined and "--set testing.agent_browser=chrome" in joined
     assert "--set testing.agent_parallel=2" in joined
+
+
+def test_production_is_one_flag_and_a_logged_in_run_carries_the_confirmation(tmp_path):
+    from workflows.testing import execute
+
+    run = execute.bootstrap_run(tmp_path, "PROD-1")
+    guest = " ".join(execute.command("ui-agent", run, env="prod", build="b1", production=True))
+    assert "--enable testing.agent_production" in guest and "agent_test_account" not in guest
+    member = " ".join(execute.command("ui-agent", run, env="prod", build="b1", production=True, test_account=True))
+    assert "--enable testing.agent_production" in member and "--enable testing.agent_test_account" in member
+    assert "agent_production" not in " ".join(execute.command("ui-agent", run, env="prod", build="b1"))
+
+
+def test_a_logged_in_production_run_asks_whether_the_account_is_a_test_account():
+    import pytest
+
+    from workflows.testing.execute import confirm_production
+
+    kw = {"logged_in": True, "base_url": "https://www.example.test"}
+    assert confirm_production(False, False, **kw) is False                              # not production: no question
+    assert confirm_production(True, False, logged_in=False, base_url="x") is False     # a guest: no account
+    assert confirm_production(True, True, **kw) is True                                 # answered in advance
+    asked = []
+    assert confirm_production(True, False, **kw, interactive=True, ask=lambda q: asked.append(q) or "y") is True
+    assert "PRODUCTION (https://www.example.test)" in asked[0] and "TEST account" in asked[0]
+    with pytest.raises(SystemExit, match="not confirmed as a test account"):
+        confirm_production(True, False, **kw, interactive=True, ask=lambda q: "")       # Enter = no
+    with pytest.raises(SystemExit, match="adding --test-account"):
+        confirm_production(True, False, **kw, interactive=False)                        # nobody to ask

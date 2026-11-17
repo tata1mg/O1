@@ -180,6 +180,15 @@ NAMES = (
        "execute_ui_agent: hosts the agent may drive, comma-separated (e.g. prestag.1mg.com). The stage acts "
        "on a live site, so it refuses a base address that is neither listed here nor the "
        "base_url_template of an environment named in `environments`. Never list production."),
+    _f("agent_production", bool, False,
+       "execute_ui_agent: allow a base address that is not a named test environment — production. Set by "
+       "`execute ui-agent --production`. With a logged-in session it also needs agent_test_account. The "
+       "browser guard's forbidden actions (testing.agent_forbid) still apply: a test account on production "
+       "places real orders."),
+    _f("agent_test_account", bool, False,
+       "execute_ui_agent: the operator's statement that the logged-in session (--ui-auth) belongs to a TEST "
+       "account, not a customer's. Required for a logged-in run on production; `execute ui-agent "
+       "--production` asks for it. Recorded in the results."),
     _f("agent_forbid", str,
        r"neu\s*coins?|redeem|wallet|apply\s+(coupon|offer|code)|coupon\s+apply|remove\s+coupon|"
        r"place\s+order|proceed\s+to\s+(pay|checkout|buy)|check\s*out|pay\s+now|payment|"

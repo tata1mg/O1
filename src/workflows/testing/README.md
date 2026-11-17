@@ -232,6 +232,11 @@ not work, and writes `qa/agent/<extid>/verdict.json` with a screenshot for every
   build (`node tools/ui-runner/node_modules/@playwright/mcp/node_modules/playwright/cli.js install chromium`
   — not the runner's `npx playwright install`, which installs another revision) or
   `testing.agent_browser=chrome`. The stage checks this before any session starts.
+- **Production.** `execute ui-agent --production` allows the live site. A logged-in run there asks you to
+  confirm the session is a test account (or takes `--test-account`); a guest run is not asked. What changes
+  money or the account stays refused (`testing.agent_forbid`). Each run's `results.json` records
+  `production` and `test_account_confirmed`; an earlier run's summary in the same folder is kept as
+  `results.<time>.json`.
 - **Straight from Kiwi.** `execute ui-agent --feature <F> [--kiwi-plan <id>]` needs no earlier run: it
   creates the run folder and reads the plan as it is (`testing.kiwi_direct`): a CONFIRMED case with no
   `extid:` tag is `KIWI-<case id>`, and one with no `exec:` tag is treated as a UI case. Without the
@@ -302,6 +307,8 @@ drops `derive_spec` and `execute_be`, since both read from the store. The harnes
 | `testing.agent_max_actions` | int | `60` | `execute_ui_agent`: browser actions per case |
 | `testing.agent_case_timeout_s` | int | `900` | `execute_ui_agent`: wall time per case |
 | `testing.agent_confirm_fail` | bool | `True` | `execute_ui_agent`: re-run a FAIL once in a fresh browser |
+| `testing.agent_production` | bool | `False` | `execute_ui_agent`: the base address is production (`execute ui-agent --production`). The forbidden actions still apply |
+| `testing.agent_test_account` | bool | `False` | `execute_ui_agent`: the operator's confirmation that a logged-in session on production is a test account; `--production` asks for it |
 | `testing.agent_forbid` | str | (a regex) | `execute_ui_agent`: targets no browser action may touch — NeuCoins/wallet, applying coupons, checkout and payment, Care Plan add/remove, saving or deleting an address/patient, prescription upload, logout. Refused by the browser guard; the clause becomes `not reached`. Empty = nothing forbidden. A tripwire on the agent's own description of the element, not a sandbox |
 | `testing.agent_read_only` | bool | `False` | `execute_ui_agent`: tell the agent to change nothing (`execute ui-agent --read-only`); an instruction, not a block |
 | `testing.agent_include_manual` | bool | `False` | `execute_ui_agent`: also take CONFIRMED web cases tagged `exec:manual` |

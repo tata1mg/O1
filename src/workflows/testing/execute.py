@@ -102,7 +102,8 @@ def bootstrap_run(root: Path, feature: str, plan_id: str = "", today: date | Non
 def command(kind: str, run_dir: Path, *, env: str = "", build: str = "", headed: bool = False,
             cases: str = "", curl: str = "", flags=None, only_existing: bool = False,
             engine: str = "", base_url: str = "", ui_auth: str = "", hosts: str = "",
-            browser: str = "", read_only: bool = False, parallel: int = 0) -> list[str]:
+            browser: str = "", read_only: bool = False, parallel: int = 0, production: bool = False,
+            test_account: bool = False) -> list[str]:
     """The harness command line for one kind, or SystemExit naming what is missing."""
     stages, enable, results = KINDS[kind]
     if kind == "web" and only_existing:
@@ -156,6 +157,10 @@ def command(kind: str, run_dir: Path, *, env: str = "", build: str = "", headed:
             cmd += ["--ui-auth", str(Path(ui_auth).expanduser())]
     if kind == "ui-agent" and hosts:
         cmd += ["--set", f"testing.agent_hosts={hosts}"]
+    if kind == "ui-agent" and production:
+        cmd += ["--enable", "testing.agent_production"]
+        if test_account:
+            cmd += ["--enable", "testing.agent_test_account"]
     if kind == "ui-agent" and parallel:
         cmd += ["--set", f"testing.agent_parallel={parallel}"]
     if kind == "ui-agent" and read_only:
@@ -235,6 +240,32 @@ def pending_agent(run_dir: Path) -> dict:
     return out
 
 
+def confirm_production(production: bool, test_account: bool, *, logged_in: bool, base_url: str,
+                       ask=input, interactive: bool | None = None) -> bool:
+    """Whether the run may go ahead as a logged-in TEST account on production -> the confirmed answer.
+
+    Production is the operator's call, so it is one flag (`--production`). What the flag cannot know is
+    whose account the saved session is: on a customer's account the agent's cart changes are someone
+    else's cart. So a logged-in production run asks once — at a terminal, here; from the chat command, the
+    command asks and passes `--test-account`. A guest run has no account and is not asked.
+    """
+    if not production or not logged_in:
+        return False
+    if test_account:
+        return True
+    if interactive is None:
+        interactive = sys.stdin.isatty()
+    if not interactive:
+        raise SystemExit("execute ui-agent --production: this run is logged in. Confirm the session is a TEST "
+                         "account, not a customer's, by adding --test-account — or drop --ui-auth to run as a "
+                         "guest.")
+    answer = ask(f"This will drive PRODUCTION ({base_url}) logged in. The agent adds to the cart and changes "
+                 f"what the account sees. Is the session a TEST account? [y/N] ")
+    if answer.strip().lower() not in ("y", "yes"):
+        raise SystemExit("execute ui-agent --production: not confirmed as a test account — nothing was run.")
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="execute")
     ap.add_argument("kind", nargs="?", default="web", choices=(*KINDS, "all"))
@@ -247,6 +278,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--base-url", default="", help="web / ui-agent: the web app's origin on the environment")
     ap.add_argument("--ui-auth", default="",
                     help="web / ui-agent: a Playwright storage-state file with a logged-in session")
+    ap.add_argument("--production", action="store_true",
+                    help="ui-agent: the base address is PRODUCTION. With a logged-in session you are asked to "
+                         "confirm it is a test account")
+    ap.add_argument("--test-account", action="store_true",
+                    help="ui-agent with --production: I confirm the --ui-auth session is a TEST account, not a "
+                         "customer's (answers the question in advance, for unattended use)")
     ap.add_argument("--parallel", type=int, default=0,
                     help="ui-agent: cases to run at once, one browser each (default 5; always 1 with --headed)")
     ap.add_argument("--read-only", action="store_true",
@@ -285,13 +322,16 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"run_dir": str(run_dir), **pending(run_dir)}, indent=2))
         return 0
     flags = resolved_flags(cfg)
+    test_account = confirm_production(args.production, args.test_account,
+                                      logged_in=bool(args.ui_auth or (flags.get("testing.ui_auth") if flags else "")),
+                                      base_url=args.base_url or "the configured address")
     code = 0
     for kind in (ALL_KINDS if args.kind == "all" else (args.kind,)):
         cmd = command(kind, run_dir, env=args.env, build=args.build, headed=args.headed, cases=args.cases,
                       curl=args.curl, flags=flags, only_existing=args.only_existing,
                       engine=args.engine, base_url=args.base_url, ui_auth=args.ui_auth, hosts=args.hosts,
                       browser=args.browser, read_only=args.read_only,
-                      parallel=args.parallel)
+                      parallel=args.parallel, production=args.production, test_account=test_account)
         print(" ".join(shlex.quote(c) for c in cmd), flush=True)
         if not args.print_only:
             log = run_dir / "logs" / f"run.{kind}.out"  # one log per launch, as /test-agent:test writes them

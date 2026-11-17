@@ -444,6 +444,58 @@ def test_the_stage_refuses_before_any_browser_starts(agent_ctx, monkeypatch, cha
     assert engine.requests == []
 
 
+def test_production_is_allowed_only_when_someone_says_it_is_production(agent_ctx, monkeypatch):
+    agent_ctx.flags._v["testing.agent_hosts"] = ""                       # web.test is not a named test environment
+    given(monkeypatch, case(WEB))
+    engine = AgentEngine({WEB: passing(WEB)})
+    agent_ctx.engine = engine
+    with pytest.raises(EngineFailure, match="pass --production"):
+        STAGE.engine(STAGE, agent_ctx)
+    agent_ctx.flags._v["testing.agent_production"] = True
+    res = run(agent_ctx, engine)                                         # a guest: no account to ask about
+    assert res["production"] is True and res["test_account_confirmed"] is False and res["login"] == "none"
+    assert "PRODUCTION site. You are a guest" in engine.requests[0].prompt
+
+
+def test_a_logged_in_run_on_production_needs_the_test_account_confirmed(agent_ctx, monkeypatch, tmp_path):
+    auth = tmp_path / "state.json"
+    auth.write_text("{}")
+    agent_ctx.inputs["ui_auth"] = str(auth)
+    agent_ctx.flags._v.update({"testing.agent_hosts": "", "testing.agent_production": True})
+    given(monkeypatch, case(WEB))
+    engine = AgentEngine({WEB: passing(WEB)})
+    agent_ctx.engine = engine
+    with pytest.raises(EngineFailure, match="nobody has confirmed the session belongs to a TEST account"):
+        STAGE.engine(STAGE, agent_ctx)
+    assert engine.requests == []
+    agent_ctx.flags._v["testing.agent_test_account"] = True
+    res = run(agent_ctx, engine)
+    assert res["production"] is True and res["test_account_confirmed"] is True
+    assert "The account is a test account, but an order" in engine.requests[0].prompt
+
+
+def test_a_named_test_environment_is_not_production_whatever_the_flag_says(agent_ctx, monkeypatch):
+    agent_ctx.flags._v["testing.agent_production"] = True                # agent_hosts still names web.test
+    given(monkeypatch, case(WEB))
+    engine = AgentEngine({WEB: passing(WEB)})
+    res = run(agent_ctx, engine)
+    assert res["production"] is False and "PRODUCTION" not in engine.requests[0].prompt
+
+
+def test_an_earlier_runs_summary_is_kept_not_written_over(agent_ctx, monkeypatch):
+    """2026-11-17: a guest run replaced a logged-in run's results.json in the same folder."""
+    given(monkeypatch, case(WEB))
+    run(agent_ctx, AgentEngine({WEB: failing(WEB)}))
+    first = agent_ctx.path(stage_mod.RESULTS_OUT)
+    os.utime(first, (1_800_000_000, 1_800_000_000))                      # an hour ago, say
+    os.utime(agent_ctx.path(stage_mod.TABLE_OUT), (1_800_000_000, 1_800_000_000))
+    res = run(agent_ctx, AgentEngine({WEB: passing(WEB)}))
+    folder = agent_ctx.path(ui_agent.AGENT_DIR)
+    kept = sorted(p.name for p in folder.glob("results.2*"))
+    assert len(kept) == 2 and kept[0].endswith(".json") and kept[1].endswith(".md")
+    assert json.loads((folder / kept[0]).read_text())["tally"] == {"FAIL": 1} and res["tally"] == {"PASS": 1}
+
+
 def test_the_stage_refuses_an_engine_without_the_browser_guard(agent_ctx, monkeypatch):
     given(monkeypatch, case(WEB))
     engine = AgentEngine({WEB: passing(WEB)})

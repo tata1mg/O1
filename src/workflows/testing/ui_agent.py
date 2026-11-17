@@ -355,8 +355,9 @@ def host_problem(base_url: str, *, hosts: str = "", environments: str = "", temp
     if host and host in allowed:
         return ""
     return (f"execute_ui_agent drives a real browser as a real user, and {host or base_url!r} is not a named "
-            f"test environment. Name it: pass --hosts {host or '<host>'} to `execute ui-agent` (or set "
-            f"testing.agent_hosts), or add the environment to testing.environments. Never production.")
+            f"test environment. If it is one, name it: pass --hosts {host or '<host>'} to `execute ui-agent` "
+            f"(or set testing.agent_hosts), or add the environment to testing.environments. If it is "
+            f"PRODUCTION, say so: pass --production, which asks you to confirm the account is a test account.")
 
 
 def browser_calls(tool_calls: list[dict]) -> int:

@@ -1,6 +1,6 @@
 # Agent-driven web execution — what changed
 
-Branch `feat/test_agent`. Unit suite at the last run: 1672 passed, 1 skipped.
+Branch `feat/test_agent`. Unit suite at the last run: 1678 passed, 1 skipped.
 
 ## What it does
 
@@ -19,6 +19,8 @@ A plan, five at a time, no window:
 - `--ui-auth <session file>` runs logged in; without it the run is a guest.
 - `--pending` lists what would run. `--read-only` tells the agent to change nothing.
 - `--headed` always runs one case at a time.
+- `--production` for the live site; add `--env prod`, or the run is labelled with your config's default environment.
+- A run in a folder that already has a summary keeps the old one as `results.<time>.json` / `.md`.
 - A case with no id tag in Kiwi is `KIWI-<case number>`.
 
 ## Read these first
@@ -44,7 +46,8 @@ A plan, five at a time, no window:
 
 ## Safety
 
-- The base address must be a named test environment (`--hosts`, or a configured environment). Nothing in the code stops production being named.
+- The base address must be a named test environment (`--hosts`, or a configured environment), or the run must say it is production with `--production`.
+- `--production` with a logged-in session asks you to confirm the session is a test account (or takes `--test-account`); a guest run is not asked. The forbidden actions below still apply on production.
 - The agent is never given a credential; login is a recorded session only.
 - Only listed browser tools are granted: no script evaluation, upload, cookie or route tools.
 - `testing.agent_forbid` (on by default) refuses actions aimed at NeuCoins or wallet, applying coupons, checkout and payment, Care Plan add/remove, saving or deleting an address or patient, prescription upload, logout. It matches the agent's own description of the element, so it stops honest mistakes, not a determined workaround.
