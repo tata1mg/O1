@@ -165,10 +165,12 @@ NAMES = (
        "Run the execute_ui_agent stage: an agent drives a real browser through each CONFIRMED web UI case "
        "and returns a verdict with evidence — no Playwright script is derived. OFF by default: it acts on a "
        "live test environment as a real user, and costs a model session per case on every run."),
-    _f("agent_max_actions", int, 40,
+    _f("agent_max_actions", int, 60,
        "execute_ui_agent: browser actions one case may take before it stops and marks what is left "
        "`not reached`."),
-    _f("agent_case_timeout_s", int, 480, "execute_ui_agent: wall time for one case, in seconds."),
+    _f("agent_case_timeout_s", int, 900,
+       "execute_ui_agent: wall time for one case, in seconds. 900: a five-part case did not fit in 480 (second "
+       "pilot), and what the agent had judged by then was lost."),
     _f("agent_parallel", int, 5,
        "execute_ui_agent: cases run in batches of this many, one agent and one browser per case."),
     _f("agent_confirm_fail", bool, True,
@@ -178,6 +180,22 @@ NAMES = (
        "execute_ui_agent: hosts the agent may drive, comma-separated (e.g. prestag.1mg.com). The stage acts "
        "on a live site, so it refuses a base address that is neither listed here nor the "
        "base_url_template of an environment named in `environments`. Never list production."),
+    _f("agent_forbid", str,
+       r"neu\s*coins?|redeem|wallet|apply\s+(coupon|offer|code)|coupon\s+apply|remove\s+coupon|"
+       r"place\s+order|proceed\s+to\s+(pay|checkout|buy)|check\s*out|pay\s+now|payment|"
+       r"(add|remove|buy|renew|cancel)\s+care\s*plan|care\s*plan\s+(add|remove)|"
+       r"(save|delete|remove)\s+(this\s+|new\s+)?(address|patient|profile)|"
+       r"upload\s+prescription|log\s*out|sign\s*out|delete\s+account",
+       "execute_ui_agent: a regex over the target of each browser action (the agent's own words for the "
+       "element, and what it types). A match is refused by the browser guard and the clause becomes `not "
+       "reached`. The default covers what changes money, an order or the account: NeuCoins and wallet, "
+       "applying coupons, checkout and payment, Care Plan add/remove, address / patient / profile edits, "
+       "prescription upload, logout. A case that tests one of these needs a test account and a narrower "
+       "pattern (empty = nothing forbidden). A tripwire on declared intent, not a sandbox."),
+    _f("agent_read_only", bool, False,
+       "execute_ui_agent: tell the agent to change nothing — no add to cart, booking, order, address, patient "
+       "or profile edit, no form submitted. A clause that needs one is `not reached`. An instruction to the "
+       "agent, not a block: for a run somewhere a change would matter."),
     _f("agent_include_manual", bool, False,
        "execute_ui_agent: also hand the agent CONFIRMED web cases tagged exec:manual. The agent needs no "
        "source code, so a case a script could not be written for may still be one a browser can verify."),

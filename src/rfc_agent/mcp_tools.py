@@ -33,6 +33,7 @@ HOOK_GUARDED_TOOLS: dict[str, str] = {
 BROWSER_GUARD = "rfc_agent.hooks.guard_browser.denial"
 BROWSER_READ_TOOLS: tuple[str, ...] = (
     "browser_snapshot",
+    "browser_find",
     "browser_take_screenshot",
     "browser_console_messages",
     "browser_network_requests",

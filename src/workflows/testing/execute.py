@@ -101,7 +101,8 @@ def bootstrap_run(root: Path, feature: str, plan_id: str = "", today: date | Non
 
 def command(kind: str, run_dir: Path, *, env: str = "", build: str = "", headed: bool = False,
             cases: str = "", curl: str = "", flags=None, only_existing: bool = False,
-            engine: str = "", base_url: str = "", ui_auth: str = "", hosts: str = "") -> list[str]:
+            engine: str = "", base_url: str = "", ui_auth: str = "", hosts: str = "",
+            browser: str = "", read_only: bool = False, parallel: int = 0) -> list[str]:
     """The harness command line for one kind, or SystemExit naming what is missing."""
     stages, enable, results = KINDS[kind]
     if kind == "web" and only_existing:
@@ -155,6 +156,12 @@ def command(kind: str, run_dir: Path, *, env: str = "", build: str = "", headed:
             cmd += ["--ui-auth", str(Path(ui_auth).expanduser())]
     if kind == "ui-agent" and hosts:
         cmd += ["--set", f"testing.agent_hosts={hosts}"]
+    if kind == "ui-agent" and parallel:
+        cmd += ["--set", f"testing.agent_parallel={parallel}"]
+    if kind == "ui-agent" and read_only:
+        cmd += ["--enable", "testing.agent_read_only"]
+    if kind == "ui-agent" and browser:
+        cmd += ["--set", f"testing.agent_browser={browser}"]
     return cmd
 
 
@@ -240,6 +247,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--base-url", default="", help="web / ui-agent: the web app's origin on the environment")
     ap.add_argument("--ui-auth", default="",
                     help="web / ui-agent: a Playwright storage-state file with a logged-in session")
+    ap.add_argument("--parallel", type=int, default=0,
+                    help="ui-agent: cases to run at once, one browser each (default 5; always 1 with --headed)")
+    ap.add_argument("--read-only", action="store_true",
+                    help="ui-agent: the agent may look, search, sort and filter, and change nothing")
+    ap.add_argument("--browser", default="",
+                    help="ui-agent: the browser Playwright MCP drives (chrome, msedge, …); default its own "
+                         "Chromium build")
     ap.add_argument("--hosts", default="",
                     help="ui-agent: hosts the agent may drive, comma-separated (testing.agent_hosts); never "
                          "production")
@@ -275,7 +289,9 @@ def main(argv: list[str] | None = None) -> int:
     for kind in (ALL_KINDS if args.kind == "all" else (args.kind,)):
         cmd = command(kind, run_dir, env=args.env, build=args.build, headed=args.headed, cases=args.cases,
                       curl=args.curl, flags=flags, only_existing=args.only_existing,
-                      engine=args.engine, base_url=args.base_url, ui_auth=args.ui_auth, hosts=args.hosts)
+                      engine=args.engine, base_url=args.base_url, ui_auth=args.ui_auth, hosts=args.hosts,
+                      browser=args.browser, read_only=args.read_only,
+                      parallel=args.parallel)
         print(" ".join(shlex.quote(c) for c in cmd), flush=True)
         if not args.print_only:
             log = run_dir / "logs" / f"run.{kind}.out"  # one log per launch, as /test-agent:test writes them

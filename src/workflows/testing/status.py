@@ -134,10 +134,25 @@ def results_summary(run_dir: Path, rel: str = RESULTS["backend"]) -> dict | None
     return {"tally": res.get("tally") or {}, "run_url": res.get("run_url"), "html_report": res.get("html_report"),
             # execute_ui_agent only: how close the cases came, and the ones with nothing to judge against
             "parts_met": res.get("parts_met"), "parts": res.get("parts"),
+            # every case with the time it took (a FAIL's includes its second run), and the same as a table
+            "cases": [{"extid": r.get("extid"), "status": r.get("status"), "duration_s": r.get("duration_s"),
+                       "cost_usd": r.get("cost_usd")} for r in res.get("results") or []],
+            "table": _agent_table(res),
             "not_executed": [r.get("extid") for r in res.get("not_executed") or []],
             "skipped_unconfirmed": len(res.get("skipped_unconfirmed") or []),
             "skipped_wrong_execution": len(res.get("skipped_wrong_execution") or []),
             "not_passing": failing[:20]}
+
+
+def _agent_table(res: dict) -> str | None:
+    """execute_ui_agent's per-case table (Case | Verdict | Time | Cost | What was found), or None for the
+    script executors, whose rows carry no summary."""
+    rows = res.get("results") or []
+    if not rows or "summary" not in rows[0]:
+        return None
+    from . import ui_agent
+
+    return ui_agent.results_table(rows, res.get("not_executed") or [], res.get("cost_unknown_for") or [])
 
 
 def ui_plan_summary(run_dir: Path) -> dict | None:
@@ -347,7 +362,10 @@ def milestone(run_dir: Path, stage: str) -> str:
         tally = " · ".join(f"{v} {k}" for k, v in sorted((r.get("tally") or {}).items()))
         parts = f" · {r['parts_met']} of {r['parts']} parts met" if r.get("parts") else ""
         idle = f" · {len(r['not_executed'])} not executed (no expected result)" if r.get("not_executed") else ""
-        return f"execute_ui_agent: {tally or 'nothing ran'}{parts}{idle} · {r.get('run_url') or ''}{took}"
+        spent = sum(c.get("duration_s") or 0 for c in r.get("cases") or [])
+        each = f" · {int(spent // 60)}m {int(spent % 60):02d}s of agent time over {len(r['cases'])} cases" \
+            if r.get("cases") else ""
+        return f"execute_ui_agent: {tally or 'nothing ran'}{parts}{idle}{each} · {r.get('run_url') or ''}{took}"
     if stage == "derive_ui":
         p = ui_plan_summary(run_dir) or {"tests": 0, "skipped": []}
         return (f"derive_ui: {p['tests']} Playwright tests written, {len(p['skipped'])} cases left for a person"

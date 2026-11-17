@@ -51,7 +51,7 @@ pipeline left out).
 | `execute_be` | python | `qa/spec.json` | `qa/results.json` | every row carries extid/status/detail/http_status/duration_s; status in PASS/FAIL/BLOCKED/ERROR; the tally matches the rows |
 | `derive_ui` | python + model (`skills/qa-ui-playwright`) | `qa/sources.json` | `qa/ui/cases.json`, `qa/ui/roots.json`, `qa/ui/settings.json`, `qa/ui/plan.json`, `qa/ui/tests/*.spec.ts` (+ `login.setup.ts` with `--ui-login`) | every CONFIRMED web UI case tested or skipped with a reason (never both); one test per spec, titled with its case id; no absolute URL, credential literal, fixed sleep or undeclared `page.route` in a spec; every locator cites a file:line that exists in the source snapshot; `playwright test --list` loads exactly the tested ids. No CONFIRMED web case = no model call. `retry_on_gate_failure=1`, `revise_on_retry=True` |
 | `execute_web` | python | `qa/ui/plan.json` | `qa/ui/results.json` | as `execute_be`'s: every row complete, status in the four, tally matches |
-| `execute_ui_agent` | python + one model session per case (`skills/qa-ui-agent`) | — | `qa/agent/results.json`, `qa/agent/<extid>/verdict.json` + screenshots, `qa/agent/notes.md` | every result row's status is PASS/FAIL/BLOCKED/ERROR and matches its `verdict.json`; the tally matches; not every case ERROR. Each verdict is checked before it counts: every clause met / not met / not reached, evidence files exist, status recomputed from the parts, and at least as many browser calls in the session's trace as parts judged |
+| `execute_ui_agent` | python + one model session per case (`skills/qa-ui-agent`) | — | `qa/agent/results.json`, `qa/agent/results.md` (the per-case table: verdict, time, cost), `qa/agent/<extid>/verdict.json` + screenshots, `qa/agent/notes.md` | every result row's status is PASS/FAIL/BLOCKED/ERROR and matches its `verdict.json`; the tally matches; not every case ERROR. Each verdict is checked before it counts: every clause met / not met / not reached, evidence files exist, status recomputed from the parts, and at least as many browser calls in the session's trace as parts judged |
 | `publish_app` | python | — | `qa/app/results.json` | at least one case recorded; status in the four; tally matches |
 
 Decisions recorded (`logs/decisions.jsonl`): `source_missing`, `xlsx_skipped`,
@@ -216,8 +216,10 @@ not work, and writes `qa/agent/<extid>/verdict.json` with a screenshot for every
 - **Batches.** `testing.agent_parallel` cases at a time (5), one browser each; one at a time with
   `--headed`. What a batch learns about the environment (`qa/agent/notes.md`, this run's only) is given to
   the next. Each batch is recorded in the store as it finishes.
-- **Limits.** `testing.agent_max_actions` browser actions (40; looking at the page is free), enforced by
-  the browser guard, and `testing.agent_case_timeout_s` (480).
+- **Limits.** `testing.agent_max_actions` browser actions (60; looking at the page is free), enforced by
+  the browser guard, and `testing.agent_case_timeout_s` (900). The agent writes its verdict file before its
+  first browser call and rewrites it after each part, so a session cut off at the limit still leaves what
+  it had judged (BLOCKED, cause `limit`).
 - **Containment.** This is the one stage whose MCP tools act. Only the tools in
   `rfc_agent.mcp_tools.BROWSER_*` are granted (no script evaluation, upload, cookie or route tools);
   `rfc_agent/hooks/guard_browser.py` refuses a navigation off the run's base address; the base address must
@@ -297,9 +299,11 @@ drops `derive_spec` and `execute_be`, since both read from the store. The harnes
 | `testing.execute_ui_agent` | bool | `False` | Run `execute_ui_agent` (an agent drives a browser through each web UI case) |
 | `testing.agent_hosts` | str | `""` | `execute_ui_agent`: hosts the agent may drive, comma-separated; never production |
 | `testing.agent_parallel` | int | `5` | `execute_ui_agent`: cases per batch, one browser each |
-| `testing.agent_max_actions` | int | `40` | `execute_ui_agent`: browser actions per case |
-| `testing.agent_case_timeout_s` | int | `480` | `execute_ui_agent`: wall time per case |
+| `testing.agent_max_actions` | int | `60` | `execute_ui_agent`: browser actions per case |
+| `testing.agent_case_timeout_s` | int | `900` | `execute_ui_agent`: wall time per case |
 | `testing.agent_confirm_fail` | bool | `True` | `execute_ui_agent`: re-run a FAIL once in a fresh browser |
+| `testing.agent_forbid` | str | (a regex) | `execute_ui_agent`: targets no browser action may touch — NeuCoins/wallet, applying coupons, checkout and payment, Care Plan add/remove, saving or deleting an address/patient, prescription upload, logout. Refused by the browser guard; the clause becomes `not reached`. Empty = nothing forbidden. A tripwire on the agent's own description of the element, not a sandbox |
+| `testing.agent_read_only` | bool | `False` | `execute_ui_agent`: tell the agent to change nothing (`execute ui-agent --read-only`); an instruction, not a block |
 | `testing.agent_include_manual` | bool | `False` | `execute_ui_agent`: also take CONFIRMED web cases tagged `exec:manual` |
 | `testing.agent_code_context` | bool | `False` | `execute_ui_agent`: give the agent read-only code lookup (fleetlens), for finding a route only |
 | `testing.agent_browser` | str | `""` | `execute_ui_agent`: browser or channel for Playwright MCP; empty = its bundled Chromium |

@@ -23,7 +23,8 @@ def clause(text: str, state: str = ui_agent.MET, **kw) -> dict:
     if state == ui_agent.NOT_REACHED:
         row["blocker"] = kw.pop("blocker", "the home carousels do not render")
     else:
-        row.update(observed=kw.pop("observed", "seen on the page"), evidence=kw.pop("evidence", "shot.png"))
+        row.update(observed=kw.pop("observed", "seen on the page"), evidence=kw.pop("evidence", "shot.png"),
+                   on_target=kw.pop("on_target", True))
     return {**row, **kw}
 
 
@@ -159,6 +160,11 @@ def test_the_summary_shows_how_close_the_case_came():
 
 @pytest.mark.parametrize("expected, found", [
     ("The listing opens.", "The listing opens."), ("", ""), ("N/A", ""), ("TBD.", ""),
+    # the pilot's TC-CT-05: the sheet import wrote a note where the expectation should be
+    ("FLAGGED — no Expected Result was present in the original sanity sheet for this row; needs SME/QA "
+     "input before this case is executable.", ""),
+    ("No expected result given.", ""),
+    ("Flagged items are listed first.", "Flagged items are listed first."),
 ])
 def test_the_expected_result_is_read_from_the_case_text(expected, found):
     text = render_text({"precondition": "p", "steps": "1. s", "test_data": "d", "expected": expected})
@@ -169,3 +175,101 @@ def test_the_agent_flags_are_defined():
     for name in ("execute_ui_agent", "agent_max_actions", "agent_case_timeout_s", "agent_parallel",
                  "agent_confirm_fail"):
         assert f"testing.{name}" in NAMES
+
+
+@pytest.mark.parametrize("line, kept", [
+    ("- /labs home widgets do not render; reach listings through /labs/search", True),
+    ("# Notes from TC-CT-07", False),
+    ("- Any case that starts from these widgets will be BLOCKED the same way until this is fixed", False),
+    ("- The verdict here should be a FAIL", False),
+    ("", False),
+])
+def test_a_note_is_a_fact_about_the_environment_never_advice_about_the_outcome(line, kept):
+    assert bool(ui_agent.usable_note(line)) is kept
+
+
+def test_a_long_note_is_cut_at_a_sentence_or_dropped():
+    long = "- The search route works. " + "x" * 600
+    assert ui_agent.usable_note(long) == "- The search route works."
+    assert ui_agent.usable_note("- " + "y" * 600) == ""
+
+
+def test_actions_are_counted_apart_from_looking():
+    calls = [{"name": "mcp__playwright__browser_snapshot"}, {"name": "mcp__playwright__browser_click"},
+             {"name": "mcp__playwright__browser_take_screenshot"}, {"name": "mcp__playwright__browser_type"},
+             {"name": "Read"}]
+    assert ui_agent.browser_calls(calls) == 4 and ui_agent.browser_actions(calls) == 2
+
+
+def test_a_fail_the_second_run_could_not_reach_says_so():
+    v = ct01() | {"confirmed": False, "flaky": False}
+    assert ui_agent.summary(v).startswith("FAIL (not confirmed) — 2 of 3 parts met")
+    assert ui_agent.summary(v | {"flaky": True}).startswith("FAIL (flaky: passed on the second run)")
+
+
+@pytest.mark.parametrize("on_target", [False, None, "yes"])
+def test_a_clause_judged_on_a_substitute_is_rejected(folder, on_target):
+    """Both pilots: a clause marked met from a similar element on another screen."""
+    v = verdict("PASS", [{"label": "A", "expected": [clause("the home widget shows the price", on_target=on_target)]}])
+    problems = ui_agent.validate_verdict(v, EXTID, folder)
+    assert any("without `on_target: true`" in p and "not reached" in p for p in problems), problems
+
+
+def test_running_out_is_a_cause_for_blocked_only(folder):
+    waiting = clause("x", ui_agent.NOT_REACHED, blocker="not yet checked")
+    running = verdict("BLOCKED", [{"label": "A", "expected": [waiting]}], cause="limit", blocked_on="not finished",
+                      actions=[])
+    assert ui_agent.validate_verdict(running, EXTID, folder) == []          # the file an agent starts with
+    assert any("cannot be `limit`" in p for p in ui_agent.validate_verdict(ct01() | {"cause": "limit"}, EXTID, folder))
+    assert ui_agent.blocked(EXTID, "limit", "out of time")["cause"] == "limit"
+
+
+@pytest.mark.parametrize("spelling", ["not_reached", "Not Reached", "not-reached", "NOT_REACHED"])
+def test_a_state_spelled_another_way_is_read_not_rejected(folder, spelling):
+    """Third pilot: five judged clauses lost to `not_reached`."""
+    v = ct02()
+    for part in v["parts"][2:]:
+        part["expected"][0]["state"] = spelling
+    v["parts"][1]["expected"][0]["state"] = "not_met"
+    assert ui_agent.validate_verdict(v | {"status": "FAILED"}, EXTID, folder) == []
+    assert v["parts"][2]["expected"][0]["state"] == "not reached" and v["parts"][1]["expected"][0]["state"] == "not met"
+
+
+def test_the_agent_can_check_its_own_verdict(folder):
+    import json
+
+    from workflows.testing import check_verdict
+
+    assert check_verdict.report(folder)[0] == 2                                   # nothing written yet
+    (folder / ui_agent.VERDICT).write_text(json.dumps(ct01() | {"status": "PASS"}))
+    code, text = check_verdict.report(folder)
+    assert code == 1 and "REJECTED" in text and "its parts give FAIL" in text
+    (folder / ui_agent.VERDICT).write_text(json.dumps(ct01()))
+    code, text = check_verdict.report(folder)
+    assert code == 0 and text.startswith("OK — FAIL — 2 of 3 parts met")
+    waiting = clause("x", ui_agent.NOT_REACHED, blocker=ui_agent.PENDING)
+    start = verdict("BLOCKED", [{"label": "A", "expected": [waiting]}], cause="limit", blocked_on="not finished",
+                    actions=[])
+    (folder / ui_agent.VERDICT).write_text(json.dumps(start))
+    code, text = check_verdict.report(folder)
+    assert code == 0 and "NOT FINISHED: 1 clause(s)" in text
+
+
+def test_the_results_table_always_carries_the_time_each_case_took():
+    rows = [{"extid": "KIWI-180", "status": "PASS", "duration_s": 128.4, "cost_usd": 0.86, "summary": "PASS — 1 of 1"},
+            {"extid": "KIWI-197", "status": "FAIL", "confirmed": True, "duration_s": 386, "cost_usd": 1.77,
+             "summary": "FAIL — 0 of 1 parts met; A not met (one | line)"},
+            {"extid": "KIWI-205", "status": "BLOCKED", "duration_s": 42, "cost_usd": None, "summary": "cut off"}]
+    table = ui_agent.results_table(rows, [{"extid": "TC-CT-05", "reason": "no expected result"}], ["KIWI-205"])
+    lines = table.splitlines()
+    assert lines[0] == "| Case | Verdict | Time | Cost | What was found |"
+    assert "| KIWI-180 | PASS | 2m 08s | $0.86 |" in lines[2]
+    assert "| KIWI-197 | FAIL (confirmed) | 6m 26s | $1.77 |" in lines[3] and "one / line" in lines[3]
+    assert "| KIWI-205 | BLOCKED | 42s | unknown |" in lines[4]
+    assert "| TC-CT-05 | not executed | — | — | no expected result |" == lines[5]
+    assert lines[6] == "| **Total** | 3 run | 9m 16s of agent time | $2.63 or more | |"
+
+
+@pytest.mark.parametrize("seconds, text", [(0, "0s"), (59.4, "59s"), (60, "1m 00s"), (188, "3m 08s"), (None, "—")])
+def test_a_duration_reads_as_minutes_and_seconds(seconds, text):
+    assert ui_agent.took(seconds) == text

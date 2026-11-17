@@ -43,12 +43,39 @@ PASS, FAIL, BLOCKED = "PASS", "FAIL", "BLOCKED"
 STATUSES = (PASS, FAIL, BLOCKED)
 #: Why a case did not pass. `case`: the case expects something the product no longer has, or is not
 #: testable as written. `environment`: the test environment, not the feature (a 4xx/5xx page, a flaky load).
-CAUSES = ("product", "environment", "case", "test data")
+CAUSES = ("product", "environment", "case", "test data", "limit")
+#: `limit`: the run used its actions or its time before it got there. Only ever a reason for BLOCKED.
+LIMIT = "limit"
+#: The blocker a clause carries in the verdict an agent starts with, before it has looked at anything.
+PENDING = "not yet checked"
+_STATE_SPELLINGS = {re.sub(r"[\s_-]+", "", s): s for s in STATES}
+
+
+def normalize(verdict) -> None:
+    """Repair, in place, the spellings that mean the same thing: `not_reached`, `Not-Met`, `PASSED`.
+
+    A state is one of three words; an agent that writes `not_reached` has said which. Rejecting the whole
+    verdict for the underscore cost a case its five judged clauses in the third pilot.
+    """
+    if not isinstance(verdict, dict):
+        return
+    status = str(verdict.get("status") or "").strip().upper()
+    verdict["status"] = {"PASSED": PASS, "FAILED": FAIL}.get(status, status) if status else verdict.get("status")
+    for part in verdict.get("parts") or []:
+        for clause in (part.get("expected") or []) if isinstance(part, dict) else []:
+            if isinstance(clause, dict) and isinstance(clause.get("state"), str):
+                key = re.sub(r"[\s_-]+", "", clause["state"].strip().lower())
+                clause["state"] = _STATE_SPELLINGS.get(key, clause["state"])
 #: Not a verdict an agent may write: Python's, for a case it never handed to an agent.
 NOT_EXECUTED = "NOT_EXECUTED"
 
 _RE_EXPECTED = re.compile(r"\*\*Expected Result\*\*\s*(?P<body>.*?)(?=\n\*\*[^*\n]+\*\*\s*\n|\Z)", re.S)
 _EMPTY = {"", "-", "n/a", "na", "none", "tbd", "todo", "?"}
+#: An Expected Result that says there is none. The sanity sheet's import wrote "FLAGGED — no Expected Result
+#: was present in the original sanity sheet for this row…" into the field (pilot, 2026-11-16): text is
+#: there, an expectation is not, and a session spent on it can only come back BLOCKED.
+_RE_PLACEHOLDER = re.compile(
+    r"^\W*(flagged\s*[—–:-]|no expected result\b|expected result (is )?(missing|not (given|provided|defined)))", re.I)
 
 
 #: The tags a web UI case carries in the store (schema.case_tags), and the ones of a web case the
@@ -56,6 +83,8 @@ _EMPTY = {"", "-", "n/a", "na", "none", "tbd", "todo", "?"}
 WEB_UI_TAGS = ("exec:ui", "surface:web")
 MANUAL_WEB_TAGS = ("exec:manual", "surface:web")
 RESULTS = "results.json"
+#: The same results as a table a person reads: one row per case, always with the time it took.
+RESULTS_TABLE = "results.md"
 NOTES = "notes.md"
 
 
@@ -81,7 +110,7 @@ def expected_result(case_text: str) -> str:
     """The case's Expected Result section (the shape `schema.render_text` writes), or "" when it has none."""
     m = _RE_EXPECTED.search(case_text or "")
     body = (m.group("body") if m else "").strip()
-    return "" if body.lower().strip(" .") in _EMPTY else body
+    return "" if body.lower().strip(" .") in _EMPTY or _RE_PLACEHOLDER.match(body) else body
 
 
 def status_from_parts(parts: list[dict]) -> str:
@@ -104,6 +133,8 @@ def summary(verdict: dict) -> str:
     """One line for the run summary and the store comment: 'FAIL — 2 of 3 parts met; B not met (…)'."""
     status = verdict.get("status", "?")
     met, total = parts_met(verdict)
+    if status == FAIL and verdict.get("confirmed") is False:
+        status = "FAIL (flaky: passed on the second run)" if verdict.get("flaky") else "FAIL (not confirmed)"
     line = f"{status} — {met} of {total} parts met" if total else f"{status} — {verdict.get('reason', '')}"
     notes = []
     for part in verdict.get("parts") or []:
@@ -126,8 +157,9 @@ def not_executed(extid: str, why: str) -> dict:
 
 def blocked(extid: str, blocked_on: str, reason: str, cause: str = "environment") -> dict:
     """A BLOCKED verdict Python writes when the agent left none (a limit hit, a session that errored)."""
-    return {"extid": extid, "status": BLOCKED, "cause": cause, "reason": reason, "parts": [],
-            "actions": [], "deviations": [], "observations": [], "blocked_on": blocked_on}
+    return {"extid": extid, "status": BLOCKED, "cause": LIMIT if blocked_on == LIMIT else cause,
+            "reason": reason, "parts": [], "actions": [], "deviations": [], "observations": [],
+            "blocked_on": blocked_on}
 
 
 def validate_verdict(verdict, extid: str, folder: Path) -> list[str]:
@@ -135,6 +167,7 @@ def validate_verdict(verdict, extid: str, folder: Path) -> list[str]:
     evidence files live."""
     if not isinstance(verdict, dict):
         return [f"{extid}: {VERDICT} is not an object"]
+    normalize(verdict)
     out: list[str] = []
     if verdict.get("extid") != extid:
         out.append(f"{extid}: {VERDICT} names {verdict.get('extid')!r}")
@@ -167,6 +200,9 @@ def validate_verdict(verdict, extid: str, folder: Path) -> list[str]:
         out.append(f"{extid}: {status} with no `actions` — a verdict needs the steps that led to it")
     if status in (FAIL, BLOCKED) and verdict.get("cause") not in CAUSES:
         out.append(f"{extid}: {status} needs a `cause`, one of: {', '.join(CAUSES)}")
+    if status == FAIL and verdict.get("cause") == LIMIT:
+        out.append(f"{extid}: a FAIL's cause cannot be `limit` — a clause was not met, so say whether that is "
+                   f"the product, the environment, the case or the test data")
     if status == BLOCKED and not blocked_on:
         out.append(f"{extid}: BLOCKED with no `blocked_on` — name what stopped the run")
     return out
@@ -192,6 +228,14 @@ def _check_part(part, extid: str, folder: Path) -> list[str]:
             if not str(clause.get("blocker") or "").strip():
                 out.append(f"{extid} part {label}: {text!r} was not reached but names no `blocker`")
         else:
+            # Judged on the thing the case names, or on something like it somewhere else? Both pilots
+            # produced a clause marked met (or not met) from a similar element on another screen, and each
+            # time the agent said so in its own words — so it is asked, and a "no" cannot be a judgement.
+            if clause.get("on_target") is not True:
+                out.append(
+                    f"{extid} part {label}: {text!r} is {state} without `on_target: true`. Set it only when "
+                    f"you observed the very screen and element the case names. If you looked at a similar "
+                    f"one elsewhere, the clause is `not reached` and what you saw goes under `observations`")
             if not str(clause.get("observed") or "").strip():
                 out.append(f"{extid} part {label}: {text!r} is {state} with no `observed` — say what the page "
                            f"showed")
@@ -324,6 +368,35 @@ def browser_calls(tool_calls: list[dict]) -> int:
     return sum(1 for c in tool_calls or [] if isinstance(c, dict) and is_browser(c))
 
 
+def browser_actions(tool_calls: list[dict]) -> int:
+    """The browser calls that ACT (what the per-case limit counts) — looking at the page is not one."""
+    from rfc_agent.mcp_tools import BROWSER_ACTION_TOOLS
+
+    def name(call: dict) -> str:
+        raw = str((call.get("input") or {}).get("tool") or call.get("name") or "")
+        return raw.rsplit("__", 1)[-1]
+
+    return sum(1 for c in tool_calls or [] if isinstance(c, dict) and name(c) in BROWSER_ACTION_TOOLS)
+
+
+#: A note is a fact about the environment for the next case. One that names a verdict is advice about the
+#: outcome, and the pilot showed where that leads: "any case starting here will be BLOCKED" made the next
+#: agents stop looking for another route.
+_RE_VERDICT_TALK = re.compile(r"\b(BLOCKED|PASS(ED)?|FAIL(ED)?|verdict|not reached|not met)\b")
+NOTE_MAX = 500
+
+
+def usable_note(line: str) -> str:
+    """A note line as it may be passed on, or "" when it should not be: whole, never cut mid-sentence."""
+    line = line.strip()
+    if not line or line.startswith("#") or _RE_VERDICT_TALK.search(line):
+        return ""
+    if len(line) > NOTE_MAX:
+        cut = line[:NOTE_MAX].rfind(". ")
+        return line[:cut + 1] if cut > 20 else ""  # a whole first sentence, or nothing
+    return line
+
+
 def report(verdict: dict) -> str:
     """The verdict as the text a reviewer reads on the execution: the summary, then every clause."""
     lines = [summary(verdict), "", verdict.get("reason", "")]
@@ -339,4 +412,49 @@ def report(verdict: dict) -> str:
             lines += ["", title] + [f"- {x}" for x in verdict[key]]
     if verdict.get("blocked_on"):
         lines += ["", f"Blocked on: {verdict['blocked_on']}"]
+    return "\n".join(lines)
+
+
+# ---- the results as a person reads them -------------------------------------------------------------------
+
+
+def took(seconds) -> str:
+    """A duration as `3m 08s` / `42s` — or `—` when there is none."""
+    if not isinstance(seconds, int | float) or isinstance(seconds, bool) or seconds < 0:
+        return "—"
+    minutes, secs = divmod(int(round(seconds)), 60)
+    return f"{minutes}m {secs:02d}s" if minutes else f"{secs}s"
+
+
+def results_table(results: list[dict], not_executed: list[dict] = (), unpriced: list[str] = ()) -> str:
+    """The run's cases as a Markdown table: Case | Verdict | Time | Cost | What was found.
+
+    Time is always there: how long a case takes is what decides whether running it this way is worth it,
+    and it was the one figure the first reports left out. A FAIL's time includes its second run.
+    """
+    def cell(text) -> str:
+        return " ".join(str(text or "").split()).replace("|", "/")
+
+    lines = ["| Case | Verdict | Time | Cost | What was found |", "|---|---|---|---|---|"]
+    total_s, total_cost = 0.0, 0.0
+    for row in results or []:
+        status = str(row.get("status") or "?")
+        if status == FAIL and row.get("confirmed") is False:
+            status += " (flaky)" if row.get("flaky") else " (not confirmed)"
+        elif status == FAIL and row.get("confirmed"):
+            status += " (confirmed)"
+        cost = row.get("cost_usd")
+        price = f"${cost:.2f}" if isinstance(cost, int | float) else "unknown"
+        if row.get("extid") in (unpriced or ()):
+            price = "unknown"
+        total_s += row.get("duration_s") or 0
+        total_cost += cost if isinstance(cost, int | float) else 0
+        found = cell(row.get("summary") or row.get("reason"))
+        lines.append(f"| {cell(row.get('extid'))} | {status} | {took(row.get('duration_s'))} | {price} | "
+                     f"{found[:300]} |")
+    for row in not_executed or []:
+        lines.append(f"| {cell(row.get('extid'))} | not executed | — | — | {cell(row.get('reason'))[:300]} |")
+    floor = " or more" if unpriced else ""
+    lines.append(f"| **Total** | {len(results or [])} run | {took(total_s)} of agent time | "
+                 f"${total_cost:.2f}{floor} | |")
     return "\n".join(lines)

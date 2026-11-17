@@ -7,6 +7,7 @@ No browser and no model here: `AgentEngine` stands in for the session and writes
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -29,7 +30,8 @@ BROWSER_CALL = {"name": "mcp__playwright__browser_snapshot", "kind": "mcp", "inp
 def passing(extid: str) -> dict:
     return {"extid": extid, "status": "PASS", "reason": "the listing opens",
             "parts": [{"label": "A", "expected": [{"text": "the listing opens", "state": "met",
-                                                    "observed": "listing shown", "evidence": "a.png"}]}],
+                                                    "observed": "listing shown", "evidence": "a.png",
+                                                    "on_target": True}]}],
             "actions": [{"step": "A1", "action": "open /labs", "saw": "the listing"}],
             "deviations": [], "observations": [], "blocked_on": ""}
 
@@ -123,6 +125,11 @@ def test_each_confirmed_web_case_gets_an_agent_and_is_recorded(agent_ctx, clean_
 
     assert res["tally"] == {"PASS": 1, "FAIL": 1} and (res["parts_met"], res["parts"]) == (1, 2)
     assert sorted(by_id(res)) == [WEB, WEB2]                        # the app case is not a web case
+    table = agent_ctx.path(stage_mod.TABLE_OUT).read_text()
+    assert "| Case | Verdict | Time | Cost | What was found |" in table and f"| {WEB} | PASS |" in table
+    assert f"| {WEB2} | FAIL (confirmed) |" in table and "| **Total** | 2 run |" in table
+    kept = json.loads((agent_ctx.path(ui_agent.AGENT_DIR) / WEB / ui_agent.VERDICT).read_text())
+    assert isinstance(kept["duration_s"], float) and kept["cost_usd"] == 0.5         # the case's own file
     assert by_id(res)[WEB2]["confirmation"] == "FAIL again — confirmed"
     assert STAGE.gate(agent_ctx) == []
     stored = json.loads(next((agent_ctx.run_dir / "store" / "runs").rglob("*.json")).read_text())
@@ -138,13 +145,18 @@ def test_an_agent_gets_its_own_browser_held_to_the_runs_address(agent_ctx, monke
     req = engine.requests[0]
     folder = agent_ctx.path(ui_agent.AGENT_DIR) / WEB
     assert req.env[guard_browser.ORIGIN_ENV] == "https://web.test"
-    assert req.env[guard_browser.MAX_ACTIONS_ENV] == "40" and req.env[guard_browser.COUNT_FILE_ENV]
+    assert req.env[guard_browser.MAX_ACTIONS_ENV] == "60" and req.env[guard_browser.COUNT_FILE_ENV]
     spec = req.containment.mcp_servers[ui_agent.SERVER]
     assert spec["command"] == "node" and "--isolated" in spec["args"] and "--headless" in spec["args"]
     assert spec["args"][spec["args"].index("--output-dir") + 1] == str(folder)
     assert "--allowed-origins" not in spec["args"] and "--storage-state" not in spec["args"]
     assert req.native_ctx["stage"].mcp_servers == (ui_agent.SERVER,)
-    assert req.timeout_s == 480 + stage_mod.GRACE_S and req.label == f"{STAGE.name}.{WEB}"
+    assert req.timeout_s == 900 + stage_mod.GRACE_S and req.label == f"{STAGE.name}.{WEB}"
+    assert "browser_snapshot" in req.prompt and "BEFORE your first" in req.prompt
+    assert req.env[guard_browser.VERDICT_FILE_ENV] == str(folder / ui_agent.VERDICT)
+    assert req.env[guard_browser.VERDICT_EVERY_ENV] == str(stage_mod.VERDICT_EVERY)
+    assert f"{stage_mod.CHECK_VERDICT} {ui_agent.AGENT_DIR}/{WEB}" in req.prompt
+    assert STAGE.allow_commands == (stage_mod.CHECK_VERDICT,) and req.native_ctx["stage"].allow_commands
     assert WEB in req.prompt and "The listing opens." in req.prompt and "NOT logged in" in req.prompt
 
 
@@ -208,12 +220,60 @@ def test_no_verdict_is_the_harnesss_error_never_a_fail(agent_ctx, monkeypatch):
 def test_running_out_of_actions_is_blocked(agent_ctx, monkeypatch):
     given(monkeypatch, case(WEB))
     def spends(folder: Path, req) -> None:      # what the browser guard's counter would hold by then
-        Path(req.env[guard_browser.COUNT_FILE_ENV]).write_text("40")
+        Path(req.env[guard_browser.COUNT_FILE_ENV]).write_text("60")
 
     res = run(agent_ctx, AgentEngine({WEB: spends}))
     row = by_id(res)[WEB]
-    assert row["status"] == "BLOCKED" and row["blocked_on"] == "limit" and "40 actions" in row["reason"]
+    assert row["status"] == "BLOCKED" and row["blocked_on"] == "limit" and "60 actions" in row["reason"]
+    assert row["cause"] == "limit"
     assert STAGE.gate(agent_ctx) == []
+
+
+def test_a_session_cut_off_keeps_what_the_agent_had_written(agent_ctx, monkeypatch):
+    """Second pilot: a case judged three of its five parts, hit the time limit, and recorded none of it."""
+    given(monkeypatch, case(WEB))
+    partial = passing(WEB) | {"status": "BLOCKED", "cause": "limit", "blocked_on": "not finished"}
+    partial["parts"].append({"label": "B", "expected": [{"text": "the filter sheet opens", "state": "not reached",
+                                                         "blocker": "not yet checked"}]})
+
+    def cut_off(folder: Path, req) -> None:
+        (folder / "a.png").write_bytes(b"png")
+        (folder / ui_agent.VERDICT).write_text(json.dumps(partial))
+        raise TimeoutError("no result after 960s")
+
+    row = by_id(run(agent_ctx, AgentEngine({WEB: cut_off})))[WEB]
+    assert row["status"] == "BLOCKED" and row["cause"] == "limit" and (row["parts_met"], row["parts"]) == (1, 2)
+    assert "cut off" in row["reason"] and "TimeoutError" in row["reason"]
+    assert not (agent_ctx.path(ui_agent.AGENT_DIR) / WEB / "verdict.rejected.json").exists()
+
+
+def test_a_cut_off_sessions_calls_are_recovered_from_its_stream(agent_ctx, monkeypatch):
+    from harness.events import TraceSummary
+
+    given(monkeypatch, case(WEB))
+
+    def cut_off(folder: Path, req) -> None:
+        raise TimeoutError("no result")
+
+    engine = AgentEngine({WEB: cut_off})
+    engine.write_trace = lambda raw, want: want
+    (agent_ctx.run_dir / "logs").mkdir(exist_ok=True)
+    (agent_ctx.run_dir / "logs" / f"{STAGE.name}.{WEB}.stream.jsonl").write_text("{}\n")
+    monkeypatch.setattr("harness.events.summarize",
+                        lambda path: TraceSummary(tool_calls=[BROWSER_CALL] * 7, cost_usd=0.4))
+    row = by_id(run(agent_ctx, engine))[WEB]
+    assert row["browser_calls"] == 7 and row["cost_usd"] == 0.4 and row["status"] == "ERROR"
+
+
+def test_a_cost_that_was_never_reported_is_called_unknown_not_zero(agent_ctx, monkeypatch):
+    """Third pilot: a cut-off session's spend was silently left out of the total."""
+    given(monkeypatch, case(WEB), case(WEB2))
+
+    def cut_off(folder: Path, req) -> None:
+        raise TimeoutError("no result")
+
+    res = run(agent_ctx, AgentEngine({WEB: cut_off, WEB2: passing(WEB2)}))
+    assert res["cost_unknown_for"] == [WEB] and res["cost_usd"] == 0.5
 
 
 def test_a_verdict_without_its_evidence_is_rejected_and_kept(agent_ctx, monkeypatch):
@@ -256,6 +316,75 @@ def test_a_failure_that_does_not_repeat_stays_a_fail_and_is_called_flaky(agent_c
     assert (agent_ctx.path(ui_agent.AGENT_DIR) / f"{WEB}.confirm" / ui_agent.VERDICT).is_file()
 
 
+def test_the_second_run_is_given_the_route_and_not_the_result(agent_ctx, monkeypatch):
+    """Pilot, 2026-11-16: the confirm run never found the page the first run had failed on."""
+    given(monkeypatch, case(WEB))
+    first = failing(WEB) | {
+        "deviations": ["Reached the listing through /labs/search: the home widgets do not render."],
+        "actions": [{"step": "A1", "action": "press Enter in the search box to reach the results page",
+                     "saw": "the price shown is 1899, not 800"}]}
+
+    def fails_and_notes(folder: Path, req) -> None:
+        (folder / "a.png").write_bytes(b"png")
+        (folder / ui_agent.VERDICT).write_text(json.dumps(first))
+        (folder / ui_agent.NOTES).write_text("- Change Address does NOT open a sign-in sheet\n")
+
+    blocked = ui_agent.blocked(WEB, "home page", "the home widgets do not render")
+    engine = AgentEngine({WEB: [fails_and_notes, blocked]})
+    row = by_id(run(agent_ctx, engine))[WEB]
+    second = engine.requests[1].prompt
+    assert "press Enter in the search box" in second                       # what it did
+    assert "Reached the listing through /labs/search" not in second       # a deviation is prose: it can carry findings
+    assert "400 Bad Request" not in second and "the page shows an error" not in second     # not what it concluded
+    assert "1899" not in second and "does NOT open a sign-in sheet" not in second          # nor what it saw or noted
+    assert "It is a route, not a result" in second and "It is a route" not in engine.requests[0].prompt
+    assert row["status"] == "FAIL" and row["confirmed"] is False and row["flaky"] is False
+    assert row["summary"].startswith("FAIL (not confirmed)") and "NOT confirmed" in row["confirmation"]
+
+
+def test_cases_run_in_the_order_they_were_asked_for(agent_ctx, monkeypatch):
+    agent_ctx.flags._v.update({"testing.cases": "TC-B,TC-A", "testing.agent_parallel": 1})
+    given(monkeypatch, case("TC-A"), case("TC-B"))
+    engine = AgentEngine({"TC-A": passing("TC-A"), "TC-B": passing("TC-B")})
+    res = run(agent_ctx, engine)
+    assert [r["extid"] for r in res["results"]] == ["TC-B", "TC-A"]
+
+
+def test_a_note_about_the_outcome_is_not_passed_on(agent_ctx, monkeypatch):
+    agent_ctx.flags._v["testing.agent_parallel"] = 1
+    given(monkeypatch, case(WEB), case(WEB2))
+
+    def steers(folder: Path, req) -> None:
+        (folder / "a.png").write_bytes(b"png")
+        (folder / ui_agent.VERDICT).write_text(json.dumps(passing(WEB)))
+        (folder / ui_agent.NOTES).write_text("- any case starting from the home widgets will be BLOCKED\n"
+                                             "- the home widgets do not render\n")
+
+    engine = AgentEngine({WEB: steers, WEB2: passing(WEB2)})
+    run(agent_ctx, engine)
+    assert "the home widgets do not render" in engine.requests[1].prompt
+    assert "will be BLOCKED" not in engine.requests[1].prompt
+
+
+def test_the_stage_reports_its_sessions_tool_calls(agent_ctx, monkeypatch):
+    given(monkeypatch, case(WEB), case(WEB2))
+    agent_ctx.engine = AgentEngine({WEB: passing(WEB), WEB2: passing(WEB2)}, calls=3)
+    result = STAGE.engine(STAGE, agent_ctx)
+    assert len(result.tool_calls) == 6 and result.cost_usd == 1.0
+    assert "| Case | Verdict | Time | Cost | What was found |" in result.final_text     # every report has it
+
+
+def test_a_read_only_run_tells_the_agent_to_change_nothing(agent_ctx, monkeypatch):
+    given(monkeypatch, case(WEB))
+    engine = AgentEngine({WEB: passing(WEB)})
+    run(agent_ctx, engine)
+    assert "READ-ONLY" not in engine.requests[0].prompt
+    agent_ctx.flags._v["testing.agent_read_only"] = True
+    run(agent_ctx, engine)
+    second = engine.requests[1].prompt
+    assert "THIS RUN IS READ-ONLY" in second and "leave the cart as it is" in second
+
+
 def test_confirmation_can_be_turned_off(agent_ctx, monkeypatch):
     agent_ctx.flags._v["testing.agent_confirm_fail"] = False
     given(monkeypatch, case(WEB))
@@ -275,6 +404,19 @@ def test_a_case_with_no_expected_result_is_not_executed(agent_ctx, monkeypatch):
     assert [r["extid"] for r in res["not_executed"]] == ["TC-CT-05"]
     kept = json.loads((agent_ctx.path(ui_agent.AGENT_DIR) / "TC-CT-05" / ui_agent.VERDICT).read_text())
     assert kept["status"] == ui_agent.NOT_EXECUTED and STAGE.gate(agent_ctx) == []
+
+
+def test_a_store_that_is_down_is_said_plainly_before_any_session(agent_ctx, monkeypatch):
+    """Third pilot: Kiwi answered 503 and the run ended in a traceback."""
+    def down(store, feature, **kw):
+        raise OSError("<ProtocolError for kiwi/xml-rpc/: 503 Service Unavailable>")
+
+    monkeypatch.setattr(ui_agent, "select_cases", down)
+    engine = AgentEngine()
+    agent_ctx.engine = engine
+    with pytest.raises(EngineFailure, match="could not read the cases from the case store.*503.*re-run"):
+        STAGE.engine(STAGE, agent_ctx)
+    assert engine.requests == []
 
 
 def test_nothing_confirmed_calls_no_agent(agent_ctx, monkeypatch):
@@ -400,6 +542,66 @@ def test_the_browser_guard_counts_actions_and_stops_at_the_limit(tmp_path):
     assert "used its 2 browser actions" in guard_browser.over_limit("browser_click", actions, "2", str(count))
     assert count.read_text() == "2"
     assert guard_browser.over_limit("browser_click", actions, "", str(count)) == ""       # no limit set
+
+
+def test_the_browser_will_not_act_without_a_verdict_file_or_past_a_stale_one(tmp_path):
+    """Third pilot: both agents wrote the file once at the start and never again."""
+    verdict_file, state = tmp_path / "verdict.json", tmp_path / "count.verdict"
+    actions = ("browser_click",)
+
+    def gap(tool="browser_click"):
+        return guard_browser.verdict_gap(tool, actions, str(verdict_file), "2", str(state))
+
+    assert "write your verdict file first" in gap()
+    assert gap("browser_snapshot") == ""                                  # looking is never refused
+    verdict_file.write_text("{}")
+    assert gap() == "" and gap() == ""
+    assert "since you last wrote your verdict file" in gap()
+    assert gap("browser_snapshot") == ""
+    os.utime(verdict_file, ns=(1, verdict_file.stat().st_mtime_ns + 5_000_000_000))   # the agent rewrites it
+    assert gap() == "" and gap() == "" and "since you last wrote" in gap()
+    assert guard_browser.verdict_gap("browser_click", actions, "", "2", str(state)) == ""     # not set: no rule
+
+
+@pytest.mark.parametrize("tool, inp, refused", [
+    ("browser_click", {"element": "Neucoins redeem widget", "ref": "e9"}, True),       # the care-plan run's mistake
+    ("browser_click", {"element": "Apply coupon FLAT3", "ref": "e1"}, True),
+    ("browser_click", {"element": "Proceed to pay button"}, True),
+    ("browser_click", {"element": "Place Order"}, True),
+    ("browser_click", {"element": "Remove button in the Remove Care Plan sheet"}, True),
+    ("browser_click", {"element": "Add Care Plan card CTA"}, True),
+    ("browser_click", {"element": "Save address"}, True),
+    ("browser_click", {"element": "Logout"}, True),
+    ("browser_click", {"element": "View all coupons"}, False),                         # reading is fine
+    ("browser_click", {"element": "Apply button in the filter sheet"}, False),
+    ("browser_click", {"element": "ADD Telma 40 Tablet"}, False),
+    ("browser_click", {"element": "Remove in the quantity dialog"}, False),            # the agent's own item
+    ("browser_click", {"element": "Change Address"}, False),
+    ("browser_click", {"element": "Go to cart"}, False),
+    ("browser_type", {"element": "search box", "text": "telma"}, False),
+    ("browser_snapshot", {}, False),
+])
+def test_actions_that_spend_or_change_the_account_are_refused(agent_ctx, tool, inp, refused):
+    pattern = agent_ctx.flag("testing.agent_forbid")
+    reason = guard_browser.forbidden(tool, inp, pattern)
+    assert bool(reason) is refused, reason
+    if refused:
+        assert "not reached" in reason and "another way" in reason
+
+
+def test_no_pattern_forbids_nothing_and_a_broken_one_forbids_everything():
+    click = {"element": "Neucoins redeem widget"}
+    assert guard_browser.forbidden("browser_click", click, "") == ""
+    assert "not a valid regex" in guard_browser.forbidden("browser_click", click, "(")
+
+
+def test_the_forbidden_pattern_reaches_the_guard_and_the_prompt(agent_ctx, monkeypatch):
+    given(monkeypatch, case(WEB))
+    engine = AgentEngine({WEB: passing(WEB)})
+    run(agent_ctx, engine)
+    req = engine.requests[0]
+    assert req.env[guard_browser.FORBID_ENV] == agent_ctx.flag("testing.agent_forbid")
+    assert "refused in this run whatever the case says" in req.prompt
 
 
 def test_the_stage_composes_only_on_request():
