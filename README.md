@@ -1,4 +1,19 @@
-# rfc_agent
+# O1
+
+Tata 1mg's agent toolkit for the software lifecycle: from a PRD to a grounded tech RFC, test cases and code,
+with every claim about existing code cited to a file and line.
+
+| Component | What it does | Status |
+|---|---|---|
+| **rfc-agent** | PRD → grounded tech RFC (Scope → Summarize). A Claude Code plugin | Pilot (0.1.0) |
+| **Harness** | Agent-agnostic run loop, engines, contracts and policy that the agents share (`src/harness`) | In progress |
+| **Testing agent** | Tech RFC → QA test cases (`src/workflows/testing`) | In progress |
+| **Context layer** | Finds and traces code across repos, to ground every agent | Planned |
+| **Coding agent** | Tech RFC → implementation | Planned |
+
+Today the repo ships **rfc-agent**. The rest of this README covers it.
+
+## rfc-agent
 
 > **Pipeline (Scope → Summarize, `uv run rfc`)** — architecture and flow diagrams: **[docs/HLD.md](docs/HLD.md)**.
 >
@@ -170,7 +185,7 @@ before it leaves your machine. See [scripts/security/SECURITY.md](scripts/securi
 
 **Config lives OUTSIDE the plugin**, in `~/.config/rfc-agent/config.json`: an installed plugin is replaced on every
 update, and a config inside it once leaked credentials into plugin cache copies. It holds everything you supply —
-team values (Atlassian site, fleetlens URL, product surfaces, service inventory, Langfuse host) and your own
+team values (Atlassian site, fleetlens URL, service inventory, Langfuse host) and your own
 (`REPOS_ROOT`, `RUNS_ROOT`, Langfuse keys, tokens). The harness's own working values ship read-only in
 `config.harness.json`; any key you set in your config.json wins, and env vars win over both. Nothing org-specific
 ships in the plugin. Details: SETUP.md §3.

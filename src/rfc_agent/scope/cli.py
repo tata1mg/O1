@@ -10,8 +10,9 @@ Steps (timed, written to logs/scope.json):
   1. context layer (fleetlens) health check (parallel with 2)
   2. PRD + child-page list + Jira via the claude.ai Atlassian connector (byte-exact, Haiku, no rewriting)
   3. Figma: per PRD link, open the node in the desktop app and wait for one plugin run (or reuse a cache)
-     — scope candidates are computed meanwhile (a fleetlens discovery agent + a Haiku PRD summary)
-  4. ONE confirm screen: repos (+branch), extra pages, Jira, Figma sections
+     — scope candidates are computed meanwhile (an Opus agent that explores fleetlens)
+  4. ONE confirm screen: repos (+branch), extra pages, Jira, Figma sections — or, with no design, whether
+     to go on without one
   5. in parallel: repo snapshots pinned to the default branch, and the ticked pages/Jira
   6. scope.json + findings/scope_approved.json + raw/figma_index.md
 """
@@ -105,9 +106,10 @@ def _run_dir(args, cfg) -> Path:
     return _FRESH[(str(root), name)]
 
 
-def _write_page(path: Path, page: dict) -> None:
+def _write_page(path: Path, page: dict, site: str | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(at.provenance(page["url"] or f"confluence page {page['id']}", page["title"], _now(),
+    url = page["url"] or (f"{site.rstrip('/')}/wiki/pages/viewpage.action?pageId={page['id']}" if site else "")
+    path.write_text(at.provenance(url or f"confluence page {page['id']}", page["title"], _now(),
                                   {"page_id": page["id"], "last_modified": page["last_modified"]})
                     + page["body"], encoding="utf-8")
 
@@ -119,6 +121,19 @@ def _write_jira(path: Path, key: str, call: at.ToolCall) -> None:
 
 def _blob_images(text: str) -> int:
     return len(re.findall(r"!\[[^\]]*\]\(blob:", text))
+
+
+def _axon_atlassian(cfg, model: str, run_dir: Path):
+    """On Axon (D-22) the PRD comes through Axon's own Atlassian sign-in; None keeps Claude's connector."""
+    if not context._on_axon(cfg):
+        return None
+    from ..axon_agent import gateway_model, settings
+    from .atlassian_axon import AxonConnectorSession
+
+    ax = settings(cfg)
+    log = run_dir / "logs" / "scope.atlassian.stream.jsonl"
+    return lambda: AxonConnectorSession(log, axon_bin=ax["bin"], model=gateway_model(model, cfg),
+                                        provider=ax["provider"], server=ax["atlassian_server"])
 
 
 @observe.entry("scope")
@@ -163,7 +178,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="never touch your checkouts: take every repo from the repo cache "
                         "(~/.cache/rfc-agent/repos, shallow-cloned once, fetched on later runs)")
     p.add_argument("--model", default=at.DEFAULT_MODEL, help="model that makes the connector calls")
+    from ..axon_agent import add_engine_args, apply_engine_args
+
+    add_engine_args(p)
     args = p.parse_args(argv)
+    apply_engine_args(args.engine, args.stage_engine)
 
     cfg = get_config()
     timer = _Timer()
@@ -173,6 +192,9 @@ def main(argv: list[str] | None = None) -> int:
         (run_dir / d).mkdir(parents=True, exist_ok=True)
     repos_root = Path(args.repos_root or cfg.get("REPOS_ROOT") or "~/Documents").expanduser()
     named = [r.strip() for r in args.repos.split(",") if r.strip()]
+    for r in [r for r in named if not repos.is_valid_repo_name(r)]:
+        _say(f"STOP: --repos '{r}' is not a repo name (letters, digits, . _ - only)")
+        return 1
     interactive = not args.yes
     _say(f"run dir: {run_dir}")
 
@@ -205,7 +227,8 @@ def main(argv: list[str] | None = None) -> int:
                 try:
                     session, paid = at.open_session(stack, run_dir / "logs" / "scope.atlassian.stream.jsonl", site,
                                                     claude_bin=cfg.get("AGENT.CLAUDE_BIN", "claude"),
-                                                    model=args.model, cwd=run_dir, say=_say)
+                                                    model=args.model, cwd=run_dir, say=_say,
+                                                    make=_axon_atlassian(cfg, args.model, run_dir))
                     cost += paid
                 except at.AtlassianError as e:
                     _say(f"STOP: {e}")
@@ -220,7 +243,7 @@ def main(argv: list[str] | None = None) -> int:
                     elif c.name == "getConfluencePage" and str(c.input.get("pageId")) == pid:
                         page = at.parse_page(c)
                         if page:
-                            _write_page(run_dir / "raw" / "prd.md", page)
+                            _write_page(run_dir / "raw" / "prd.md", page, site)
                             scope["prd_title"] = page["title"]
                     elif c.name == "getConfluencePageDescendants":
                         descendants = at.parse_descendants(c)
@@ -327,26 +350,23 @@ def main(argv: list[str] | None = None) -> int:
                  "logs/scope.discovery.stream.jsonl; add repos on the confirm screen (`+name`)")
         elif disc.get("discovery"):
             d = disc["discovery"]
-            _say(f"context layer: {len(d['services'])} service(s) from {d['tool_calls']} fleetlens lookups "
-                 f"({d['seconds']:.0f}s, ${d['cost_usd']:.2f})")
-        if disc.get("summary_error"):
-            _say(f"PRD summary failed ({disc['summary_error']}) — no surfaces detected")
-        if disc.get("unmapped_surfaces"):
-            _say(f"the PRD changes {', '.join(disc['unmapped_surfaces'])} but the surface table names no repo for it "
-                 "— add the repo on the confirm screen (`+name`), and to config SCOPE.SURFACES for next time")
+            n_maybe = sum(1 for x in d["services"] if x.get("tier") == "maybe")
+            _say(f"context layer: {len(d['services']) - n_maybe} service(s) that change + {n_maybe} maybe (unticked) "
+                 f"from {d['tool_calls']} fleetlens lookups ({d['seconds']:.0f}s, ${d['cost_usd']:.2f})")
 
         # 4 — the one confirm screen
-        def repo_item(name: str, why: list[str] | None = None, info: repos.RemoteInfo | None = None) -> confirm.Item:
+        def repo_item(name: str, why: list[str] | None = None, info: repos.RemoteInfo | None = None,
+                      proposed: bool = True) -> confirm.Item:
             if info is None:
                 name, info = _resolve_added_repo(name, repos_root) if why is None else \
                     (name, repos.probe_all([name], repos_root)[name])
             local = (repos_root / name / ".git").exists()
             where = "local checkout" if local else ("in repo cache" if repos.is_cached(name) else "not cloned")
-            flag, include = "", True
+            flag, include = "", proposed  # an agent "maybe" is shown unticked
             if info.remote == "missing":
                 # a context-layer service that maps to a name Bitbucket does not have: fix it now, not later
                 flag = "⚠ NOT FOUND on Bitbucket (wrong name, or no access) — add the right name with +name · "
-                include = local
+                include = include and local
             elif info.remote in ("unreachable", "unknown") and not local and not repos.is_cached(name):
                 flag = "⚠ couldn't reach Bitbucket to check it (VPN?) · "
             return confirm.Item("repo", name, name, include=include,
@@ -354,7 +374,8 @@ def main(argv: list[str] | None = None) -> int:
                                 extra={"branch": info.branch, "branch_from": info.how, "remote": info.remote,
                                        "why": why or ["added by you"]})
 
-        items = [repo_item(c["repo"], c["why"], cands["remote"].get(c["repo"])) for c in cands["list"]]
+        items = [repo_item(c["repo"], c["why"], cands["remote"].get(c["repo"]), c.get("include", True))
+                 for c in cands["list"]]
         items += [confirm.Item("page", d["id"], d["title"], include=False) for d in descendants]
         items += [confirm.Item("page", i, f"linked page {i}", include=False) for i in linked_ids]
         items += [confirm.Item("jira", k, k, include=False) for k in body_jira]
@@ -363,15 +384,24 @@ def main(argv: list[str] | None = None) -> int:
                 items.append(confirm.Item("figma", f"{xi}:{s['name']}", f"{s['name']} ({len(s['frames'])} screens)",
                                           note=f"PRD overlap {s['overlap']}", include=s["include"]))
         header = (f"── Scope · confirm ── PRD: {scope.get('prd_title') or prd_path.name}\n"
-                  f"  context layer: {'ok' if layer.get('ok') else 'UNAVAILABLE — ' + str(layer.get('why'))}"
-                  + (f"\n  surfaces: {', '.join(disc['surfaces'])}" if disc.get("surfaces") else ""))
+                  f"  context layer: {'ok' if layer.get('ok') else 'UNAVAILABLE — ' + str(layer.get('why'))}")
+        # no design to read (and Figma not skipped on purpose): the operator decides whether to go on
+        no_design = None
+        if not args.no_figma and not any(it.kind == "figma" for it in items):
+            errs = [ex["error"] for ex in exports if ex.get("error")]
+            no_design = ("the PRD links no Figma design" if not exports
+                         else "no Figma screens could be read: " + "; ".join(errs or ["no sections found"]))
+            _say(f"no design available — {no_design}")
+        scope["no_design"] = no_design
         with timer.step("confirm_wait"):
             if interactive and (args.confirm_file or not sys.stdin.isatty()):
-                items = confirm.via_file(items, repo_item, header, run_dir)
+                items = confirm.via_file(items, repo_item, header, run_dir, no_design=no_design)
             elif interactive:
-                items = confirm.ask(items, repo_item, header)
+                items = confirm.ask(items, repo_item, header, no_design=no_design)
             else:
                 print(f"\n{header}{confirm.render(items)}\n", file=sys.stderr)
+                if no_design:
+                    _say("WARNING: going on without a design (--yes)")
         for name in _dropped_added_repos(items):  # never silent: file mode has no second screen to show it
             _say(f"WARNING: '{name}' is NOT on Bitbucket (wrong name, or no access) — dropped. "
                  "Rerun scope with the exact repo name.")
@@ -411,7 +441,8 @@ def main(argv: list[str] | None = None) -> int:
                     elif c.name == "getConfluencePage":
                         page = at.parse_page(c)
                         if page:
-                            _write_page(run_dir / "raw" / "linked" / f"{page['id']}-{_slugify(page['title'])}.md", page)
+                            _write_page(run_dir / "raw" / "linked" / f"{page['id']}-{_slugify(page['title'])}.md", page,
+                                        cfg.get("ATLASSIAN.SITE"))
                             fetched_pages.append({"id": page["id"], "title": page["title"]})
                     elif c.name == "getJiraIssue":
                         k = str(c.input.get("issueIdOrKey"))

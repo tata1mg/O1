@@ -119,7 +119,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--yes", action="store_true", help="with --ask-review: accept the default triage")
     p.add_argument("--confirm-file", action="store_true", help="pause through files (what /rfc-agent:review uses)")
     p.add_argument("--fresh", action="store_true", help="review again even if reviews exist")
+    from ..axon_agent import add_engine_args, apply_engine_args
+
+    add_engine_args(p)
     args = p.parse_args(argv)
+    apply_engine_args(args.engine, args.stage_engine)
     run_dir = Path(args.run_dir).expanduser().resolve()
     migrate_run_dir(run_dir)
     if not (run_dir / "out" / "rfc.md").exists():
