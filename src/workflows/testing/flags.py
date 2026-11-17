@@ -214,6 +214,13 @@ NAMES = (
     _f("agent_browser", str, "",
        "execute_ui_agent: the browser or channel Playwright MCP drives (chrome, msedge, firefox, webkit). "
        "Empty = its bundled Chromium, which must be installed for the pinned @playwright/mcp version."),
+    _f("production_base_url", str, "",
+       "The live site's address (e.g. https://www.example.com), so `execute` can turn \"on prod\" into an "
+       "address without it being typed. It only names the address: running there still needs "
+       "`execute ui-agent --production`, which is never implied."),
+    _f("sessions_dir", str, "~/.secrets/playwright",
+       "The folder of recorded login sessions (*.json, Playwright storage state) that `execute --lookup` "
+       "offers by file name. A file is passed to the browser as --ui-auth and is never read by the helper."),
     _f("kiwi_plan_id", str, "",
        "The Kiwi test plan to read cases from and record into, by id (--kiwi-plan). Empty = the plan named "
        "by plan_template under the feature's product. Set to run a plan this workflow did not create."),

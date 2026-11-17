@@ -135,7 +135,28 @@ def test_each_confirmed_web_case_gets_an_agent_and_is_recorded(agent_ctx, clean_
     stored = json.loads(next((agent_ctx.run_dir / "store" / "runs").rglob("*.json")).read_text())
     assert stored["executions"][WEB]["status"] == "PASS" and stored["executions"][WEB2]["status"] == "FAIL"
     comment = stored["executions"][WEB2]["comments"][0]
-    assert "0 of 1 parts met" in comment and "[not met]" in comment and "400 Bad Request" in comment
+    assert comment.startswith(f"## {WEB2} — FAIL (confirmed)") and "```" not in comment
+    assert "0 of 1 parts met" in comment and "❌ **Not met**" in comment and "saw: 400 Bad Request" in comment
+    assert "### Evidence" in comment and f"screenshot: [screenshot-{WEB2}" in comment
+    passed = stored["executions"][WEB]["comments"][0]               # a PASS is explained too
+    assert passed.startswith(f"## {WEB} — PASS") and "✅ **Met**" in passed and "### Evidence" in passed
+    for extid in (WEB, WEB2):
+        assert stored["executions"][extid]["props"]["executor"] == "agent"
+        assert "playwright_status" not in stored["executions"][extid]["props"]
+
+
+def test_only_a_picture_of_what_was_wrong_or_of_a_pass_is_attached():
+    header = {"environment": "e", "build": "b", "base_url": "https://web.test", "device": "desktop", "login": "none"}
+    ok = passing("X") | {"folder": "/f"}
+    assert [a["path"] for a in stage_mod._row(ok, header)["attachments"]] == ["/f/a.png"]
+    bad = failing("X") | {"folder": "/f"}
+    bad["parts"][0]["expected"].append({"text": "t", "state": "met", "evidence": "m.png"})
+    assert [a["path"] for a in stage_mod._row(bad, header)["attachments"]] == ["/f/a.png"]
+    blocked = failing("X") | {"folder": "/f", "status": "BLOCKED"}
+    blocked["parts"][0]["expected"][0]["state"] = "met"
+    assert stage_mod._row(blocked, header)["attachments"] == []
+    row = stage_mod._row(ok, header)
+    assert row["comment_on_pass"] and row["comment"].startswith("## X — PASS") and row["detail"].startswith("PASS")
 
 
 def test_an_agent_gets_its_own_browser_held_to_the_runs_address(agent_ctx, monkeypatch):
@@ -482,18 +503,19 @@ def test_a_named_test_environment_is_not_production_whatever_the_flag_says(agent
     assert res["production"] is False and "PRODUCTION" not in engine.requests[0].prompt
 
 
-def test_an_earlier_runs_summary_is_kept_not_written_over(agent_ctx, monkeypatch):
-    """2026-11-17: a guest run replaced a logged-in run's results.json in the same folder."""
+def test_every_runs_summary_is_kept_beside_the_live_one(agent_ctx, monkeypatch):
+    """2026-11-17: a guest run replaced a logged-in run's results.json in the same folder — the harness
+    removes a stage's declared outputs before a forced re-run, so the copy has to be one it does not own."""
     given(monkeypatch, case(WEB))
     run(agent_ctx, AgentEngine({WEB: failing(WEB)}))
-    first = agent_ctx.path(stage_mod.RESULTS_OUT)
-    os.utime(first, (1_800_000_000, 1_800_000_000))                      # an hour ago, say
-    os.utime(agent_ctx.path(stage_mod.TABLE_OUT), (1_800_000_000, 1_800_000_000))
-    res = run(agent_ctx, AgentEngine({WEB: passing(WEB)}))
     folder = agent_ctx.path(ui_agent.AGENT_DIR)
-    kept = sorted(p.name for p in folder.glob("results.2*"))
-    assert len(kept) == 2 and kept[0].endswith(".json") and kept[1].endswith(".md")
-    assert json.loads((folder / kept[0]).read_text())["tally"] == {"FAIL": 1} and res["tally"] == {"PASS": 1}
+    for name in (ui_agent.RESULTS, ui_agent.RESULTS_TABLE):          # what the harness does before a re-run
+        (folder / name).unlink()
+    res = run(agent_ctx, AgentEngine({WEB: passing(WEB)}))
+    kept = sorted(p for p in folder.glob("results.2*.json"))
+    assert len(kept) == 2 and len(list(folder.glob("results.2*.md"))) == 2
+    tallies = [json.loads(p.read_text())["tally"] for p in kept]
+    assert {"FAIL": 1} in tallies and {"PASS": 1} in tallies and res["tally"] == {"PASS": 1}
 
 
 def test_the_stage_refuses_an_engine_without_the_browser_guard(agent_ctx, monkeypatch):
@@ -662,3 +684,35 @@ def test_the_stage_composes_only_on_request():
 
     assert "execute_ui_agent" not in compose_pipeline(flags({}))
     assert compose_pipeline(flags({"testing.execute_ui_agent": True}))[-1] == "execute_ui_agent"
+
+
+def test_a_row_with_its_own_comment_is_posted_masked_with_the_evidence_and_no_code_fence(ctx_factory, tmp_path):
+    from workflows.testing import ui_record
+
+    class Store:
+        def __init__(self):
+            self.props, self.comments = None, []
+
+        def record_execution(self, run_id, extid, status, *, actual, duration_s, props, finished_at):
+            self.props = props
+            return "r:x"
+
+        def attach(self, *a, **kw):
+            return True
+
+        def attachment_url(self, *a):
+            return ""
+
+        def comment_execution(self, execution_id, text):
+            self.comments.append(text)
+
+    header = {"environment": "e", "build": "b", "base_url": "https://web.test"}
+    row = {"extid": "X", "status": "PASS", "playwright_status": "agent", "detail": "secret-pw", "duration_s": 1.0,
+           "finished_at": None, "attachments": [], "comment": "## X — PASS\n\nsaw secret-pw", "comment_on_pass": True}
+    store = Store()
+    ui_record.record_row(ctx_factory(tmp_path / "r"), "s", store, "r", row, header, {"password": "secret-pw"})
+    assert store.props == {"environment": "e", "build": "b", "base_url": "https://web.test", "executor": "agent"}
+    assert store.comments == ["## X — PASS\n\nsaw ***"]             # no evidence: no empty Evidence heading
+    store.comments.clear()
+    ui_record.record_row(ctx_factory(tmp_path / "r2"), "s", store, "r", row | {"comment_on_pass": False}, header)
+    assert store.comments == []                                      # a PASS asks for its comment

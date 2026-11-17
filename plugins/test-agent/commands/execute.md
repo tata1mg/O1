@@ -1,6 +1,6 @@
 ---
-description: Execute the CONFIRMED cases of an existing testing run — web UI (Playwright), backend (HTTP), or both — recorded in Kiwi; run the already-written web tests at once, or write tests for newly confirmed cases first; or have an agent drive a browser through each web case (ui-agent), also straight from a Kiwi plan with no earlier run
-argument-hint: [web|backend|ui-agent|all] [--only-existing] [--run-dir <testing run>] [--feature F --kiwi-plan ID] [--env E] [--build B] [--base-url U] [--ui-auth FILE] [--hosts H] [--production] [--headed] [--cases TC-…,TC-…] [--curl FILE]
+description: Execute the CONFIRMED cases of an existing testing run — web UI (Playwright), backend (HTTP), or both — recorded in Kiwi; run the already-written web tests at once, or write tests for newly confirmed cases first; or have an agent drive a browser through each web case (ui-agent), also straight from a Kiwi plan with no earlier run. Takes flags, or plain words such as "cart-sanity on prod, cases 173,172, logged in as careplan, show the browser"
+argument-hint: [web|backend|ui-agent|all] [--only-existing] [--run-dir <testing run>] [--feature F --kiwi-plan ID] [--env E] [--build B] [--base-url U] [--ui-auth FILE] [--hosts H] [--production] [--headed] [--cases TC-…,TC-…] [--curl FILE]  — or plain words: "cart-sanity on prod, cases 173,172, logged in as careplan, show the browser"
 ---
 
 Execute cases for: `$ARGUMENTS`
@@ -13,6 +13,41 @@ Execute cases for: `$ARGUMENTS`
 
    Every helper is `uv run --project <PROJ> python -m workflows.testing.execute …`. With no kind, the kind is
    `web`.
+
+1a. **Plain words.** When `$ARGUMENTS` is empty or starts with a kind (`web`, `backend`, `ui-agent`, `all`) or
+   a `--flag`, skip this step: flags work as before. Otherwise it is a request in words. Run
+   `… execute --lookup` and build the flags from it, never from memory (`error` set → say so and stop):
+   - **Plan.** The phrase naming a plan, matched against `plans` ignoring case, spaces and hyphens
+     (`cart sanity` = `CART-SANITY`; a bare number, `TP-3` or `plan 3` is an id; an exact name beats a
+     partial one). Exactly one → `--feature <its name> --kiwi-plan <its id>` and kind `ui-agent`. None or
+     several → ask which (AskUserQuestion with the candidates).
+   - **Cases.** Numbers / ids / codes after "case(s)", "test case(s)", "tc" → run
+     `… execute --resolve-cases "<tokens>" --plan <id>`; `matched` → `--cases a,b`; anything in `unknown` →
+     say which token matched nothing and ask; never drop it silently. No cases named → the whole plan: say
+     how many cases that is (from `--pending`, step 2a) and confirm before running more than 10.
+   - **Where.** "prod", "production", "live" or the production address → `--production --env
+     <production.env> --base-url <production.base_url>`; when `production.base_url` is empty, ask for the
+     address once and offer to store it with `… python -m workflows.testing.preflight setup-web
+     --production-base-url <url>`. A name in `environments` → `--env <name>` (the address comes from
+     `base_url_template`). Nothing said → `defaults.env`; when that is empty, ask.
+   - **Who.** "guest", "logged out", "not logged in" → no `--ui-auth`. "logged in as X", "with the X
+     user/account", "as X" → the one entry of `sessions` whose name contains X (ignore case) → `--ui-auth
+     <its path>`; none or several → ask, listing the session names (names only; never open a session file).
+     Nothing said → ask "guest or logged in?" only when the plan's cases could need login; otherwise guest.
+     Never invent a path.
+   - **How.** "show the browser", "headed", "watch", "visible" → `--headed`; "N at a time", "in parallel" →
+     `--parallel N` (not with `--headed`: say a visible browser runs one case at a time); "read only",
+     "don't change anything" → `--read-only`.
+   - **Build and browser.** `--build <today>` unless one is given; `--browser <defaults.browser>` when set,
+     otherwise `--browser chrome`.
+   - Words that map to nothing → say so; do not guess a flag.
+
+   Then SHOW what was understood before anything runs: one line per mapping (`"cart-sanity" -> plan
+   CART-SANITY (TP-3)`, `"173" -> KIWI-173 [CT002] Verify the selected address…`, `"on prod" -> production,
+   https://…`, `"careplan" -> session prod-careplan-state`) and the full flag-form command it will run, and
+   ask once to confirm (AskUserQuestion: `Run it` / `Change something`). The production test-account question
+   in the Preview step ("Production.") still applies after this and is asked separately — do not merge or
+   skip it. From here continue with the steps below, using the built flags as `$ARGUMENTS`.
 
 2. **Web: run now, or write new tests first?** When the kind includes `web` and `--only-existing` was not
    given, run `… execute --pending [--run-dir R]` (it reads Kiwi). Then:

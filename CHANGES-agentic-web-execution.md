@@ -20,7 +20,9 @@ A plan, five at a time, no window:
 - `--pending` lists what would run. `--read-only` tells the agent to change nothing.
 - `--headed` always runs one case at a time.
 - `--production` for the live site; add `--env prod`, or the run is labelled with your config's default environment.
-- A run in a folder that already has a summary keeps the old one as `results.<time>.json` / `.md`.
+- Every run also saves its summary as `results.<start time>.json` / `.md`, because the next run in the same folder replaces the live one.
+- Plain words work too: `/test-agent:execute cart-sanity on prod with test cases 173,172`. The command shows what it understood and asks before running. Store the live address once with `preflight setup-web --production-base-url <url>`.
+- The slash command runs from an installed copy of the plugin, not from this repo. After pulling changes to `plugins/test-agent`, update the plugin in Claude Code (the version is 0.7.0) and start a new session.
 - A case with no id tag in Kiwi is `KIWI-<case number>`.
 
 ## Read these first

@@ -8,6 +8,8 @@ build) plus the flags that compose the executor's stages. This builds that line 
                                         [--feature F --kiwi-plan ID]
     python -m workflows.testing.execute --pending [--run-dir R]      what has a web test, what does not
     python -m workflows.testing.execute ui-agent --pending           what the browser agent will run
+    python -m workflows.testing.execute --lookup [--plan ID]         plans, a plan's cases, environments, sessions
+    python -m workflows.testing.execute --resolve-cases "173, ct2" --plan ID    which case ids those words mean
 
 - `web` -> `derive_ui,execute_web` with `testing.ui_only_new`: tests are written only for CONFIRMED web
            cases that have none yet (no model call when there are none), then every test runs.
@@ -32,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shlex
 import subprocess
 import sys
@@ -240,6 +243,121 @@ def pending_agent(run_dir: Path) -> dict:
     return out
 
 
+def _norm_name(text: str) -> str:
+    """Lower-case, with runs of spaces, hyphens and underscores as one space: `Cart_Sanity` == `cart-sanity`."""
+    return re.sub(r"[\s_-]+", " ", str(text)).strip().lower()
+
+
+def match_plan(text: str, plans: list[dict]) -> list[dict]:
+    """The plans `text` names: a bare number, `TP-3` or `plan 3` by id; else by name, ignoring case and
+    separators. An exact name beats a substring, so `cart` is the plan CART and not also CART-SANITY. Every
+    candidate comes back when it is ambiguous and [] when none fits — the caller asks, never guesses."""
+    by_id = re.fullmatch(r"\s*(?:tp|plan)?[\s_#-]*(\d+)\s*", str(text), re.IGNORECASE)
+    if by_id:
+        return [p for p in plans if str(p.get("id")) == str(int(by_id.group(1)))]
+    want = _norm_name(text)
+    if not want:
+        return []
+    exact = [p for p in plans if _norm_name(p.get("name", "")) == want]
+    return exact or [p for p in plans if want in _norm_name(p.get("name", ""))]
+
+
+def _compact(text: str) -> str:
+    return re.sub(r"[\s_-]+", "", str(text)).lower()
+
+
+def _code(text: str) -> tuple[str, int] | None:
+    """`CT002` and `ct2` are the same code: (letters, number). None when it is not letters then digits."""
+    m = re.fullmatch(r"([A-Za-z]+)0*(\d+)", str(text).strip())
+    return (m.group(1).lower(), int(m.group(2))) if m else None
+
+
+def match_cases(wanted: list[str], cases: list[dict]) -> tuple[list[str], list[str]]:
+    """(case ids in the order asked, tokens that matched nothing or more than one case).
+
+    A token is the case id (any case), the tail of an id (`173` -> `KIWI-173`, `CT-04` or `ct04` ->
+    `TC-CT-04`, cut at a hyphen), or the bracketed code that starts a summary (`ct2` -> `[CT002] …`). Zero or
+    several matches is never resolved by a guess: the token is returned as unknown.
+    """
+    matched: list[str] = []
+    unknown: list[str] = []
+    for raw in wanted:
+        token = str(raw).strip()
+        if not token:
+            continue
+        hits: set[str] = set()
+        for c in cases:
+            cid = str(c.get("id", ""))
+            parts = cid.split("-")
+            tails = {_compact("".join(parts[i:])) for i in range(1, len(parts))}
+            code = re.match(r"\s*\[([^\]]+)\]", str(c.get("summary", "")))
+            want_code = _code(token)
+            if cid.lower() == token.lower() or _compact(token) in tails or \
+                    (code and want_code and _code(code.group(1)) == want_code):
+                hits.add(cid)
+        if len(hits) == 1:
+            (only,) = hits
+            if only not in matched:
+                matched.append(only)
+        elif token not in unknown:
+            unknown.append(token)
+    return matched, unknown
+
+
+def lookup(flags, run_dir: Path, plan_id: str = "", store=None) -> dict:
+    """The facts `/test-agent:execute` needs to read plain words, as plain data: the Kiwi plans, the cases of
+    one plan, the environments, what "prod" means here, and the recorded login sessions by name.
+
+    WHY here and not in the command: which plans exist, which cases a plan has and which session files are on
+    disk are facts, and the model must not supply them from memory. Read-only; errors go in `error`, never
+    raised. `store` is for tests; otherwise it is built as `pending_agent` builds it. Session files are
+    listed by name only — their contents (a login) are never opened.
+    """
+    import socket
+
+    from workflows.testing.preflight import KIWI_TIMEOUT_S, environments, store_for
+
+    template = str(flags.get("testing.base_url_template") or "")
+    out = {"plans": [], "cases": [],
+           "environments": [e["env"] for e in environments(flags)],
+           "base_url_template": template,
+           "production": {"env": "prod", "base_url": str(flags.get("testing.production_base_url") or "")},
+           "sessions": [], "defaults": {"env": str(flags.get("testing.env") or ""),
+                                        "build": str(flags.get("testing.build") or ""),
+                                        "browser": str(flags.get("testing.agent_browser") or "")},
+           "today": date.today().isoformat(), "error": ""}
+    folder = Path(str(flags.get("testing.sessions_dir") or "")).expanduser()
+    try:  # names and paths only
+        out["sessions"] = [{"name": f.stem, "path": str(f)} for f in sorted(folder.glob("*.json")) if f.is_file()]
+    except OSError:
+        pass
+    if store is None and str(flags.get("testing.storage") or "json") == "json":
+        out["error"] = "the case store is JSON (testing.storage=json): there are no Kiwi plans to list"
+        return out
+    previous = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(KIWI_TIMEOUT_S)
+    try:
+        if plan_id and not str(plan_id).isdigit():
+            raise ValueError(f"plan id {plan_id!r} is not a number")
+        plan_store = store if store is not None else store_for(flags, run_dir)
+        rpc = plan_store._rpc()
+        products = {p["id"]: p.get("name", "") for p in rpc.Product.filter({})}
+        out["plans"] = [{"id": p["id"], "name": p.get("name", ""), "product": products.get(p.get("product"), "")}
+                        for p in rpc.TestPlan.filter({})]
+        if plan_id:
+            case_store = store
+            if case_store is None:
+                case_store = store_for(_Overrides(flags, {"testing.kiwi_direct": True,
+                                                          "testing.kiwi_plan_id": str(plan_id)}), run_dir)
+            out["cases"] = [{"id": c.extid, "summary": c.summary, "status": c.status}
+                            for c in case_store.list_cases("")]
+    except Exception as exc:  # report, never raise: the command turns this into a message
+        out["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        socket.setdefaulttimeout(previous)
+    return out
+
+
 def confirm_production(production: bool, test_account: bool, *, logged_in: bool, base_url: str,
                        ask=input, interactive: bool | None = None) -> bool:
     """Whether the run may go ahead as a logged-in TEST account on production -> the confirmed answer.
@@ -303,8 +421,25 @@ def main(argv: list[str] | None = None) -> int:
                     help="web: run only the tests already written — no derive_ui, no model, starts now")
     ap.add_argument("--pending", action="store_true",
                     help="print (JSON) which CONFIRMED web cases have a test and which do not, then exit")
+    ap.add_argument("--lookup", action="store_true",
+                    help="print (JSON) the Kiwi plans, the environments, what prod means and the recorded "
+                         "login sessions by name (with --plan: that plan's cases), then exit")
+    ap.add_argument("--resolve-cases", default="", metavar="TOKENS",
+                    help="with --plan: print (JSON) which case ids words like '173, ct2' mean, then exit")
+    ap.add_argument("--plan", default="", help="--lookup / --resolve-cases: the Kiwi test plan id")
     args = ap.parse_args(argv)
     cfg = load_config()
+    if args.lookup or args.resolve_cases:
+        run_dir = (Path(args.run_dir).expanduser() if args.run_dir else latest_run(cfg)) or runs_root(cfg)
+        found = lookup(resolved_flags(cfg), run_dir, args.plan)
+        if args.lookup:
+            print(json.dumps(found, indent=2))
+        else:
+            tokens = [t for t in re.split(r"[,\s]+", args.resolve_cases) if t]
+            matched, unknown = match_cases(tokens, found["cases"]) if args.plan else ([], tokens)
+            error = found["error"] or ("" if args.plan else "--resolve-cases needs --plan")
+            print(json.dumps({"matched": matched, "unknown": unknown, "error": error}, indent=2))
+        return 0
     if args.run_dir:
         run_dir = Path(args.run_dir).expanduser()
     elif args.feature:

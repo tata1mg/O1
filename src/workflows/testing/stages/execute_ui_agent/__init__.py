@@ -344,32 +344,38 @@ def _merge_notes(ctx: RunContext, batch: list) -> str:
     return text
 
 
-def _row(verdict: dict) -> dict:
-    """A verdict as the row `ui_record.record_row` records."""
+def _row(verdict: dict, header: dict) -> dict:
+    """A verdict as the row `ui_record.record_row` records: its own Kiwi comment, on a PASS too."""
+    clauses = [c for p in verdict.get("parts") or [] for c in p.get("expected") or [] if c.get("evidence")]
     # the screenshot of what was WRONG; a picture of a clause that passed explains nothing on a case that did not
-    shot = next((c["evidence"] for p in verdict.get("parts") or [] for c in p.get("expected") or []
-                 if c.get("state") == ui_agent.NOT_MET and c.get("evidence")), "")
+    # pass, and was reported as misleading on a blocked one. Only a PASS shows what was met.
+    wanted = [ui_agent.NOT_MET] + ([ui_agent.MET] if verdict["status"] == ui_agent.PASS else [])
+    shot = next((c["evidence"] for state in wanted for c in clauses if c.get("state") == state), "")
     finished = datetime.fromisoformat(verdict["finished_at"]) if verdict.get("finished_at") else None
     return {"extid": verdict["extid"], "status": verdict["status"], "playwright_status": "agent",
-            "detail": ui_agent.report(verdict), "duration_s": verdict.get("duration_s", 0.0),
+            "detail": ui_agent.report(verdict), "comment": ui_agent.kiwi_comment(verdict, header),
+            "comment_on_pass": True, "duration_s": verdict.get("duration_s", 0.0),
             "finished_at": finished,
             "attachments": [{"name": "screenshot", "path": str(Path(verdict["folder"]) / shot)}] if shot else []}
 
 
-def _keep_previous_summary(ctx: RunContext) -> None:
-    """Set the last run's results.json / results.md aside under their own time, instead of writing over them.
+def _keep_summary(ctx: RunContext, started: datetime) -> None:
+    """Keep this run's results.json / results.md under the time it started, beside the live ones.
 
-    A run folder is per feature, not per run: `execute --feature F` reuses the newest one. A guest run then
-    replaced a logged-in run's summary an hour after it was written (2026-11-17), and the only copy of what
-    that run had found was the per-case folders. The summary is small; keep every one.
+    A run folder is per feature, not per run: `execute --feature F` reuses the newest one, and the harness
+    removes a stage's declared outputs before a forced re-run. So the next run does not write over this
+    run's summary — it is deleted before the stage even starts (a guest run replaced a logged-in run's
+    summary that way, 2026-11-17). Setting the old file aside at the start of a run therefore came too late
+    for results.json; a copy the harness does not know about, written when the run ends, is what survives.
     """
+    stamp = started.strftime("%Y%m%dT%H%M%SZ")
     for rel in (RESULTS_OUT, TABLE_OUT):
-        path = ctx.path(rel)
-        if path.is_file():
-            stamp = datetime.fromtimestamp(path.stat().st_mtime, UTC).strftime("%Y%m%dT%H%M%SZ")
-            target = path.with_name(f"{path.stem}.{stamp}{path.suffix}")
-            if not target.exists():
-                path.replace(target)
+        src = ctx.path(rel)
+        if src.is_file():
+            target, n = src.with_name(f"{src.stem}.{stamp}{src.suffix}"), 2
+            while target.exists():  # two runs in one second (tests; a retry)
+                target, n = src.with_name(f"{src.stem}.{stamp}-{n}{src.suffix}"), n + 1
+            shutil.copyfile(src, target)
 
 
 def _store_down(doing: str, exc: Exception) -> EngineFailure:
@@ -383,10 +389,9 @@ def _store_down(doing: str, exc: Exception) -> EngineFailure:
 def _engine(stage: Stage, ctx: RunContext) -> StageResult:
     from rfc_agent import decisions
 
-    t0 = time.monotonic()
+    t0, started = time.monotonic(), datetime.now(UTC)
     feature = feature_of(ctx)
     store = get_store(ctx)
-    _keep_previous_summary(ctx)
     include_manual = bool(ctx.flag("testing.agent_include_manual", False))
     try:
         cases = ui_agent.select_cases(store, feature, include_manual=include_manual, only=only_cases(ctx))
@@ -485,7 +490,7 @@ def _engine(stage: Stage, ctx: RunContext) -> StageResult:
                     if isinstance(value, int | float) and not isinstance(value, bool):
                         usage[key] = usage.get(key, 0) + value
             if verdict["extid"] in attached:
-                ui_record.record_row(ctx, stage.name, store, run.run_id, _row(verdict), header)
+                ui_record.record_row(ctx, stage.name, store, run.run_id, _row(verdict, header), header)
             results.append({k: verdict.get(k) for k in (
                 "extid", "status", "cause", "reason", "blocked_on", "confirmation", "confirmed", "flaky",
                 "duration_s", "first_run_s", "second_run_s", "browser_calls", "browser_actions", "cost_usd")} | {
@@ -502,6 +507,7 @@ def _engine(stage: Stage, ctx: RunContext) -> StageResult:
         text += f"  ·  {len(not_executed)} not executed"
     # every report of this stage carries the per-case table, time included
     text += "\n\n" + ui_agent.results_table(results, not_executed, unpriced)
+    _keep_summary(ctx, started)
     return StageResult(final_text=text, duration_s=time.monotonic() - t0, cost_usd=cost or None,
                        tool_calls=tool_calls, usage=usage or None, num_turns=turns or None,
                        engine_desc=f"agent x{len(runnable)} (batches of {size})")

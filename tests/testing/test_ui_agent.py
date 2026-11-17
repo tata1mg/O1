@@ -278,3 +278,94 @@ def test_the_results_table_always_carries_the_time_each_case_took():
 @pytest.mark.parametrize("seconds, text", [(0, "0s"), (59.4, "59s"), (60, "1m 00s"), (188, "3m 08s"), (None, "—")])
 def test_a_duration_reads_as_minutes_and_seconds(seconds, text):
     assert ui_agent.took(seconds) == text
+
+
+# ---- the verdict as a Kiwi comment ---------------------------------------------------------------------
+
+HEADER = {"environment": "prod", "build": "2026-11-17", "base_url": "https://www.1mg.com", "device": "Pixel 7",
+          "login": "none"}
+
+
+def kiwi_fail() -> dict:
+    """The guest-user Change Address case: A met, one clause not reached, one not met."""
+    return verdict("FAIL", [{"label": "A", "expected": [
+        clause("Change CTA should be visible when address is selected", observed=(
+            "On /cart, below the product list, a 'Change Address' button is shown reading "
+            "\"Delivering to Sector 14\".")),
+        clause("Add address CTA should be visible when address not there", ui_agent.NOT_REACHED,
+               blocker="As guest, a delivery location must be selected\nbefore the site can be browsed at all"),
+        clause("By clicking on these CTAs, user should get Sign in bottom sheet", ui_agent.NOT_MET,
+               observed="Clicking the 'Change Address' button navigated to https://www.1mg.com/capture-location; "
+                        "the CTA's target is a page, not a sheet. No sign-in sheet appeared.")]}],
+        extid="KIWI-175", cause="product", reason="Change Address is visible, but it opens a screen, not a sheet.",
+        confirmed=True, confirmation="FAIL again — confirmed", duration_s=373.4, cost_usd=2.14,
+        deviations=["entered through the 'Browse' menu"], observations=["the header says I'm a guest"])
+
+
+def test_a_fail_reads_as_prose_on_kiwis_run_page():
+    text = ui_agent.kiwi_comment(kiwi_fail(), HEADER)
+    assert text.startswith("## KIWI-175 — FAIL (confirmed)\n\n**What the agent found:** Change Address is visible")
+    for needle in ("### Part A", "- ✅ **Met** — Change CTA", "- ⚪ **Not reached** — Add address",
+                   "- ❌ **Not met** — By clicking", "  - saw: On /cart", "  - blocked by: As guest, a delivery",
+                   "- result: 0 of 1 parts met · cause: product", "- second run: FAIL again — confirmed",
+                   "- environment: prod · build 2026-11-17 · https://www.1mg.com",
+                   "- browser: Pixel 7 · login: none · time: 6m 13s · cost: $2.14",
+                   "### Departures from the written steps", "### Also noticed", "“Browse”", "I’m a guest"):
+        assert needle in text
+    assert "`" not in text and "&#x27;" not in text and "'" not in text and '"' not in text
+    assert "“Change Address”" in text and "CTA’s" in text and "“Delivering to Sector 14”" in text
+    lines = text.splitlines()
+    assert all(lines[i - 1] == "" for i, line in enumerate(lines) if line.startswith("#") and i)
+
+
+def test_a_pass_has_no_cause_no_second_run_and_no_empty_sections():
+    text = ui_agent.kiwi_comment(verdict("PASS", [{"label": "A", "expected": [clause("it opens")]}],
+                                         extid="KIWI-1", cost_usd=None), HEADER | {"production": True})
+    assert text.startswith("## KIWI-1 — PASS\n")
+    assert "- result: 1 of 1 parts met\n" in text and "cause:" not in text and "second run" not in text
+    assert "Departures" not in text and "Also noticed" not in text
+    assert "cost: unknown" in text and "time:" not in text
+    assert "- environment: prod · PRODUCTION · build" in text
+
+
+def test_a_not_confirmed_fail_says_so_in_the_heading():
+    for flaky, word in ((True, "flaky"), (False, "not confirmed")):
+        text = ui_agent.kiwi_comment(kiwi_fail() | {"confirmed": False, "flaky": flaky}, HEADER)
+        assert text.startswith(f"## KIWI-175 — FAIL ({word})")
+
+
+def test_a_blocked_verdict_with_no_parts_still_renders_what_blocked_it():
+    text = ui_agent.kiwi_comment(ui_agent.blocked("TC-9", "limit", "ran out of actions"), HEADER)
+    assert text.startswith("## TC-9 — BLOCKED\n") and "- blocked on: limit" in text
+    assert "- result:" not in text and "- cause: limit\n" in text
+    assert "###" not in text and "cost" not in text
+
+
+def test_plain_text_gets_typographic_quotes_and_one_line():
+    assert ui_agent._plain("'Change Address'") == "“Change Address”"
+    assert ui_agent._plain("the 'Add' and 'Change' CTAs") == "the “Add” and “Change” CTAs"
+    assert ui_agent._plain("CTA's and I'm") == "CTA’s and I’m"
+    assert ui_agent._plain('said "no sheet" here') == "said “no sheet” here"
+    assert ui_agent._plain("one\n  two\t\tthree\n") == "one two three"
+    assert ui_agent._plain("a < b && c > d") == "a < b && c > d"
+
+
+@pytest.mark.parametrize("raw", ["# heading", "## heading", "- item", "* item", "> quote", "+ item"])
+def test_plain_text_cannot_start_a_heading_bullet_or_quote(raw):
+    assert ui_agent._plain(raw) == raw.lstrip("#-*+> ")
+
+
+def test_plain_text_cannot_open_a_code_fence():
+    out = ui_agent._plain("see\n```js\nfor x in y\n```\nand `a span`")
+    assert "`" not in out and "\n" not in out
+
+
+def test_a_very_long_observation_is_cut_not_the_structure():
+    v = kiwi_fail()
+    v["parts"][0]["expected"][2]["observed"] = "word " * 4000
+    text = ui_agent.kiwi_comment(v, HEADER)
+    assert len(text) <= ui_agent.COMMENT_MAX
+    for needle in ("### Part A", "✅ **Met**", "⚪ **Not reached**", "❌ **Not met**", "### Also noticed",
+                   "- second run:"):
+        assert needle in text
+    assert "…" in text and "As guest, a delivery" in text

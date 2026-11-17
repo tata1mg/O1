@@ -200,6 +200,16 @@ cases have a test and which do not; the chat command uses it to offer that choic
 command without running it. The backend curl's path can be stored once with
 `preflight setup-web --curl <file>`.
 
+The arguments can also be plain words, e.g. `/test-agent:execute cart-sanity on prod with test cases 173,172`
+or `/test-agent:execute cart sanity plan on jupiter as guest, 3 at a time`. The command turns them into the
+flags above, shows what it understood (plan, cases, address, session) and the full flag-form command, and asks
+once before running. The facts come from helper code, not the model: `execute --lookup [--plan ID]` prints
+JSON with the Kiwi plans, that plan's cases, the environments, what "prod" means
+(`testing.production_base_url`), the recorded login sessions by file name (`testing.sessions_dir`, never
+opened) and the defaults; `execute --resolve-cases "173, ct2" --plan ID` maps ids, id tails and summary codes
+to case ids, and reports what matched nothing or more than one case as `unknown`. Store the two settings with
+`preflight setup-web --production-base-url URL --sessions-dir DIR`.
+
 ### An agent in a browser instead of a script: `ui-agent`
 
 `/test-agent:execute ui-agent` (stage `execute_ui_agent`, flag `testing.execute_ui_agent`) is the alternative
@@ -235,8 +245,8 @@ not work, and writes `qa/agent/<extid>/verdict.json` with a screenshot for every
 - **Production.** `execute ui-agent --production` allows the live site. A logged-in run there asks you to
   confirm the session is a test account (or takes `--test-account`); a guest run is not asked. What changes
   money or the account stays refused (`testing.agent_forbid`). Each run's `results.json` records
-  `production` and `test_account_confirmed`; an earlier run's summary in the same folder is kept as
-  `results.<time>.json`.
+  `production` and `test_account_confirmed`; every run's summary is also kept as
+  `results.<start time>.json` / `.md`, since the next run in the same folder replaces the live one.
 - **Straight from Kiwi.** `execute ui-agent --feature <F> [--kiwi-plan <id>]` needs no earlier run: it
   creates the run folder and reads the plan as it is (`testing.kiwi_direct`): a CONFIRMED case with no
   `extid:` tag is `KIWI-<case id>`, and one with no `exec:` tag is treated as a UI case. Without the
@@ -314,6 +324,8 @@ drops `derive_spec` and `execute_be`, since both read from the store. The harnes
 | `testing.agent_include_manual` | bool | `False` | `execute_ui_agent`: also take CONFIRMED web cases tagged `exec:manual` |
 | `testing.agent_code_context` | bool | `False` | `execute_ui_agent`: give the agent read-only code lookup (fleetlens), for finding a route only |
 | `testing.agent_browser` | str | `""` | `execute_ui_agent`: browser or channel for Playwright MCP; empty = its bundled Chromium |
+| `testing.production_base_url` | str | `""` | The live site's address, so "on prod" needs no typing. Only names the address: running there still needs `--production` |
+| `testing.sessions_dir` | str | `~/.secrets/playwright` | Folder of recorded login sessions (`*.json`) `execute --lookup` offers by name; files go to the browser, never read |
 | `testing.kiwi_plan_id` | str | `""` | Read cases from, and record into, this Kiwi plan by id (`--kiwi-plan`) |
 | `testing.kiwi_direct` | bool | `False` | Run a Kiwi plan this workflow did not upload; set by `execute --feature … --kiwi-plan …` |
 | `testing.xlsx` | bool | `True` | Render the workbook (needs the optional extra) |

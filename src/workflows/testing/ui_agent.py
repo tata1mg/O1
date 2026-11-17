@@ -416,6 +416,119 @@ def report(verdict: dict) -> str:
     return "\n".join(lines)
 
 
+# ---- the verdict as the comment on its Kiwi execution ---------------------------------------------------
+
+#: Kiwi's comment box. The renderer is only known to handle `##`/`###` headings, `-` bullets, `**bold**`,
+#: backtick spans and fences (see maestro.evidence_comment); no tables, no `<details>`, and a heading needs a
+#: blank line before it. This comment is prose, so it uses headings, bullets and bold only.
+COMMENT_MAX = 6000
+_ELLIPSIS = "…"
+_RE_PAIRED_SQ = re.compile(r"(?<![\w'])'([^'\n]+?)'(?![\w'])")
+_RE_OPEN_DQ = re.compile(r'(^|[\s(\[{—–-])"')
+_RE_LEADING_MARKUP = re.compile(r"^(?:#+|[-*+>]+(?=\s)|>+)\s*")
+_MARKS = {MET: "✅ **Met**", NOT_MET: "❌ **Not met**", NOT_REACHED: "⚪ **Not reached**"}
+
+
+def _plain(text) -> str:
+    """Agent-written text, made safe for one bullet of a Kiwi comment.
+
+    Kiwi HTML-escapes what it stores, and its renderer shows the escape literally wherever a straight quote
+    sat (`'` as `&#x27;`, `"` as `&quot;`), so quotes become typographic ones, which are not escaped:
+    a phrase in paired single quotes becomes “…”, any other `'` (CTA's, I'm) becomes ’, and straight double
+    quotes become “ ”. Newlines and runs of whitespace collapse to one space, so a multi-line sentence cannot
+    end its bullet. Markup that would restructure the comment is removed: backticks (a fence or a span would
+    be syntax-highlighted and shown unescaped) and a leading `#`, `-`, `*`, `+` or `>`. `<`, `>` and `&` are
+    left alone: Kiwi escapes them and, outside a code block, they render correctly.
+    """
+    text = " ".join(str(text or "").split()).replace("`", "")
+    text = _RE_LEADING_MARKUP.sub("", text)
+    text = _RE_PAIRED_SQ.sub(r"“\1”", text).replace("'", "’")
+    text = _RE_OPEN_DQ.sub(lambda m: m.group(1) + "“", text).replace('"', "”")
+    return text
+
+
+def _cut(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[:max(limit - 1, 0)].rstrip() + _ELLIPSIS
+
+
+def kiwi_comment(verdict: dict, header: dict) -> str:
+    """The verdict as Markdown a person reads on Kiwi's run page: headline, what the agent found, one
+    section per part with a bullet per clause, then departures and other observations.
+
+    Prose only, no code fences or backtick spans (see `_plain`). Over `COMMENT_MAX` characters the longest
+    `saw:`/`blocked by:` texts are shortened first, then the other free text; the structure is never cut.
+    """
+    status = str(verdict.get("status") or "?")
+    qualifier = ""
+    if status == FAIL and verdict.get("confirmed") is False:
+        qualifier = " (flaky)" if verdict.get("flaky") else " (not confirmed)"
+    elif status == FAIL and verdict.get("confirmed"):
+        qualifier = " (confirmed)"
+    #: every free-text field, by key, so truncation can find the longest
+    texts: dict[tuple, str] = {("found",): _plain(verdict.get("reason"))}
+    parts = [p for p in verdict.get("parts") or [] if isinstance(p, dict)]
+    for i, part in enumerate(parts):
+        for j, c in enumerate(c for c in part.get("expected") or [] if isinstance(c, dict)):
+            texts[("clause", i, j)] = _plain(c.get("text"))
+            texts[("saw", i, j)] = _plain(c.get("blocker") if c.get("state") == NOT_REACHED else c.get("observed"))
+    for key in ("deviations", "observations"):
+        for k, item in enumerate(verdict.get(key) or []):
+            texts[(key, k)] = _plain(item)
+    if verdict.get("blocked_on"):
+        texts[("blocked_on",)] = _plain(verdict["blocked_on"])
+
+    def render() -> str:
+        met, total = parts_met(verdict)
+        lines = [f"## {_plain(verdict.get('extid'))} — {status}{qualifier}", ""]
+        if texts[("found",)]:
+            lines += [f"**What the agent found:** {texts[('found',)]}", ""]
+        cause = f"cause: {_plain(verdict['cause'])}" if verdict.get("cause") and status != PASS else ""
+        if total:
+            lines.append(f"- result: {met} of {total} parts met" + (f" · {cause}" if cause else ""))
+        elif cause:
+            lines.append(f"- {cause}")
+        if verdict.get("confirmation"):
+            lines.append(f"- second run: {_plain(verdict['confirmation'])}")
+        env = f"{header.get('environment')}" + (" · PRODUCTION" if header.get("production") else "")
+        lines.append(f"- environment: {_plain(env)} · build {_plain(header.get('build'))} · "
+                     f"{_plain(header.get('base_url'))}")
+        run = [f"browser: {_plain(header.get('device'))}", f"login: {_plain(header.get('login'))}"]
+        if verdict.get("duration_s") is not None:
+            run.append(f"time: {took(verdict['duration_s'])}")
+        if "cost_usd" in verdict:
+            cost = verdict["cost_usd"]
+            run.append(f"cost: ${cost:.2f}" if isinstance(cost, int | float) and not isinstance(cost, bool)
+                       else "cost: unknown")
+        lines.append("- " + " · ".join(run))
+        for i, part in enumerate(parts):
+            lines += ["", f"### Part {_plain(part.get('label'))}", ""]
+            for j, c in enumerate(c for c in part.get("expected") or [] if isinstance(c, dict)):
+                state = c.get("state")
+                lines.append(f"- {_MARKS.get(state, _plain(state))} — {texts[('clause', i, j)]}")
+                if state == NOT_REACHED:
+                    lines.append(f"  - blocked by: {texts[('saw', i, j)]}")
+                else:
+                    lines.append(f"  - saw: {texts[('saw', i, j)]}")
+        if not parts and ("blocked_on",) in texts:
+            lines += ["", f"- blocked on: {texts[('blocked_on',)]}"]
+        for title, key in (("Departures from the written steps", "deviations"), ("Also noticed", "observations")):
+            items = [texts[(key, k)] for k in range(len(verdict.get(key) or [])) if texts[(key, k)]]
+            if items:
+                lines += ["", f"### {title}", ""] + [f"- {x}" for x in items]
+        return "\n".join(lines)
+
+    text = render()
+    for group in ("saw", None):          # the observations first, then everything else
+        while len(text) > COMMENT_MAX:
+            pool = [k for k in texts if (k[0] == group if group else k[0] != "saw") and len(texts[k]) > 40]
+            if not pool:
+                break
+            key = max(pool, key=lambda k: len(texts[k]))
+            texts[key] = _cut(texts[key], max(40, len(texts[key]) - (len(text) - COMMENT_MAX)))
+            text = render()
+    return text
+
+
 # ---- the results as a person reads them -------------------------------------------------------------------
 
 

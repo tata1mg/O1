@@ -172,3 +172,153 @@ def test_a_logged_in_production_run_asks_whether_the_account_is_a_test_account()
         confirm_production(True, False, **kw, interactive=True, ask=lambda q: "")       # Enter = no
     with pytest.raises(SystemExit, match="adding --test-account"):
         confirm_production(True, False, **kw, interactive=False)                        # nobody to ask
+
+
+# ---- plain words: match_plan, match_cases, lookup ---------------------------------------------------------
+
+PLANS = [{"id": 3, "name": "CART-SANITY", "product": "Pharmacy"}, {"id": 4, "name": "CART", "product": "Pharmacy"},
+         {"id": 5, "name": "LOGIN-SANITY", "product": "Core"}]
+
+
+@pytest.mark.parametrize("text", ["cart sanity", "CART_SANITY", "cart-sanity", " Cart  Sanity "])
+def test_match_plan_ignores_case_and_separators(text):
+    assert [p["id"] for p in execute.match_plan(text, PLANS)] == [3]
+
+
+@pytest.mark.parametrize("text", ["3", "TP-3", "plan 3", "tp3"])
+def test_match_plan_by_id(text):
+    assert [p["id"] for p in execute.match_plan(text, PLANS)] == [3]
+    assert execute.match_plan("99", PLANS) == []
+
+
+def test_match_plan_ambiguous_exact_and_none():
+    assert [p["id"] for p in execute.match_plan("sanity", PLANS)] == [3, 5]        # every candidate
+    assert [p["id"] for p in execute.match_plan("cart", PLANS)] == [4]             # exact beats substring
+    assert execute.match_plan("checkout", PLANS) == [] and execute.match_plan("", PLANS) == []
+
+
+CASES = [{"id": "KIWI-173", "summary": "[CT002] Verify the selected address", "status": "CONFIRMED"},
+         {"id": "KIWI-172", "summary": "[CT001] Verify the cart", "status": "CONFIRMED"},
+         {"id": "TC-CT-04", "summary": "no code here", "status": "CONFIRMED"},
+         {"id": "TC-CT-05", "summary": "[CT-5] dashed code", "status": "PROPOSED"}]
+
+
+def test_match_cases_by_id_number_and_summary_code():
+    assert execute.match_cases(["173"], CASES) == (["KIWI-173"], [])
+    assert execute.match_cases(["kiwi-172"], CASES) == (["KIWI-172"], [])
+    assert execute.match_cases(["CT002", "ct1"], CASES) == (["KIWI-173", "KIWI-172"], [])
+    assert execute.match_cases(["ct2"], CASES) == (["KIWI-173"], [])
+    assert execute.match_cases(["CT-04", "ct05"], CASES) == (["TC-CT-04", "TC-CT-05"], [])
+    assert execute.match_cases(["999", "nope"], CASES) == ([], ["999", "nope"])
+
+
+def test_match_cases_never_guesses_and_keeps_order():
+    twin = [*CASES, {"id": "XX-CT-04", "summary": "", "status": "CONFIRMED"}]
+    assert execute.match_cases(["CT-04"], twin) == ([], ["CT-04"])                  # two ids end that way
+    assert execute.match_cases(["172", "173", "172", "173"], CASES) == (["KIWI-172", "KIWI-173"], [])
+    assert execute.match_cases(["173", "999", "ct1"], CASES) == (["KIWI-173", "KIWI-172"], ["999"])
+
+
+class _Rpc:
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.Product = SimpleNamespace(filter=lambda q: [{"id": 1, "name": "Pharmacy"}, {"id": 2, "name": "Core"}])
+        self.TestPlan = SimpleNamespace(filter=self._plans)
+
+    def _plans(self, query):
+        if self.fail:
+            raise OSError("kiwi unreachable")
+        return [{"id": 3, "name": "CART-SANITY", "product": 1}, {"id": 5, "name": "LOGIN", "product": 2}]
+
+
+class _KiwiStore:
+    def __init__(self, fail=False):
+        self.rpc = _Rpc(fail)
+        self.asked = []
+
+    def _rpc(self):
+        return self.rpc
+
+    def list_cases(self, feature, *, status=None, tags=()):
+        self.asked.append((feature, status, tags))
+        return [SimpleNamespace(extid="KIWI-173", summary="[CT002] Verify", status="PROPOSED", text="", tags=())]
+
+
+def _flags(tmp_path, **over):
+    values = {"testing.storage": "kiwi", "testing.environments": "dione, earth", "testing.base_url_template":
+              "https://{env}.example", "testing.production_base_url": "https://www.example.com",
+              "testing.sessions_dir": str(tmp_path / "sessions"), "testing.env": "earth", "testing.build": "b1",
+              "testing.agent_browser": "chrome", **over}
+    return SimpleNamespace(get=lambda name, default=None: values.get(name, default))
+
+
+def test_lookup_lists_plans_cases_environments_and_defaults(tmp_path):
+    store = _KiwiStore()
+    out = execute.lookup(_flags(tmp_path), tmp_path, "3", store=store)
+    assert out["plans"] == [{"id": 3, "name": "CART-SANITY", "product": "Pharmacy"},
+                            {"id": 5, "name": "LOGIN", "product": "Core"}]
+    assert out["cases"] == [{"id": "KIWI-173", "summary": "[CT002] Verify", "status": "PROPOSED"}]
+    assert store.asked == [("", None, ())]                                          # every status, no tag filter
+    assert out["environments"] == ["dione", "earth"] and out["base_url_template"] == "https://{env}.example"
+    assert out["production"] == {"env": "prod", "base_url": "https://www.example.com"}
+    assert out["defaults"] == {"env": "earth", "build": "b1", "browser": "chrome"}
+    assert out["today"] == date.today().isoformat() and out["error"] == ""
+    json.dumps(out)
+    assert execute.lookup(_flags(tmp_path), tmp_path, store=_KiwiStore())["cases"] == []   # no plan -> no cases
+    assert execute.lookup(_flags(tmp_path, **{"testing.production_base_url": ""}), tmp_path,
+                          store=_KiwiStore())["production"]["base_url"] == ""
+
+
+def test_lookup_json_store_has_no_plans(tmp_path):
+    out = execute.lookup(_flags(tmp_path, **{"testing.storage": "json"}), tmp_path)
+    assert out["plans"] == [] and "JSON" in out["error"] and out["environments"] == ["dione", "earth"]
+
+
+def test_lookup_reports_errors_instead_of_raising(tmp_path):
+    assert "kiwi unreachable" in execute.lookup(_flags(tmp_path), tmp_path, store=_KiwiStore(fail=True))["error"]
+    assert "not a number" in execute.lookup(_flags(tmp_path), tmp_path, "abc", store=_KiwiStore())["error"]
+
+
+def test_lookup_sessions_are_names_only_and_never_opened(tmp_path, monkeypatch):
+    folder = tmp_path / "sessions"
+    folder.mkdir()
+    secret = folder / "a-state.json"
+    secret.write_text('{"cookies": "SECRET"}')
+    (folder / "notes.txt").write_text("not a session")
+    secret.chmod(0)                                                                 # opening it would fail
+    real_open = type(secret).open
+
+    def guard(self, *a, **k):
+        assert self.suffix != ".json", f"opened {self}"
+        return real_open(self, *a, **k)
+
+    monkeypatch.setattr(type(secret), "open", guard)
+    monkeypatch.setattr(type(secret), "read_text", lambda self, *a, **k: pytest.fail(f"read {self}"))
+    try:
+        out = execute.lookup(_flags(tmp_path), tmp_path, store=_KiwiStore())
+    finally:
+        secret.chmod(0o600)
+    assert out["sessions"] == [{"name": "a-state", "path": str(secret)}]
+    assert execute.lookup(_flags(tmp_path, **{"testing.sessions_dir": str(tmp_path / "none")}), tmp_path,
+                          store=_KiwiStore())["sessions"] == []
+
+
+def test_lookup_and_resolve_cases_on_the_command_line(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(execute, "load_config", lambda: {"RUNS_ROOT": str(tmp_path)})
+    monkeypatch.setattr(execute, "resolved_flags", lambda cfg: _flags(tmp_path))
+    fake = _KiwiStore()
+    import workflows.testing.preflight as preflight
+    monkeypatch.setattr(preflight, "store_for", lambda flags, run_dir: fake)
+    assert execute.main(["--lookup", "--plan", "3"]) == 0
+    assert json.loads(capsys.readouterr().out)["cases"][0]["id"] == "KIWI-173"
+    assert execute.main(["--resolve-cases", "173, ct2, 999", "--plan", "3"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"matched": ["KIWI-173"], "unknown": ["999"], "error": ""}
+
+
+def test_production_and_sessions_flags_exist_with_their_defaults():
+    from harness.flags import registry
+    from workflows.testing.flags import NAMES
+
+    assert "testing.production_base_url" in NAMES and "testing.sessions_dir" in NAMES
+    assert registry()["testing.production_base_url"].default == ""
+    assert registry()["testing.sessions_dir"].default == "~/.secrets/playwright"
