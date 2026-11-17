@@ -99,7 +99,8 @@ def test_record_sends_and_logs_locally(tmp_path, monkeypatch):
     monkeypatch.setattr(observe, "_make_client", lambda cfg: C())
     secret = "sk-ant-api03-" + "a" * 40
     res = feedback.record(tmp_path, "down", comment=f"  token {secret}  ", cfg=KEYS)
-    assert res == {"sent": True, "target": "trace", "local": True, "note": None}
+    assert (res["sent"], res["target"], res["local"], res["note"]) == (True, "trace", True, None)
+    assert res["summary"].startswith("Feedback recorded") and "| Overall | 👎 Needs work · " in res["summary"]
     assert len(sent) == 1 + 6 + 3 + 1  # headline, every area, speed, cost, start-ready, minutes status: always written
     assert sent[0]["name"] == "rfc_feedback"
     assert secret not in (sent[0]["comment"] or "")  # secrets scrubbed
@@ -920,3 +921,84 @@ def test_langfuse_trouble_means_no_prefill_not_an_error(monkeypatch):
     monkeypatch.undo()
     monkeypatch.setattr("urllib.request.urlopen", boom)
     assert feedback._langfuse_scores(KEYS, "T1", "S") == []
+
+
+# ---- the summary table, --rerate and --preview -------------------------------------------------------------------
+
+
+def _log(run):
+    return [json.loads(x) for x in (run / "logs" / feedback.FEEDBACK_FILE).read_text().splitlines()]
+
+
+def test_record_returns_the_summary_table(tmp_path, monkeypatch):
+    monkeypatch.setattr(feedback, "_send", lambda cfg, scores: None)
+    _traces(tmp_path, ("T1", "rfc"))
+    res = feedback.record(tmp_path, "down", cfg=KEYS, **FORM)
+    assert res["summary"].startswith("Feedback recorded · attempt 1 (")
+    assert "| Coverage | Missing PRD flow" in res["summary"] and "Compared with last time" not in res["summary"]
+    res = feedback.record(tmp_path, "down", cfg=KEYS, **FORM)  # the same again: every row kept
+    assert "Compared with last time" in res["summary"] and "changed" not in res["summary"].split("\n", 2)[2]
+
+
+def test_rerate_fills_every_unanswered_question_from_the_earlier_rating(tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(feedback, "_send", lambda cfg, scores: sent.append(scores))
+    _traces(tmp_path, ("T1", "rfc"))
+    _rate(tmp_path, **FORM)
+    res = feedback.record(tmp_path, None, rerate=True, issues={"buildability": ["too_thin_to_build_from"]}, cfg=KEYS)
+    entry = _log(tmp_path)[-1]
+    assert entry["rating"] == "down" and entry["comment"] == "needs another pass"
+    assert entry["issues"] == {"coverage": ["missing_prd_flow"], "buildability": ["too_thin_to_build_from"]}
+    assert entry["verdicts"]["approach"] == "usable" and entry["notes"] == {"coverage": "a Figma state is missing"}
+    assert (entry["minutes_saved"], entry["minutes_spent"]) == (30, 10) and entry["run_speed"] == "too_slow_to_review"
+    rows = {ln.split(" | ")[0].strip("| "): ln for ln in res["summary"].splitlines()[4:]}
+    assert rows["Coverage"].endswith("| kept |") and rows["Buildability"].endswith("| changed |")
+    assert any(s["name"] == "rfc_minutes_saved" and s["value"] == 30.0 for s in sent[-1])  # the number is sent again
+
+
+def test_rerate_with_a_typed_answer_replaces_that_one_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(feedback, "_send", lambda cfg, scores: None)
+    _traces(tmp_path, ("T1", "rfc"))
+    _rate(tmp_path, **FORM)
+    feedback.record(tmp_path, None, rerate=True, minutes_saved=45, cfg=KEYS)
+    e = _log(tmp_path)[-1]
+    assert (e["minutes_saved"], e["minutes_spent"]) == (45, None)  # a typed minute replaces the pair: nothing stale
+    feedback.record(tmp_path, None, rerate=True, minutes_skipped=True, cfg=KEYS)
+    assert _log(tmp_path)[-1]["minutes_status"] == "skipped"
+
+
+def test_rerate_of_a_stopped_attempt(tmp_path, monkeypatch):
+    monkeypatch.setattr(feedback, "_send", lambda cfg, scores: None)
+    _traces(tmp_path, ("T1", "rfc"))
+    _attempts(tmp_path, {"exit": 130, "stop_kind": "user_stop", "stage": "review"})
+    feedback.record(tmp_path, None, stop_reason="too_slow", rerun="yes", cfg=KEYS)
+    res = feedback.record(tmp_path, None, rerate=True, stop_reason="too_costly", cfg=KEYS)
+    e = _log(tmp_path)[-1]
+    assert (e["stop_reason"], e["rerun"]) == ("too_costly", "yes")
+    assert "| Main reason for stopping | Cost or tokens were too high | changed |" in res["summary"]
+    assert "| Run it again | Yes | kept |" in res["summary"]
+
+
+def test_preview_writes_and_sends_nothing(tmp_path, monkeypatch):
+    monkeypatch.setattr(feedback, "_send", lambda cfg, scores: pytest.fail("nothing may be sent"))
+    _traces(tmp_path, ("T1", "rfc"))
+    res = feedback.record(tmp_path, "down", preview=True, cfg=KEYS, **FORM)
+    assert res["preview"] and res["summary"].startswith("Check before submitting")
+    assert not (tmp_path / "logs" / feedback.FEEDBACK_FILE).exists()
+    assert not (tmp_path / "logs" / "run_brief.md").exists()
+
+
+def test_cli_prints_the_table_after_recording_and_for_a_preview(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(feedback, "_send", lambda cfg, scores: None)
+    monkeypatch.setattr(observe, "_load_cfg", lambda: KEYS)
+    _traces(tmp_path, ("T1", "rfc"))
+    args = ["--run-dir", str(tmp_path), "--rating", "down", "--verdict", "coverage=usable_with_gaps",
+            "--issue", "coverage=missing_prd_flow"]  # fmt: skip
+    assert feedback.main([*args, "--preview"]) == 0
+    out = capsys.readouterr().out
+    assert "Check before submitting" in out and "Nothing is sent yet." in out and "feedback recorded" not in out
+    assert feedback.main(args) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("feedback recorded on the run's Langfuse trace") and "| Coverage | Missing PRD flow |" in out
+    assert feedback.main(["--run-dir", str(tmp_path), "--rerate", "--minutes-saved", "20"]) == 0  # needs no rating
+    assert "| Overall | 👎 Needs work | kept |" in capsys.readouterr().out

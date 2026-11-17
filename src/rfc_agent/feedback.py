@@ -3,7 +3,7 @@
     python -m rfc_agent.feedback --run-dir <run> --context
     python -m rfc_agent.feedback --run-dir <run> --rating up|down [--verdict DIM=V]... [--issue DIM=V]...
         [--run-speed V] [--run-cost V] [--start-ready V] [--minutes-saved N] [--minutes-spent N]
-        [--minutes-skipped] [--note KEY=TEXT]... [--comment "..."] [--stage S]
+        [--minutes-skipped] [--note KEY=TEXT]... [--comment "..."] [--stage S] [--rerate] [--preview]
     python -m rfc_agent.feedback --run-dir <run> [--run-end stopped|failed|finished] [--stop-reason V]
         [--failure-check yes|no] [--failure-reported V] --rerun yes|no [--note stop|failure=TEXT]
 
@@ -77,7 +77,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import observe, run_facts
+from . import feedback_summary, observe, run_facts
 from .run_end import state as run_end_state
 
 FEEDBACK_FILE = "feedback.jsonl"
@@ -553,7 +553,13 @@ def _langfuse_entries(cfg, trace_id: str | None, session_id: str) -> list[dict]:
     return [entry | {"source": "langfuse"}] if entry else []
 
 
-def _previous(run_dir: Path, trace_id: str | None, session_id: str, cfg=None):
+def _earlier(run_dir: Path, trace_id: str | None, session_id: str, cfg=None) -> list[dict]:
+    """Earlier ratings of this attempt, oldest first: the run folder's, else (only then) Langfuse's."""
+    local = _local_entries(run_dir, trace_id, session_id)
+    return [{**e, "source": "run folder"} for e in local] or _langfuse_entries(cfg, trace_id, session_id)
+
+
+def _previous(run_dir: Path, trace_id: str | None, session_id: str, cfg=None, entries: list[dict] | None = None):
     """What earlier ratings of this same target (the trace, else the session) left behind: the gaps picked, the stages
     they pointed at, the questions that had a typed note, whether the thumb had a comment, and whether a stage was
     named. Read from the run folder; only when it has nothing for this target, from Langfuse."""
@@ -561,7 +567,7 @@ def _previous(run_dir: Path, trace_id: str | None, session_id: str, cfg=None):
     stages: set[str] = set()
     notes: set[str] = set()
     had_comment = had_stage = False
-    for e in _local_entries(run_dir, trace_id, session_id) or _langfuse_entries(cfg, trace_id, session_id):
+    for e in entries if entries is not None else _earlier(run_dir, trace_id, session_id, cfg):
         with contextlib.suppress(AttributeError, TypeError):
             for dim, picked in (e.get("issues") or {}).items():
                 issues |= {(dim, i) for i in picked}
@@ -578,26 +584,26 @@ _PREFILL_KEYS = (
 )  # fmt: skip
 
 
+def _shape_previous(entry: dict) -> dict:
+    """An earlier rating as the form and `--rerate` use it: only the answers, in one shape."""
+    out = {k: entry[k] for k in _PREFILL_KEYS if entry.get(k) not in (None, "", {}, [])}
+    out["verdicts"] = {d: v for d, v in (entry.get("verdicts") or {}).items() if v in VERDICTS}
+    out["minutes_status"] = entry.get("minutes_status")
+    if entry.get("minutes_status") not in ("given", "partial"):  # a skipped or unasked time question leaves no number
+        out.pop("minutes_saved", None)
+        out.pop("minutes_spent", None)
+    out["source"] = entry.get("source", "run folder")
+    return out
+
+
 def previous_rating(run_dir: Path, cfg=None) -> dict | None:
     """The latest earlier rating of the attempt now being rated, for the form to show prefilled (None when this
     attempt was not rated yet). Every attempt is its own trace, so another attempt's feedback is never offered.
     Read from <run>/logs/feedback.jsonl; only when that has nothing for this attempt, from Langfuse, and never mixed:
     the form shows one earlier rating, whole."""
     run_dir = run_dir.expanduser().resolve()
-    trace_id, session_id = pick_trace(run_dir), _session_id(run_dir)
-    local = _local_entries(run_dir, trace_id, session_id)
-    entry = ({**local[-1], "source": "run folder"} if local else None) or next(
-        iter(_langfuse_entries(cfg, trace_id, session_id)), None
-    )
-    if not entry:
-        return None
-    out = {k: entry[k] for k in _PREFILL_KEYS if entry.get(k) not in (None, "", {}, [])}
-    out["verdicts"] = {d: v for d, v in (entry.get("verdicts") or {}).items() if v in VERDICTS}
-    if entry.get("minutes_status") not in ("given", "partial"):  # a skipped or unasked time question leaves no number
-        out.pop("minutes_saved", None)
-        out.pop("minutes_spent", None)
-    out["source"] = entry["source"]
-    return out
+    earlier = _earlier(run_dir, pick_trace(run_dir), _session_id(run_dir), cfg)
+    return _shape_previous(earlier[-1]) if earlier else None
 
 
 def record(
@@ -620,12 +626,40 @@ def record(
     failure_reported: str | None = None,
     rerun: str | None = None,
     notes: dict[str, str] | None = None,
+    rerate: bool = False,
+    preview: bool = False,
     cfg=None,
 ) -> dict:
-    """Record one piece of feedback; returns what happened (`sent`, `target`, `local`, `note`).
+    """Record one piece of feedback; returns what happened (`sent`, `target`, `local`, `note`, `summary`).
 
-    `rating` None is feedback on a stopped or failed attempt (the run-end answers): no RFC scores are written."""
+    `rating` None is feedback on a stopped or failed attempt (the run-end answers): no RFC scores are written.
+    `rerate`: every answer not passed is the earlier rating's of this same attempt (a re-rating sends the whole rating
+    again; an unanswered question keeps its earlier answer). `preview`: build the summary only, write and send nothing.
+    """
     run_dir = run_dir.expanduser().resolve()
+    trace_id = pick_trace(run_dir, stage)
+    session_id = _session_id(run_dir)
+    earlier = _earlier(run_dir, trace_id, session_id, cfg)
+    prev = _shape_previous(earlier[-1]) if earlier else None
+    if rerate and prev:
+        rating = rating or prev.get("rating")
+        comment = comment if comment is not None else prev.get("comment")
+        notes = {**(prev.get("notes") or {}), **(notes or {})}
+        verdicts, issues = dict(verdicts or {}), {k: list(v) for k, v in (issues or {}).items()}
+        for dim in DIMENSIONS:
+            if dim not in verdicts and dim not in issues:
+                if dim in prev["verdicts"]:
+                    verdicts[dim] = prev["verdicts"][dim]
+                if prev.get("issues", {}).get(dim):
+                    issues[dim] = list(prev["issues"][dim])
+        run_speed, run_cost = run_speed or prev.get("run_speed"), run_cost or prev.get("run_cost")
+        start_ready = start_ready or prev.get("start_ready")
+        if minutes_saved is None and minutes_spent is None and not minutes_skipped:
+            minutes_saved, minutes_spent = prev.get("minutes_saved"), prev.get("minutes_spent")
+        run_end, stop_reason = run_end or prev.get("run_end"), stop_reason or prev.get("stop_reason")
+        failure_check = failure_check or prev.get("failure_check")
+        failure_reported = failure_reported or prev.get("failure_reported")
+        rerun = rerun or prev.get("rerun")
     comment = _clean_comment(comment)
     notes = {k: t for k, v in (notes or {}).items() if k in NOTE_KEYS and (t := _clean_comment(v))}
     run_speed = run_speed if run_speed in RUN_SPEED else None
@@ -644,9 +678,26 @@ def record(
     verdicts, issues = _norm_form(verdicts, issues, notes)
     state = run_end_state(run_dir)
     attempt_meta = _attempt_meta(run_dir, state)
-    trace_id = pick_trace(run_dir, stage)
-    session_id = _session_id(run_dir)
-    prev_issues, prev_stages, prev_notes, had_comment, had_stage = _previous(run_dir, trace_id, session_id, cfg)
+    view = dict(
+        rating=rating, verdicts=verdicts, issues=issues, notes=notes, comment=comment, run_speed=run_speed,
+        run_cost=run_cost, minutes_saved=minutes_saved, minutes_spent=minutes_spent, minutes_status=status,
+        run_end=run_end, stop_reason=stop_reason, failure_check=failure_check, failure_reported=failure_reported,
+        rerun=rerun,
+    )  # fmt: skip
+    has_cause = bool(state.get("cause"))
+    shown = "finished" if attempt_meta["run_state"] == "done" else attempt_meta["run_state"]
+    summary = (
+        ("Check before submitting" if preview else "Feedback recorded")
+        + f" · attempt {attempt_meta['attempt']} ({shown})\n\n"
+        + feedback_summary.table(
+            feedback_summary.rows(view, has_cause), feedback_summary.rows(prev, has_cause) if prev else None
+        )
+    )
+    if preview:
+        return {"sent": False, "target": None, "local": False, "note": None, "summary": summary, "preview": True}
+    prev_issues, prev_stages, prev_notes, had_comment, had_stage = _previous(
+        run_dir, trace_id, session_id, cfg, entries=earlier
+    )
     facts = run_facts.collect(run_dir, _prd_ref(run_dir))
     brief = run_brief(
         run_dir, facts, rating=rating, verdicts=verdicts, issues=issues, notes=notes, comment=comment,
@@ -722,7 +773,10 @@ def record(
     if cfg is None:
         cfg = observe._load_cfg()
     note = _send(cfg, scores)
-    return {"sent": note is None, "target": "trace" if trace_id else "session", "local": local, "note": note}
+    return {
+        "sent": note is None, "target": "trace" if trace_id else "session", "local": local, "note": note,
+        "summary": summary,
+    }  # fmt: skip
 
 
 _BRIEF_CAP = 1800
@@ -928,6 +982,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="minutes this RFC saved you versus writing it yourself (a whole number, 0 or more)")
     ap.add_argument("--minutes-spent", type=int, default=None, metavar="N",
                     help="minutes you spent reviewing and correcting the RFC after it was generated")
+    ap.add_argument("--rerate", action="store_true",
+                    help="re-rating this attempt: every answer not passed is the earlier rating's (an unanswered "
+                         "question keeps its earlier answer)")
+    ap.add_argument("--preview", action="store_true",
+                    help="print the summary of what would be recorded and send and write nothing")
     ap.add_argument("--minutes-skipped", action="store_true",
                     help="the person skipped the time questions (pass only when no minutes were typed)")
     ap.add_argument(
@@ -952,7 +1011,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.minutes_skipped and (args.minutes_saved is not None or args.minutes_spent is not None):
         ap.error("--minutes-skipped cannot be combined with --minutes-saved or --minutes-spent")
     ended = (args.run_end, args.stop_reason, args.failure_check, args.failure_reported, args.rerun)
-    if not args.rating and not any(ended):
+    if not args.rating and not any(ended) and not args.rerate:
         print("--rating is required for a finished run, or give the stopped/failed answers (or pass --context)",
               file=sys.stderr)
         return 2
@@ -978,11 +1037,18 @@ def main(argv: list[str] | None = None) -> int:
         failure_reported=args.failure_reported,
         rerun=args.rerun,
         notes=dict(args.note),
+        rerate=args.rerate,
+        preview=args.preview,
     )
+    if args.preview:
+        print(res["summary"])
+        print("\nNothing is sent yet.")
+        return 0
     if res["sent"]:
         print(f"feedback recorded on the run's Langfuse {res['target']}")
     else:
         print(f"feedback saved locally (not sent to Langfuse: {res['note']})")
+    print("\n" + res["summary"])
     return 0
 
 

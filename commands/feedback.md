@@ -49,21 +49,27 @@ when `end` is not `unknown`**: go straight to the path below.
 
 ## Re-rating: show the earlier answers (`previous` is not null)
 
-Applies to all three paths. A second rating of the same attempt replaces the first, so show what was said last time
-and let the person keep or change it, question by question:
+Applies to all three paths. A second rating of the same attempt replaces the first, so show what was said last time,
+let the person keep or change it, and confirm the result before submitting.
 
 - Start with one line: "You rated this run before: <one-line summary, e.g. 👍, 4 areas, 2 gaps>. Keep or change?"
-  `Keep it as it is` · `Change some answers`. On `Keep it as it is`, run the record command with every value from
-  `previous` and ask nothing more.
-- On `Change some answers`, ask every question as usual, and mark what was picked last time: append
-  " (picked last time)" to those options (for an area, the verdict and each gap; for the run questions, the speed and
-  cost options; for a stopped or failed run, the reason and the run-again answer). For the two time questions, show
-  the earlier number: "Last time: 30 minutes. A number to change it, or keep".
-- Always pass the whole rating again, kept answers included (that is what keeps one complete rating on Langfuse).
-  Treat `keep` on a time question as passing the earlier number. Never pass only the changed answers.
-- An earlier typed note is shown with its question and kept unless the person types a new one (then pass the new one).
+  `Keep it as it is` · `Change some answers`.
+- `Keep it as it is`: go straight to the confirm step below, with no answers passed (`--rerate` fills them all in).
+- `Change some answers`: **say first**: "A question you leave unanswered keeps your earlier answer. Pick another option
+  to change it." Then ask every question as usual and mark what was picked last time: append " (picked last time)" to
+  those options (for an area, the verdict and each gap; for the run questions, the speed and cost options; for a
+  stopped or failed run, the reason and the run-again answer). For the two time questions show the earlier number:
+  "Last time: 30 minutes. A number to change it, or leave it". A question the person leaves unanswered is simply not
+  passed: `--rerate` keeps its earlier answer. An earlier typed note is kept unless a new one is typed.
+- **Confirm before submitting.** Run the record command (section 4) with only what was answered this time, plus
+  `--rerate --preview`. It prints the table of the whole resulting rating and sends nothing. Show that table exactly
+  as printed, then ask "Submit this?": `Submit` · `Change something`. On `Change something`, go back to the questions.
+  On `Submit`, run the same command without `--preview`.
+- Never pass the earlier values yourself: `--rerate` does it, and the table shows the person what was kept and what
+  changed.
 
-When `previous` is null, or the person is rating another attempt, nothing is prefilled: ask fresh.
+When `previous` is null, or the person is rating another attempt, nothing is prefilled and there is no confirm step:
+ask fresh, and the command submits straight away.
 
 ## 3a. Ask for a finished run (AskUserQuestion — skip any answer already given in `$ARGUMENTS`)
 
@@ -178,7 +184,7 @@ For a stopped or failed run:
 ```
 uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m rfc_agent.feedback --run-dir "$RUN" \
   [--run-end <stopped|failed|finished>] [--stop-reason <v>] [--failure-check <yes|no>] [--failure-reported <v>] \
-  --rerun <yes|no> [--note <stop|failure>=<text>]
+  --rerun <yes|no> [--note <stop|failure>=<text>] [--rerate] [--preview]
 ```
 
 Pass `--run-end` only when `end` was `unknown`. It is scored on the attempt it was given on, so a resume and a finish
@@ -188,11 +194,13 @@ later keeps this feedback and gets its own rating. For a finished run:
 uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m rfc_agent.feedback --run-dir "$RUN" --rating <up|down> \
   [--verdict <dimension>=<value> …] [--issue <dimension>=<issue> …] [--run-speed <v>] [--run-cost <v>] \
   [--start-ready <v>] [--minutes-saved <n>] [--minutes-spent <n>] [--minutes-skipped] [--note <key>=<text> …] [--comment "<their line>"] \
-  [--stage <scope|investigate|draft|review|revise>]
+  [--stage <scope|investigate|draft|review|revise>] [--rerate] [--preview]
 ```
 
 `--rating up` for both 👍 options, `down` for 👎. Pass only what was answered. `--stage` only when the user said the
-rating is about one stage. Quote notes and the comment safely (they may contain quotes). Relay the single line it prints. If it
-says `saved locally (not sent to Langfuse: …)`, tell the user the reason in one line — the rating is not lost, and
-it is not an error. Rating the same attempt again replaces the earlier rating in full: every area is rewritten, and a
-gap picked before but not now is cleared (see the re-rating step above).
+rating is about one stage. Quote notes and the comment safely (they may contain quotes). The command prints one line and then a table of what
+was sent (for every ending, finished, stopped or failed, and for a re-rating with a "Compared with last time"
+column). **Show the line and the table exactly as printed, after every submission.** If the line says
+`saved locally (not sent to Langfuse: …)`, tell the user the reason in one line — the rating is not lost, and it is
+not an error. Rating the same attempt again replaces the earlier rating in full (see the re-rating step above):
+add `--rerate`, and `--preview` first to confirm.

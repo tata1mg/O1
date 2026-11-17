@@ -174,11 +174,42 @@ their own feedback, and anything more about them goes in the notes of the finish
 
 ## Re-rating an attempt
 
-Rating the same attempt again replaces its earlier rating, and the form shows the earlier answers first. `--context`
-returns them as `previous`: the whole earlier rating of that attempt (thumb, verdicts, gaps, typed notes, the overall
-comment, the run questions and both time numbers; for a stopped or failed attempt the reason or cause check and
-whether to run it again). The person keeps or changes each answer, and the form sends the whole rating again, so a
-re-rate never leaves an older answer behind, including a time number.
+Rating the same attempt again replaces its earlier rating. `--context` returns the earlier rating as `previous` (thumb,
+verdicts, gaps, typed notes, the overall comment, the run questions and both time numbers; for a stopped or failed
+attempt the reason or cause check and whether to run it again). The form then works like this:
+
+1. "You rated this run before… Keep it or change it?" `Keep it as it is` or `Change some answers`.
+2. On Change it says first that **a question left unanswered keeps its earlier answer**, then asks every question with
+   last time's choices marked "(picked last time)" and last time's minutes shown.
+3. Before anything is submitted, `--rerate --preview` prints the **resulting** rating as a table, with a "Compared with
+   last time" column (kept or changed), and the person confirms (`Submit` or `Change something`). Nothing is written
+   or sent by a preview.
+4. `--rerate` is what makes "unanswered keeps the earlier answer" true: every answer not passed is the earlier one's
+   (an issue picked for an area replaces that area's earlier answer; typed minutes replace the pair, so no stale number
+   stays). It does not depend on the model repeating earlier values.
+
+A first rating has no confirm step: it is submitted straight away.
+
+**After every submission** (first rating or re-rating, finished, stopped or failed) the command prints what was sent
+as a table, built from the values it recorded:
+
+```
+Feedback recorded · attempt 2 (finished)
+
+| Question | Your answer | Compared with last time |
+|---|---|---|
+| Overall | 👎 Needs work · "needs another pass" | kept |
+| Coverage | Missing PRD flow · "a Figma state is missing" | kept |
+| Buildability | Too vague to start coding | changed |
+| Approach | no gaps | kept |
+| Context layer use | not rated | kept |
+| Time saved | 30 min | kept |
+| Time spent reviewing | 10 min | kept |
+```
+
+A stopped attempt shows "Main reason for stopping" and "Run it again"; a failed one shows "Recorded cause is right"
+(or "What made it fail" when no cause was recorded) and "Run it again". The "Compared with last time" column appears
+only when the attempt was rated before. The layout lives in `feedback_summary.py`.
 
 - **Per attempt.** `previous` is read for the trace of the attempt being rated. A resumed attempt is another trace,
   so it starts blank and never shows or touches another attempt's feedback.
@@ -187,8 +218,8 @@ re-rate never leaves an older answer behind, including a time number.
   only). The two are never mixed: the form shows one earlier rating, from one place. If Langfuse is off, down or has
   nothing, the form is blank. The same fallback lets a re-rate clear gaps that were picked before.
 - A rating of an attempt that had no trace is matched on the session instead, so it is replaced the same way.
-- Time numbers: a number left by an earlier rating is shown only when that rating's `rfc_minutes_status` was `given`
-  or `partial`; after a skip nothing is offered.
+- Time numbers: a number left by an earlier rating is offered only when that rating's `rfc_minutes_status` was
+  `given` or `partial`; after a skip nothing is offered.
 
 ## Trace selection
 
