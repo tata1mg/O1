@@ -126,7 +126,7 @@ def test_each_confirmed_web_case_gets_an_agent_and_is_recorded(agent_ctx, clean_
     assert res["tally"] == {"PASS": 1, "FAIL": 1} and (res["parts_met"], res["parts"]) == (1, 2)
     assert sorted(by_id(res)) == [WEB, WEB2]                        # the app case is not a web case
     table = agent_ctx.path(stage_mod.TABLE_OUT).read_text()
-    assert "| Case | Verdict | Time | Cost | What was found |" in table and f"| {WEB} | PASS |" in table
+    assert "| Case | Verdict | Time | Cost | What the agent found |" in table and f"| {WEB} | PASS |" in table
     assert f"| {WEB2} | FAIL (confirmed) |" in table and "| **Total** | 2 run |" in table
     kept = json.loads((agent_ctx.path(ui_agent.AGENT_DIR) / WEB / ui_agent.VERDICT).read_text())
     assert isinstance(kept["duration_s"], float) and kept["cost_usd"] == 0.5         # the case's own file
@@ -371,7 +371,7 @@ def test_the_stage_reports_its_sessions_tool_calls(agent_ctx, monkeypatch):
     agent_ctx.engine = AgentEngine({WEB: passing(WEB), WEB2: passing(WEB2)}, calls=3)
     result = STAGE.engine(STAGE, agent_ctx)
     assert len(result.tool_calls) == 6 and result.cost_usd == 1.0
-    assert "| Case | Verdict | Time | Cost | What was found |" in result.final_text     # every report has it
+    assert "| Case | Verdict | Time | Cost | What the agent found |" in result.final_text     # every report has it
 
 
 def test_a_read_only_run_tells_the_agent_to_change_nothing(agent_ctx, monkeypatch):

@@ -169,6 +169,9 @@ the same folder:
 }
 ```
 
+- `reason` is what a person reads first, in the run's results table: one or two plain sentences saying
+  what you FOUND on the page — for a PASS as much as for a FAIL ("Green banner under the address bar reads
+  '₹973 saved on this order including Care Plan', with the logo", not "all clauses met").
 - Required, or the verdict is rejected: `extid`; `status`; a non-empty `reason`; `parts`, each with a
   `label` and its `expected` clauses; `actions` (the steps that led to a PASS or FAIL); and for FAIL and
   BLOCKED a `cause` that is exactly one of `product`, `environment`, `case`, `test data`, `limit` (`limit`

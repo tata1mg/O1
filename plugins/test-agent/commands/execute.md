@@ -77,11 +77,12 @@ Execute cases for: `$ARGUMENTS`
    `cd <PROJ>/tools/ui-runner && npx playwright show-report <results_web.html_report>`.
 
 For `ui-agent`, report from `results_agent`: the tally, `parts_met` of `parts`, the Kiwi run link, and
-ALWAYS the per-case table in `results_agent.table` as it is — Case | Verdict | Time | Cost | What was
-found, with its Total row. Never drop the Time column or summarise the table away: how long each case took
+ALWAYS the per-case table in `results_agent.table` as it is — Case | Verdict | Time | Cost | What the agent
+found, with its Total row. Never drop the Time or the What-the-agent-found column or summarise the table
+away: how long each case took
 is part of the result (a FAIL's time includes its second run; a cost of `unknown` means the session was cut
-off before reporting it). The same table is in `<run dir>/qa/agent/results.md`. Each row's last cell is one
-line of the form `FAIL — 2 of 3 parts met; B not met (…); cause: environment`. There is no partial pass: a case is PASS only when every part is met; say how close
+off before reporting it). The same table is in `<run dir>/qa/agent/results.md`. Each row's last cell is the
+agent's own sentence about what it saw, then the parts met and, when it did not pass, the cause. There is no partial pass: a case is PASS only when every part is met; say how close
 it came with the parts figure, never by softening the status. A FAIL was run twice: say when the second
 run did not repeat it (flaky). ERROR means the agent returned no usable verdict (the harness's, not the
 product's). The full verdict and screenshots of a case are in `<run dir>/qa/agent/<case id>/`.

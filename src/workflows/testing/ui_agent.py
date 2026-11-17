@@ -427,7 +427,11 @@ def took(seconds) -> str:
 
 
 def results_table(results: list[dict], not_executed: list[dict] = (), unpriced: list[str] = ()) -> str:
-    """The run's cases as a Markdown table: Case | Verdict | Time | Cost | What was found.
+    """The run's cases as a Markdown table: Case | Verdict | Time | Cost | What the agent found.
+
+    The last column is the agent's own sentence about what it saw on the page (the verdict's `reason`), for
+    a PASS as much as for a FAIL — "1 of 1 parts met" tells a reader nothing they can check — followed by
+    how many parts were met and, when the case did not pass, the cause.
 
     Time is always there: how long a case takes is what decides whether running it this way is worth it,
     and it was the one figure the first reports left out. A FAIL's time includes its second run.
@@ -435,7 +439,7 @@ def results_table(results: list[dict], not_executed: list[dict] = (), unpriced: 
     def cell(text) -> str:
         return " ".join(str(text or "").split()).replace("|", "/")
 
-    lines = ["| Case | Verdict | Time | Cost | What was found |", "|---|---|---|---|---|"]
+    lines = ["| Case | Verdict | Time | Cost | What the agent found |", "|---|---|---|---|---|"]
     total_s, total_cost = 0.0, 0.0
     for row in results or []:
         status = str(row.get("status") or "?")
@@ -449,9 +453,17 @@ def results_table(results: list[dict], not_executed: list[dict] = (), unpriced: 
             price = "unknown"
         total_s += row.get("duration_s") or 0
         total_cost += cost if isinstance(cost, int | float) else 0
-        found = cell(row.get("summary") or row.get("reason"))
-        lines.append(f"| {cell(row.get('extid'))} | {status} | {took(row.get('duration_s'))} | {price} | "
-                     f"{found[:300]} |")
+        found = cell(row.get("reason") or row.get("summary"))[:400]
+        tail = []
+        if row.get("parts"):
+            tail.append(f"{row.get('parts_met', 0)} of {row['parts']} parts met")
+        if row.get("status") != PASS and row.get("cause"):
+            tail.append(f"cause: {row['cause']}")
+        if row.get("confirmation") and row.get("confirmed") is False:
+            tail.append(f"second run: {cell(row['confirmation'])[:120]}")
+        if tail:
+            found += f" ({'; '.join(tail)})"
+        lines.append(f"| {cell(row.get('extid'))} | {status} | {took(row.get('duration_s'))} | {price} | {found} |")
     for row in not_executed or []:
         lines.append(f"| {cell(row.get('extid'))} | not executed | — | — | {cell(row.get('reason'))[:300]} |")
     floor = " or more" if unpriced else ""

@@ -145,7 +145,7 @@ def results_summary(run_dir: Path, rel: str = RESULTS["backend"]) -> dict | None
 
 
 def _agent_table(res: dict) -> str | None:
-    """execute_ui_agent's per-case table (Case | Verdict | Time | Cost | What was found), or None for the
+    """execute_ui_agent's per-case table (Case | Verdict | Time | Cost | What the agent found), or None for the
     script executors, whose rows carry no summary."""
     rows = res.get("results") or []
     if not rows or "summary" not in rows[0]:

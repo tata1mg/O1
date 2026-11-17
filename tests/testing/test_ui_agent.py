@@ -256,16 +256,21 @@ def test_the_agent_can_check_its_own_verdict(folder):
 
 
 def test_the_results_table_always_carries_the_time_each_case_took():
-    rows = [{"extid": "KIWI-180", "status": "PASS", "duration_s": 128.4, "cost_usd": 0.86, "summary": "PASS — 1 of 1"},
+    rows = [{"extid": "KIWI-180", "status": "PASS", "duration_s": 128.4, "cost_usd": 0.86, "parts_met": 1, "parts": 1,
+             "summary": "PASS — 1 of 1 parts met", "reason": "Green banner reads '₹973 saved on this order'."},
             {"extid": "KIWI-197", "status": "FAIL", "confirmed": True, "duration_s": 386, "cost_usd": 1.77,
+             "parts_met": 0, "parts": 1, "cause": "product", "reason": "The widget is one | line, with no header.",
              "summary": "FAIL — 0 of 1 parts met; A not met (one | line)"},
             {"extid": "KIWI-205", "status": "BLOCKED", "duration_s": 42, "cost_usd": None, "summary": "cut off"}]
     table = ui_agent.results_table(rows, [{"extid": "TC-CT-05", "reason": "no expected result"}], ["KIWI-205"])
     lines = table.splitlines()
-    assert lines[0] == "| Case | Verdict | Time | Cost | What was found |"
-    assert "| KIWI-180 | PASS | 2m 08s | $0.86 |" in lines[2]
-    assert "| KIWI-197 | FAIL (confirmed) | 6m 26s | $1.77 |" in lines[3] and "one / line" in lines[3]
-    assert "| KIWI-205 | BLOCKED | 42s | unknown |" in lines[4]
+    assert lines[0] == "| Case | Verdict | Time | Cost | What the agent found |"
+    # a PASS says what was seen, not "1 of 1 parts met"
+    assert lines[2] == ("| KIWI-180 | PASS | 2m 08s | $0.86 | Green banner reads '₹973 saved on this order'. "
+                        "(1 of 1 parts met) |")
+    assert "| KIWI-197 | FAIL (confirmed) | 6m 26s | $1.77 | The widget is one / line, with no header. " \
+           "(0 of 1 parts met; cause: product) |" == lines[3]
+    assert lines[4] == "| KIWI-205 | BLOCKED | 42s | unknown | cut off |"          # no reason: the summary
     assert "| TC-CT-05 | not executed | — | — | no expected result |" == lines[5]
     assert lines[6] == "| **Total** | 3 run | 9m 16s of agent time | $2.63 or more | |"
 
