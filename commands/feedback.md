@@ -136,7 +136,7 @@ the gap wins.
   2. "After the RFC was generated, how many minutes did you spend reviewing it and correcting it yourself? (a number,
      or skip; leave out the run itself and any pauses, which are already measured)" → `--minutes-spent N`.
   Pass only a whole number of 0 or more. Anything else, or `skip`, means pass nothing for it. If both are skipped
-  (no number at all), pass `--minutes-skipped`. Always ask both for the two rated screen-2 answers, so the answer is never blank.
+  (no number at all), pass `--minutes-skipped`, and never together with `--minutes-saved` or `--minutes-spent` (the command refuses it). Always ask both for the two rated screen-2 answers, so the answer is never blank.
 - No other questions. If the user volunteered a comment in `$ARGUMENTS` or in a reply, pass it as `--comment`; don't
   prompt for one.
 

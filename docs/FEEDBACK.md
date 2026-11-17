@@ -26,6 +26,7 @@ Code: `src/rfc_agent/feedback.py` (the command), `src/rfc_agent/run_facts.py` an
    how it ended      read from the run's own record (`--context` -> `end`): the form opens on that path
    rating in         finished: up | down, what is wrong in each area asked (none, or the gaps), run speed / cost only if asked,
                      optional comment, optional --stage.   stopped / failed: see "A run that stopped or failed"
+   earlier rating    of this same attempt, if any (`--context` -> `previous`), shown prefilled   (see "Re-rating an attempt")
    pick the trace    from logs/traces.jsonl                         (see "Trace selection")
    read run facts    from the files above, at rating time
    scrub comment     secret-shaped strings redacted, capped at 2000 characters
@@ -33,6 +34,7 @@ Code: `src/rfc_agent/feedback.py` (the command), `src/rfc_agent/run_facts.py` an
 3  WHERE IT LANDS
    Langfuse          scores on the picked trace; facts ride as score metadata
    local copy        logs/feedback.jsonl, always written, even when Langfuse is off or fails
+                     (read back for the prefill; Langfuse is read only if this has nothing for the attempt)
 ```
 
 ## Scores
@@ -49,7 +51,7 @@ area with gaps gets the gaps. A 👍 can carry gaps too: the thumb is the headli
 | `rfc_run_speed` | CATEGORICAL | `fine`, `too_slow_to_run`, `too_slow_to_review`, `too_slow_to_run_and_review`, `not_rated` | always written; its comment is what was typed under Other on the run question |
 | `rfc_run_cost` | CATEGORICAL | `worth_it`, `too_token_heavy`, `not_rated` | always written; same comment as `rfc_run_speed` |
 | `rfc_start_ready` | CATEGORICAL | `yes`, `after_a_few_clarifications`, `after_many_clarifications`, `no`, `not_rated` | could implementation start |
-| `rfc_minutes_status` | CATEGORICAL | `given`, `partial`, `skipped`, `not_rated` | written on every rating, so a re-rate replaces it; read this before the minutes |
+| `rfc_minutes_status` | CATEGORICAL | `given`, `partial`, `skipped`, `not_rated` | written on every rating, so a re-rate replaces it; read this before the minutes. `--minutes-skipped` cannot be combined with typed minutes (a CLI error, and `ValueError` from `record()`) |
 | `rfc_minutes_saved` | NUMERIC | minutes | minutes the RFC saved versus writing it yourself; written only when typed; stale if the status is not `given` or `partial` |
 | `rfc_minutes_spent` | NUMERIC | minutes | minutes the person spent reviewing and correcting the RFC after it was generated; written only when typed |
 | `rfc_feedback_stage` | CATEGORICAL | scope, investigate, draft, review, revise | only with `--stage` |
@@ -92,8 +94,9 @@ option (`--comment`), and the thumb is asked again on its own. A note on an area
 never `usable`. Each note is scrubbed for secret-shaped strings and capped at 2000 characters, and all of them are
 also saved in `logs/feedback.jsonl`. The prompt records `usable` or `usable_with_gaps`;
 `not_usable` is still accepted by the command but is not asked. The run question sets speed and cost together;
-`rfc_start_ready` is `yes` when buildability has no gaps and is otherwise not asked. A re-rate is a fresh look: it
-replaces the earlier rating in full, so an answer the new prompt does not ask is reset to `not_rated`.
+`rfc_start_ready` is `yes` when buildability has no gaps and is otherwise not asked. A re-rate replaces the earlier
+rating in full, so an answer the new prompt does not ask is reset to `not_rated`. The form shows the earlier answers
+and sends them all again (see "Re-rating an attempt").
 
 Score names and values are the dashboard's schema. Add values freely; renaming one splits its history.
 

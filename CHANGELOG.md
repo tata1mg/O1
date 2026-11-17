@@ -18,11 +18,12 @@ versions match `.claude-plugin/plugin.json`.
 - **`rfc_minutes_status`** (`given`, `partial`, `skipped`, `not_rated`) is written on every rating, so a re-rate always
   replaces it. `--minutes-skipped` records a skip. Read the status before the minutes: numbers left by an earlier
   rating are stale when the status is not `given` or `partial`.
+  `--minutes-skipped` together with typed minutes is refused.
 
 ### Added
 
 - A stopped run (a stage failure, Ctrl-C or a stop) prints the feedback command for that run folder:
-  `/rfc-agent:feedback --run-dir <folder>`.
+  `/rfc-agent:feedback --run-dir <folder>`. The folder is quoted, so a path with spaces can be copied.
 - **Feedback for a stopped or failed run.** The run records how each attempt ended (`logs/attempts.jsonl`: user stop,
   failure with a cause category and a scrubbed excerpt, or killed) and scores it on the trace (`rfc_run_stop_kind`,
   `rfc_run_failure_cause`). `/rfc-agent:feedback` reads that and opens on the matching path, so nobody is asked how the
