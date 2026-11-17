@@ -32,6 +32,10 @@ empty), and how the latest attempt ended, taken from the run's own record:
 - `recorded`: one line saying so (stage, cause), to show at the top of the first question;
 - `cause` and `excerpt`: the recorded failure cause (failed only); `stage`; `attempt` of `attempts`;
 - `earlier`: attempts before this one that did not finish (they keep their own feedback).
+- `previous`: what this same attempt was rated before (`null` if it was not): `rating`, `verdicts`, `issues`, `notes`,
+  `comment`, `run_speed`, `run_cost`, `start_ready`, `minutes_saved`, `minutes_spent`, or for a stopped or failed
+  attempt `stop_reason`, `failure_check`, `failure_reported`, `rerun`; `source` says where it came from (the run
+  folder, or Langfuse when the run folder has no record). Another attempt's feedback is never in it.
 
 Show `recorded` above the first question so the person sees which path they are on. **Never ask how the run ended
 when `end` is not `unknown`**: go straight to the path below.
@@ -42,6 +46,24 @@ when `end` is not `unknown`**: go straight to the path below.
 | `stopped` | section 3b |
 | `failed` | section 3c |
 | `unknown` | one question first, "How did this run end?" (`It finished` · `I stopped it` · `It failed` · `Later`), pass the answer as `--run-end finished|stopped|failed`, then the matching path. `Later`: ask nothing more |
+
+## Re-rating: show the earlier answers (`previous` is not null)
+
+Applies to all three paths. A second rating of the same attempt replaces the first, so show what was said last time
+and let the person keep or change it, question by question:
+
+- Start with one line: "You rated this run before: <one-line summary, e.g. 👍, 4 areas, 2 gaps>. Keep or change?"
+  `Keep it as it is` · `Change some answers`. On `Keep it as it is`, run the record command with every value from
+  `previous` and ask nothing more.
+- On `Change some answers`, ask every question as usual, and mark what was picked last time: append
+  " (picked last time)" to those options (for an area, the verdict and each gap; for the run questions, the speed and
+  cost options; for a stopped or failed run, the reason and the run-again answer). For the two time questions, show
+  the earlier number: "Last time: 30 minutes. A number to change it, or keep".
+- Always pass the whole rating again, kept answers included (that is what keeps one complete rating on Langfuse).
+  Treat `keep` on a time question as passing the earlier number. Never pass only the changed answers.
+- An earlier typed note is shown with its question and kept unless the person types a new one (then pass the new one).
+
+When `previous` is null, or the person is rating another attempt, nothing is prefilled: ask fresh.
 
 ## 3a. Ask for a finished run (AskUserQuestion — skip any answer already given in `$ARGUMENTS`)
 
@@ -172,5 +194,5 @@ uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m rfc_agent.feedback --run-dir 
 `--rating up` for both 👍 options, `down` for 👎. Pass only what was answered. `--stage` only when the user said the
 rating is about one stage. Quote notes and the comment safely (they may contain quotes). Relay the single line it prints. If it
 says `saved locally (not sent to Langfuse: …)`, tell the user the reason in one line — the rating is not lost, and
-it is not an error. Rating the same run again replaces the earlier rating in full: every area is rewritten, and a
-gap picked before but not now is cleared.
+it is not an error. Rating the same attempt again replaces the earlier rating in full: every area is rewritten, and a
+gap picked before but not now is cleared (see the re-rating step above).

@@ -35,6 +35,10 @@ versions match `.claude-plugin/plugin.json`.
   See [docs/FEEDBACK.md](docs/FEEDBACK.md#a-run-that-stopped-or-failed).
 - A process that is killed without a chance to write anything is recorded as `killed` on the next start
   (`logs/attempt_open.json`).
+- **Re-rating shows the earlier answers.** `feedback --context` returns `previous`, the earlier rating of the same
+  attempt (from the run folder, or from Langfuse when the run folder has none), and the form shows it so each answer
+  is kept or changed on purpose. The whole rating is sent again, so no older answer or time number is left behind. A
+  different attempt starts blank. See [docs/FEEDBACK.md](docs/FEEDBACK.md#re-rating-an-attempt).
 
 ## 0.1.1 (pilot)
 

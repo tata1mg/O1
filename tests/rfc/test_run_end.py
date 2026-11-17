@@ -161,3 +161,11 @@ def test_stopped_then_resumed_keeps_both_attempts_in_order(tmp_path, monkeypatch
     assert [(a["exit"], a.get("stop_kind")) for a in run_end.read_attempts(rd)] == [(130, "user_stop"), (0, None)]
     st = run_end.state(rd)
     assert st["end"] == "finished" and st["earlier"][0]["end"] == "stopped"
+
+
+def test_the_feedback_hint_quotes_a_run_folder_with_spaces(tmp_path, monkeypatch, capsys):
+    _fake_stages(monkeypatch, {"scope": lambda: 1})
+    rd = tmp_path / "my run"
+    assert run.main(["--prd", "1", "--run-dir", str(rd)]) == 1
+    err = capsys.readouterr().err
+    assert f"--run-dir '{rd}'" in err

@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import shlex
 import signal
 import sys
 import time
@@ -272,12 +273,12 @@ def main(argv: list[str] | None = None) -> int:
                 tail_text = tail.text()
                 print(
                     f"  [rfc] STOPPED at {LABELS[stage]} (exit {code}). Fix the cause, then resume this run with "
-                    f"--run-dir {run_dir} — finished work is kept.",
+                    f"--run-dir {shlex.quote(str(run_dir))} — finished work is kept.",
                     file=sys.stderr,
                 )
                 print(
                     f"  [rfc] Feedback on this run (optional, it helps tune the pipeline): "
-                    f"/rfc-agent:feedback --run-dir {run_dir}",
+                    f"/rfc-agent:feedback --run-dir {shlex.quote(str(run_dir))}",
                     file=sys.stderr,
                 )
                 break

@@ -169,6 +169,24 @@ attempt's feedback reads as such even after the run has finished; `logs/feedback
 locally. When the form is opened on a finished attempt that has earlier stopped or failed attempts, it says they keep
 their own feedback, and anything more about them goes in the notes of the finished form.
 
+## Re-rating an attempt
+
+Rating the same attempt again replaces its earlier rating, and the form shows the earlier answers first. `--context`
+returns them as `previous`: the whole earlier rating of that attempt (thumb, verdicts, gaps, typed notes, the overall
+comment, the run questions and both time numbers; for a stopped or failed attempt the reason or cause check and
+whether to run it again). The person keeps or changes each answer, and the form sends the whole rating again, so a
+re-rate never leaves an older answer behind, including a time number.
+
+- **Per attempt.** `previous` is read for the trace of the attempt being rated. A resumed attempt is another trace,
+  so it starts blank and never shows or touches another attempt's feedback.
+- **Source.** The run folder's `logs/feedback.jsonl` first. Only when it has no rating for this attempt (for example
+  the file was deleted) is it read from Langfuse (`GET /api/public/v3/scores`, read only, this attempt's `fb:` scores
+  only). The two are never mixed: the form shows one earlier rating, from one place. If Langfuse is off, down or has
+  nothing, the form is blank. The same fallback lets a re-rate clear gaps that were picked before.
+- A rating of an attempt that had no trace is matched on the session instead, so it is replaced the same way.
+- Time numbers: a number left by an earlier rating is shown only when that rating's `rfc_minutes_status` was `given`
+  or `partial`; after a skip nothing is offered.
+
 ## Trace selection
 
 | Situation | Trace scored |
@@ -266,8 +284,9 @@ them beside the run facts (`cost_usd`, `tokens_total`, `prd_words`, `operator_wa
 - **Re-rating** rewrites every area, and clears the gaps picked on an earlier rating of the same trace by
   overwriting them with `none`. Typed notes and the overall comment it does not repeat are cleared too (sent as an
   empty comment; Langfuse keeps the old comment if none is sent). Scores written before the area form (`rfc_feedback_reason`) stay in Langfuse as
-  history and are not touched. The clearing reads `logs/feedback.jsonl`, so a rating made from another
-  machine, or after that file was deleted, cannot clear what it cannot see.
+  history and are not touched. The clearing reads `logs/feedback.jsonl`, and falls back to Langfuse when that file
+  has nothing for the attempt (see Re-rating an attempt); gaps whose names no longer exist (for example
+  `ignores_existing_infra`) are not offered again and stay on the old trace.
 - **A resumed run is a new trace** in the same session; the rating goes to the latest `rfc` trace, as above. An
   earlier attempt cannot be rated separately after a resume: its feedback goes in the notes of the finished form.
 - **Failure causes are matched on text** the run printed (`run_end.py`); an unfamiliar message is `other`, and the
