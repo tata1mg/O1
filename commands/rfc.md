@@ -123,9 +123,11 @@ When the process exits, read `$RUN/logs/run.json` and report in a few lines:
   session id). Offer once: `cd "$RUN" && claude --resume <id> --fork-session` opens one (`--fork-session` keeps
   the run's own session untouched — the lead's is resumed by later stages).
 - **Ask for a rating, once.** After the report, follow `${CLAUDE_PLUGIN_ROOT}/commands/feedback.md` from section 2.
-  It opens with *"How was this RFC overall?"* (`👍 Good`, `👍 Good, with notes`, `👎 Needs work`, `Later`): a plain
+  For a finished run it opens with *"How was this RFC overall?"* (`👍 Good`, `👍 Good, with notes`, `👎 Needs work`, `Later`): a plain
   👍 is one tap, and the other two ask what was wrong in each area; the rating lands in the run's Langfuse trace. On
-  `Later`, say they can run `/rfc-agent:feedback` any time after reading the RFC, and drop it. Skip this whole step
-  if the run STOPPED.
+  `Later`, say they can run `/rfc-agent:feedback` any time after reading the RFC, and drop it.
+  If the run STOPPED or FAILED, still offer it once: the form opens on the stopped or failed path (why you stopped
+  it, or is the recorded cause right, then would you run it again) because the run's own record already says how it
+  ended; do not ask that again.
 - The repo snapshots under `$RUN/_snap/` can be removed with
   `uv run --project "$PROJ" python -m rfc_agent.scope cleanup "$RUN"` once nobody needs to re-run a stage.

@@ -89,6 +89,8 @@ whole-run rating uses the latest `rfc` trace, `--stage S` that stage's trace.
 | `rfc_<area>`, `rfc_<area>_issue` | CATEGORICAL | a verdict for each area, and one score per gap picked (coverage, buildability, approach, context layer use; readable summary and rollout and risk when asked) |
 | `rfc_suspect_stage` | CATEGORICAL | the stages the picked gaps point at |
 | `rfc_run_speed`, `rfc_run_cost`, `rfc_start_ready` | CATEGORICAL | asked only on request; `not_rated` otherwise |
+| `rfc_minutes_status` | CATEGORICAL | `given`, `partial`, `skipped`, `not_rated`; written on every rating, read before the minutes; `--minutes-skipped` cannot be combined with typed minutes |
+| `rfc_minutes_saved`, `rfc_minutes_spent` | NUMERIC | minutes saved versus writing it yourself; minutes reviewing and correcting after generation. Written only when typed |
 | `rfc_feedback_stage` | CATEGORICAL | only with `--stage` |
 | `rfc_feedback_reason` | CATEGORICAL | legacy: the removed 👎 reason list. Old ratings keep it as history; nothing writes it now |
 

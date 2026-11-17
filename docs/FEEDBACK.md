@@ -19,9 +19,14 @@ Code: `src/rfc_agent/feedback.py` (the command), `src/rfc_agent/run_facts.py` an
    run closes    ->  logs/run.json          cost, duration
                      rfc-run observation gets metadata.run_facts (see "Run facts")
 
+   attempt ends  ->  logs/attempts.jsonl   exit, stop_kind (user_stop | failure | killed), failure_cause + excerpt
+                     logs/attempt_open.json is present while an attempt runs; found left behind = killed hard
+
 2  WHEN SOMEONE RATES  (end of /rfc-agent:rfc, or /rfc-agent:feedback later)
-   rating in         up | down, what is wrong in each area asked (none, or the gaps), run speed / cost only if asked,
-                     optional comment, optional --stage
+   how it ended      read from the run's own record (`--context` -> `end`): the form opens on that path
+   rating in         finished: up | down, what is wrong in each area asked (none, or the gaps), run speed / cost only if asked,
+                     optional comment, optional --stage.   stopped / failed: see "A run that stopped or failed"
+   earlier rating    of this same attempt, if any (`--context` -> `previous`), shown prefilled   (see "Re-rating an attempt")
    pick the trace    from logs/traces.jsonl                         (see "Trace selection")
    read run facts    from the files above, at rating time
    scrub comment     secret-shaped strings redacted, capped at 2000 characters
@@ -29,6 +34,7 @@ Code: `src/rfc_agent/feedback.py` (the command), `src/rfc_agent/run_facts.py` an
 3  WHERE IT LANDS
    Langfuse          scores on the picked trace; facts ride as score metadata
    local copy        logs/feedback.jsonl, always written, even when Langfuse is off or fails
+                     (read back for the prefill; Langfuse is read only if this has nothing for the attempt)
 ```
 
 ## Scores
@@ -45,6 +51,9 @@ area with gaps gets the gaps. A 👍 can carry gaps too: the thumb is the headli
 | `rfc_run_speed` | CATEGORICAL | `fine`, `too_slow_to_run`, `too_slow_to_review`, `too_slow_to_run_and_review`, `not_rated` | always written; its comment is what was typed under Other on the run question |
 | `rfc_run_cost` | CATEGORICAL | `worth_it`, `too_token_heavy`, `not_rated` | always written; same comment as `rfc_run_speed` |
 | `rfc_start_ready` | CATEGORICAL | `yes`, `after_a_few_clarifications`, `after_many_clarifications`, `no`, `not_rated` | could implementation start |
+| `rfc_minutes_status` | CATEGORICAL | `given`, `partial`, `skipped`, `not_rated` | written on every rating, so a re-rate replaces it; read this before the minutes. `--minutes-skipped` cannot be combined with typed minutes (a CLI error, and `ValueError` from `record()`) |
+| `rfc_minutes_saved` | NUMERIC | minutes | minutes the RFC saved versus writing it yourself; written only when typed; stale if the status is not `given` or `partial` |
+| `rfc_minutes_spent` | NUMERIC | minutes | minutes the person spent reviewing and correcting the RFC after it was generated; written only when typed |
 | `rfc_feedback_stage` | CATEGORICAL | scope, investigate, draft, review, revise | only with `--stage` |
 
 Areas and their gaps (`feedback.DIMENSIONS`):
@@ -55,7 +64,7 @@ Areas and their gaps (`feedback.DIMENSIONS`):
 | `buildability` | a coding agent could build from `rfc.md` | `too_thin_to_build_from` (Draft, Investigate), `interface_or_contract_unclear`, `build_order_or_dependency_missing` (Draft), `citation_does_not_support_claim` (Draft, Investigate) |
 | `context_layer` | right code, APIs and existing services found | `wrong_or_stale_code_fact` (Investigate, Scope), `missed_existing_code_or_service` (Investigate), `ignored_existing_pattern` (Investigate, Draft), `wrong_repos_or_pages` (Scope) |
 | `coverage` | PRD and Figma flows handled, "covered" claims true | `missing_prd_flow`, `unneeded_flow_included` (Investigate), `missing_figma_flow_or_state` (Investigate, Scope), `marked_covered_but_not_addressed` (Draft, Review) |
-| `approach` | the choice fits our infra and engineering standards | `ignores_existing_infra` (Draft, Investigate), `ignores_engineering_standards`, `generic_industry_choice_over_local_fit`, `tradeoff_not_justified`, `missing_alternative` (Draft) |
+| `approach` | the choice fits our infra and engineering standards | `poor_approach` (Draft, Investigate), `ignores_engineering_standards`, `generic_industry_choice_over_local_fit`, `tradeoff_not_justified`, `missing_alternative` (Draft) |
 | `rollout_risk` | rollout, rollback, compatibility, performance, security, monitoring | `missing_rollout_rollback`, `missing_compatibility_or_migration`, `missing_performance_or_scale`, `missing_security_or_privacy`, `missing_monitoring` (Draft) |
 
 Contradictory ticks resolve the same way everywhere: the problem wins. The chat tool cannot make an option
@@ -65,17 +74,17 @@ question is single-choice, so there is nothing to contradict there. A 👎 with 
 kept as given: it shows up as an unexplained 👎.
 
 `not_rated` means the question was not answered. A gap given for an area marked `usable` makes it
-`usable_with_gaps` (the gap wins), and so does a gap given with no verdict. An unknown area or value is dropped. The end-of-run question skips a
-stopped run (`commands/rfc.md`), but `/rfc-agent:feedback --run-dir <folder>` rates any run folder, and areas the run
-never reached stay `not_rated`.
+`usable_with_gaps` (the gap wins), and so does a gap given with no verdict. An unknown area or value is dropped. A run that stopped or failed
+is rated on its own path (below); `/rfc-agent:feedback --run-dir <folder>` rates any run folder.
 
-How the person is asked (`commands/feedback.md`): a thumb with four choices (`👍 Good`, `👍 Good, with notes`,
+How the person is asked for a finished run (`commands/feedback.md`; a stopped or failed run has its own path, below): a thumb with four choices (`👍 Good`, `👍 Good, with notes`,
 `👎 Needs work`, `Later`), then, for the two that continue, four areas once each with their gaps in the same question
 (`Nothing wrong` plus three gaps): coverage, buildability, approach and context layer use, all on one screen. The
 readable summary, rollout and risk, and the run questions are not asked by default; they are asked only on request,
 and otherwise stay `not_rated`. The thumb is asked alone first, so `👍 Good` and `Later` never show the area
 questions. `👍 Good` is one tap and records the headline only, so
-every area is `not_rated`. The chat tool allows four options per question, so the gaps not
+every area is `not_rated`. The two time questions (minutes saved, minutes reviewing and correcting) follow the two
+ratings that continue to screen 2, and are skippable; a skip is recorded as `rfc_minutes_status` = `skipped`. The chat tool allows four options per question, so the gaps not
 shown (`unneeded_flow_included`, `citation_does_not_support_claim`, `missing_alternative`, `generic_industry_choice_over_local_fit`,
 `ignored_existing_pattern`, `wrong_emphasis`, `missing_performance_or_scale`, `missing_monitoring`) are set when the person types
 them under Other. What is typed under Other is kept against the question it was typed on (`--note <area>=…`, or `run`), next to
@@ -85,8 +94,9 @@ option (`--comment`), and the thumb is asked again on its own. A note on an area
 never `usable`. Each note is scrubbed for secret-shaped strings and capped at 2000 characters, and all of them are
 also saved in `logs/feedback.jsonl`. The prompt records `usable` or `usable_with_gaps`;
 `not_usable` is still accepted by the command but is not asked. The run question sets speed and cost together;
-`rfc_start_ready` is `yes` when buildability has no gaps and is otherwise not asked. A re-rate is a fresh look: it
-replaces the earlier rating in full, so an answer the new prompt does not ask is reset to `not_rated`.
+`rfc_start_ready` is `yes` when buildability has no gaps and is otherwise not asked. A re-rate replaces the earlier
+rating in full, so an answer the new prompt does not ask is reset to `not_rated`. The form shows the earlier answers
+and sends them all again (see "Re-rating an attempt").
 
 Score names and values are the dashboard's schema. Add values freely; renaming one splits its history.
 
@@ -121,6 +131,95 @@ attempt, so every stop is counted) and its session carries `rfc_run_outcome_fina
 attempt: a run that stopped at draft and was resumed ends as `completed`. The numbers `fact_attempts` and
 `fact_resumes` say how many tries the run took, and `fact_duration_s` is the time of all of them. A stage run on its
 own does not write either outcome.
+
+## A run that stopped or failed
+
+How an attempt ended is **measured, not asked**. `run.py` writes the attempt's end to `logs/attempts.jsonl`: exit 0 is
+finished, 130 (Ctrl-C or a plain stop) is `user_stop`, any other non-zero exit is a `failure` with a `failure_cause`
+(`usage_or_login_limit`, `atlassian_not_connected`, `figma_no_response`, `context_layer_unavailable`,
+`connection_error`, `reviewers_failed`, `other`) chosen from the last lines the run printed, and those lines (secrets
+scrubbed) as `failure_excerpt`. A process that died without writing anything is found by the marker
+`logs/attempt_open.json` and recorded as `killed` on the next start. The trace of the attempt gets `rfc_run_stop_kind`
+and `rfc_run_failure_cause` (the excerpt is its comment).
+
+`/rfc-agent:feedback` reads that (`--context`) and opens on the matching path, so nobody is asked how the run ended
+unless it has no record (`unknown`: killed, still running, or a run from before attempt records):
+
+| The run's record says | Questions |
+|---|---|
+| finished | the existing form: thumb, then the four areas, then the two time questions |
+| stopped | the main reason you stopped it (one choice, `Other` takes typed text, which may list several), would you run it again |
+| failed | is the recorded cause what happened (yes, or no with an optional text), would you run it again |
+| unknown | how did it end (finished, stopped, failed), then that path. A failure with no recorded cause asks what made it fail |
+
+| Score | Values | Written when |
+|---|---|---|
+| `rfc_run_stop_reason` | `too_slow`, `too_costly`, `wrong_repos_or_pages`, `bad_input`, `changed_mind`, `other` | stopped; `--note stop=` is its comment |
+| `rfc_failure_cause_confirmed` | `yes`, `no` | failed; `--note failure=` is its comment |
+| `rfc_failure_cause_reported` | `usage_or_login_limit`, `connector`, `connection`, `other` | failed with no recorded cause; `--note failure=` is its comment |
+| `rfc_rerun` | `yes`, `no` | stopped or failed |
+| `rfc_run_end` | `finished`, `stopped`, `failed` | only when the run has no end record |
+
+Only the answered questions are written: there are no `not_rated` placeholders on this path. No thumb and no area score is
+written for a stopped or failed attempt.
+
+**History across a resume.** Every attempt is its own trace in the run's session, and feedback is scored on the
+attempt it was given on (the latest at the time). A run that was stopped, rated, resumed and finished keeps the
+stopped attempt's feedback, and the finished attempt gets its own rating: nothing overwrites the other, because the score
+ids carry the trace id. Rating the same attempt again replaces only that attempt's feedback. Each score's metadata
+has `attempt`, `attempts` and `run_state` (`done`, `stopped at <stage>`, `failed at <stage>`, `unknown`), so a stopped
+attempt's feedback reads as such even after the run has finished; `logs/feedback.jsonl` keeps every version
+locally. When the form is opened on a finished attempt that has earlier stopped or failed attempts, it says they keep
+their own feedback, and anything more about them goes in the notes of the finished form.
+
+## Re-rating an attempt
+
+Rating the same attempt again replaces its earlier rating. `--context` returns the earlier rating as `previous` (thumb,
+verdicts, gaps, typed notes, the overall comment, the run questions and both time numbers; for a stopped or failed
+attempt the reason or cause check and whether to run it again). The form then works like this:
+
+1. "You rated this run before… Keep it or change it?" `Keep it as it is` or `Change some answers`.
+2. On Change it says first that **a question left unanswered keeps its earlier answer**, then asks every question with
+   last time's choices marked "(picked last time)" and last time's minutes shown.
+3. Before anything is submitted, `--rerate --preview` prints the **resulting** rating as a table, with a "Compared with
+   last time" column (kept or changed), and the person confirms (`Submit` or `Change something`). Nothing is written
+   or sent by a preview.
+4. `--rerate` is what makes "unanswered keeps the earlier answer" true: every answer not passed is the earlier one's
+   (an issue picked for an area replaces that area's earlier answer; typed minutes replace the pair, so no stale number
+   stays). It does not depend on the model repeating earlier values.
+
+A first rating has no confirm step: it is submitted straight away.
+
+**After every submission** (first rating or re-rating, finished, stopped or failed) the command prints what was sent
+as a table, built from the values it recorded:
+
+```
+Feedback recorded · attempt 2 (finished)
+
+| Question | Your answer | Compared with last time |
+|---|---|---|
+| Overall | 👎 Needs work · "needs another pass" | kept |
+| Coverage | Missing PRD flow · "a Figma state is missing" | kept |
+| Buildability | Too vague to start coding | changed |
+| Approach | no gaps | kept |
+| Context layer use | not rated | kept |
+| Time saved | 30 min | kept |
+| Time spent reviewing | 10 min | kept |
+```
+
+A stopped attempt shows "Main reason for stopping" and "Run it again"; a failed one shows "Recorded cause is right"
+(or "What made it fail" when no cause was recorded) and "Run it again". The "Compared with last time" column appears
+only when the attempt was rated before. The layout lives in `feedback_summary.py`.
+
+- **Per attempt.** `previous` is read for the trace of the attempt being rated. A resumed attempt is another trace,
+  so it starts blank and never shows or touches another attempt's feedback.
+- **Source.** The run folder's `logs/feedback.jsonl` first. Only when it has no rating for this attempt (for example
+  the file was deleted) is it read from Langfuse (`GET /api/public/v3/scores`, read only, this attempt's `fb:` scores
+  only). The two are never mixed: the form shows one earlier rating, from one place. If Langfuse is off, down or has
+  nothing, the form is blank. The same fallback lets a re-rate clear gaps that were picked before.
+- A rating of an attempt that had no trace is matched on the session instead, so it is replaced the same way.
+- Time numbers: a number left by an earlier rating is offered only when that rating's `rfc_minutes_status` was
+  `given` or `partial`; after a skip nothing is offered.
 
 ## Trace selection
 
@@ -219,9 +318,14 @@ them beside the run facts (`cost_usd`, `tokens_total`, `prd_words`, `operator_wa
 - **Re-rating** rewrites every area, and clears the gaps picked on an earlier rating of the same trace by
   overwriting them with `none`. Typed notes and the overall comment it does not repeat are cleared too (sent as an
   empty comment; Langfuse keeps the old comment if none is sent). Scores written before the area form (`rfc_feedback_reason`) stay in Langfuse as
-  history and are not touched. The clearing reads `logs/feedback.jsonl`, so a rating made from another
-  machine, or after that file was deleted, cannot clear what it cannot see.
-- **A resumed run is a new trace** in the same session; the rating goes to the latest `rfc` trace, as above.
+  history and are not touched. The clearing reads `logs/feedback.jsonl`, and falls back to Langfuse when that file
+  has nothing for the attempt (see Re-rating an attempt); gaps whose names no longer exist (for example
+  `ignores_existing_infra`) are not offered again and stay on the old trace.
+- **A resumed run is a new trace** in the same session; the rating goes to the latest `rfc` trace, as above. An
+  earlier attempt cannot be rated separately after a resume: its feedback goes in the notes of the finished form.
+- **Failure causes are matched on text** the run printed (`run_end.py`); an unfamiliar message is `other`, and the
+  excerpt says what it was. A hard kill leaves no cause. Langfuse rating scores of a trace that was killed before it
+  closed have not been checked against the real project.
 - **The end-of-run question is an instruction to Claude** in `commands/rfc.md`, not code. It can be skipped
   by a model that doesn't follow it; `/rfc-agent:feedback` always works.
 - **Facts are not versioned.** `rfc_chars` and the review counts change if the RFC is edited after the run, and

@@ -540,6 +540,23 @@ def test_a_stopped_attempt_is_scored_on_its_trace_and_on_the_run(traced, tmp_pat
     ]
 
 
+def test_how_a_stopped_attempt_ended_is_scored_from_the_run_record(traced, tmp_path):
+    _finished_attempt(tmp_path, "stopped at scope")
+    (tmp_path / "logs" / "attempts.jsonl").write_text(
+        json.dumps({"exit": 1, "stop_kind": "failure", "failure_cause": "atlassian_not_connected",
+                    "failure_excerpt": "Atlassian is not connected"}) + "\n")  # fmt: skip
+
+    @observe.entry(None)
+    def main(argv=None):
+        return 1
+
+    assert main(["--run-dir", str(tmp_path)]) == 1
+    got = {s["name"]: s for s in traced["client"].one("rfc-run").scores}
+    assert got["rfc_run_stop_kind"]["value"] == "failure"
+    assert got["rfc_run_failure_cause"]["value"] == "atlassian_not_connected"
+    assert got["rfc_run_failure_cause"]["comment"] == "Atlassian is not connected"
+
+
 def test_a_resumed_run_ends_as_completed_with_its_attempts_counted(traced, tmp_path):
     _finished_attempt(tmp_path, "done", attempts=3)
 
