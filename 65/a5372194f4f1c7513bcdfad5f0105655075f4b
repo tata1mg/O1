@@ -1,0 +1,62 @@
+src/rfc_agent/feedback.py
+  s_669d8ac95bcbee::t_01f0c86c2b49fa 5
+  s_669d8ac95bcbee::t_0f632a88fcb19b 94
+  s_669d8ac95bcbee::t_21dfbb1dc18e5a 28-29
+  s_669d8ac95bcbee::t_77788409ae0743 428-429
+  s_669d8ac95bcbee::t_c907b47b821e78 320-334
+  s_669d8ac95bcbee::t_82266e909bf4db 210-219,242,315,319,400,430,449
+  s_669d8ac95bcbee::t_022bcb5123d22e 638
+  s_669d8ac95bcbee::t_4413098a721bdd 676-677
+  s_669d8ac95bcbee::t_eebe5acdd67ff7 447-448
+  s_669d8ac95bcbee::t_5f3737582de8c6 6,25-26,116,316-318,387,639-640,678
+  s_669d8ac95bcbee::t_6a42f9614d511c 385-386,398-399
+  s_669d8ac95bcbee::t_2064f5fbb9b88c 635-637
+  s_669d8ac95bcbee::t_74b98f47e8cd83 240-241
+  s_669d8ac95bcbee::t_d77a7fbc2fafb4 27
+tests/rfc/test_feedback.py
+  s_669d8ac95bcbee::t_ade65e26858088 645
+  s_669d8ac95bcbee::t_8550b301d92ef7 612-616,618-619,621-633
+  s_669d8ac95bcbee::t_4b37e2e9fe6515 97,634-644,646-660
+  s_669d8ac95bcbee::t_dfae9f228e95ab 617,620
+src/rfc_agent/run.py
+  s_669d8ac95bcbee::t_886f55a2a3566e 273-277
+commands/feedback.md
+  s_669d8ac95bcbee::t_0507a0c67c5c62 98,108
+  s_669d8ac95bcbee::t_ad4c210f7ba430 63
+  s_669d8ac95bcbee::t_e62f32d0ad03c9 91,94-95
+  s_669d8ac95bcbee::t_95da9a25b73536 92-93,99
+  s_669d8ac95bcbee::t_c61751c0911f98 96-97
+  s_669d8ac95bcbee::t_b5dd6f955d8d06 61-62
+CHANGELOG.md
+  s_669d8ac95bcbee::t_35eff6181a7be7 6-14,16-26
+  s_669d8ac95bcbee::t_95da9a25b73536 15
+.claude-plugin/plugin.json
+  s_669d8ac95bcbee::t_35eff6181a7be7 4
+pyproject.toml
+  s_669d8ac95bcbee::t_35eff6181a7be7 3
+docs/OBSERVABILITY.md
+  s_669d8ac95bcbee::t_95da9a25b73536 93-94
+docs/FEEDBACK.md
+  s_669d8ac95bcbee::t_0507a0c67c5c62 48-49
+  s_669d8ac95bcbee::t_64748d437ce1b9 50
+  s_669d8ac95bcbee::t_95da9a25b73536 72,81-82
+  s_669d8ac95bcbee::t_a59e7706485588 61
+uv.lock
+  s_669d8ac95bcbee::t_74e7236e72be6f 424
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "65a5372194f4f1c7513bcdfad5f0105655075f4b",
+  "prompts": {},
+  "sessions": {
+    "s_669d8ac95bcbee": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c069bce5-b47c-45d3-88b0-e0e62d4dc72e",
+        "model": "claude-haiku-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}
