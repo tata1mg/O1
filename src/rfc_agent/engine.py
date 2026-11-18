@@ -43,6 +43,7 @@ from .streams import StreamResult, parse_stream, stream_event_label
 _STAGES_DIR = Path(__file__).parent / "stages"
 _GUARD = Path(__file__).parent / "hooks" / "guard_writes.py"
 _GUARD_BROWSER = Path(__file__).parent / "hooks" / "guard_browser.py"
+_GUARD_DEVICE = Path(__file__).parent / "hooks" / "guard_device.py"
 _APPROVE_RO = Path(__file__).parent / "hooks" / "approve_readonly.py"
 _REPO_HISTORY = Path(__file__).parent / "hooks" / "repo_history.py"
 _STAGE_TOOLS = Path(__file__).parent / "hooks" / "stage_tools.py"
@@ -162,6 +163,12 @@ def _hook_settings(disabled: set[str]) -> dict:
         "guard_browser": ("PreToolUse", {
             "matcher": "mcp__playwright__.*",
             "hooks": [{"type": "command", "command": f"{sys.executable} {_GUARD_BROWSER}"}],
+        }),
+        # the device tools of execute_app (mcp_tools.DEVICE_ACTION_TOOLS) act in an app on an emulator:
+        # every call is held to its device, its app and an allow-list of commands. Inert without `maestro`.
+        "guard_device": ("PreToolUse", {
+            "matcher": "mcp__maestro__.*",
+            "hooks": [{"type": "command", "command": f"{sys.executable} {_GUARD_DEVICE}"}],
         }),
         # continuous byte-budget accounting: the 50KB ceiling used to be visible
         # only at the terminal gate (v1 binary-searched it for 4.3 min, v2's

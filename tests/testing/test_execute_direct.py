@@ -322,3 +322,8 @@ def test_production_and_sessions_flags_exist_with_their_defaults():
     assert "testing.production_base_url" in NAMES and "testing.sessions_dir" in NAMES
     assert registry()["testing.production_base_url"].default == ""
     assert registry()["testing.sessions_dir"].default == "~/.secrets/playwright"
+
+
+def test_allow_reaches_the_agent_allow_flag(tmp_path):
+    cmd = execute.command("ui-agent", _generated_run(tmp_path), allow="coupons,neucoins")
+    assert "testing.agent_allow=coupons,neucoins" in cmd

@@ -56,9 +56,22 @@ BROWSER_ACTION_TOOLS: tuple[str, ...] = (
 )
 HOOK_GUARDED_TOOLS.update(dict.fromkeys(BROWSER_ACTION_TOOLS, BROWSER_GUARD))
 
+# The device tools of the testing workflow's `execute_app` stage (`maestro mcp`). Same exception as the
+# browser, on an Android emulator: `run` executes Maestro commands in the app. Bounded by guard_device.py on
+# every call — one device serial per session, the run's app only, an allow-list of commands (no JavaScript,
+# no clearState, no files or folders of flows), the forbidden-target pattern and the action limit. Left out:
+# open_maestro_viewer and every Maestro Cloud tool. list_devices is granted (the server's own instructions
+# tell an agent to confirm its device id there); the guard still holds every other call to the assigned one.
+DEVICE_GUARD = "rfc_agent.hooks.guard_device.denial"
+DEVICE_READ_TOOLS: tuple[str, ...] = ("list_devices", "inspect_screen", "take_screenshot", "cheat_sheet")
+DEVICE_ACTION_TOOLS: tuple[str, ...] = ("run",)
+HOOK_GUARDED_TOOLS.update(dict.fromkeys(DEVICE_ACTION_TOOLS, DEVICE_GUARD))
+
 READONLY_TOOLS: dict[str, tuple[str, ...]] = {
     # NOT read-only: see BROWSER_ACTION_TOOLS above — every action tool is a named HOOK_GUARDED exception
     "playwright": BROWSER_READ_TOOLS + BROWSER_ACTION_TOOLS,
+    # NOT read-only: see DEVICE_ACTION_TOOLS above — `run` is a named HOOK_GUARDED exception
+    "maestro": DEVICE_READ_TOOLS + DEVICE_ACTION_TOOLS,
     "bitbucket": (
         "search_code",
         "get_file_content",

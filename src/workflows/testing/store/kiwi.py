@@ -76,6 +76,8 @@ ACTUAL_VALUE_MAX = 255
 SUGGESTION_VALUE_MAX = 2000
 #: The only status the agent writes a case with. Approving (CONFIRMED) or rejecting (DISABLED) is a human's.
 UPLOAD_STATUS = "PROPOSED"
+#: `testing.kiwi_direct_surface` -> the `surface:` tags an untagged hand-written case is given in direct mode.
+DIRECT_SURFACES = {"web": ("web",), "android": ("android",), "both": ("web", "android"), "none": ()}
 #: scope -> the Kiwi API object. Every one exposes `list_attachments(id)` and `add_attachment(id, ...)`.
 _ATTACH_API = {"execution": "TestExecution", "case": "TestCase", "run": "TestRun", "plan": "TestPlan"}
 
@@ -145,7 +147,7 @@ class KiwiCaseStore:
                  product_prefix: str = "Diagno / ",
                  plan_template: str = "{feature} — imported test cases",
                  run_template: str = "{feature} · {env} · {build}", rpc=None,
-                 plan_id: str = "", direct: bool = False) -> None:
+                 plan_id: str = "", direct: bool = False, direct_surface: str = "web") -> None:
         self.url, self.user, self.password, self.web = url, user, password, web
         self.insecure = insecure
         self.product_prefix = product_prefix
@@ -155,6 +157,9 @@ class KiwiCaseStore:
         self.plan_id = str(plan_id or "")
         #: a Kiwi plan someone else wrote: cases need no `extid:`/`exec:`/`surface:` tags (see `_identity`)
         self.direct = direct
+        #: in direct mode, the surface(s) a case with no `surface:` tag is given: web (as it always was),
+        #: android, both, or none (left untagged, so the caller can see it and ask which it is)
+        self.direct_surfaces = DIRECT_SURFACES.get(str(direct_surface or "web").lower(), ("web",))
         self._rpc_obj = rpc  # injectable for tests; None -> connect on first use
         #: whether `_apply_context` managed to attach our SSLContext to the transport. False with
         #: `insecure=True` means the connection relied on the narrowly-scoped default swap instead.
@@ -269,15 +274,18 @@ class KiwiCaseStore:
 
         The extid is the `extid:` tag's value. With `direct` a case without one is `KIWI-<case id>`; without
         `direct` it has none and callers skip it, as they always did. With `direct` the tags also get the
-        defaults a hand-written case lacks: `exec:ui` when it has no `exec:` tag at all, `surface:web` when it
-        has no `surface:` tag at all — never over a tag the case does carry, so an `exec:http` case stays http.
+        defaults a hand-written case lacks: `exec:ui` when it has no `exec:` tag at all, and the surface(s) of
+        `direct_surface` (web unless told otherwise) when it has no `surface:` tag at all — never over a tag the
+        case does carry, so an `exec:http` case stays http. A case may carry two surface tags (web and
+        android, one Kiwi case for a journey that is the same on both); it then runs on each.
         """
         tags = tuple(tags)
         extid = next((t.split(":", 1)[1] for t in tags if t.startswith("extid:")), None)
         if not self.direct:
             return extid, tags
-        extra = [t for prefix, t in (("exec:", "exec:ui"), ("surface:", "surface:web"))
-                 if not any(x.startswith(prefix) for x in tags)]
+        extra = [] if any(x.startswith("exec:") for x in tags) else ["exec:ui"]
+        if not any(x.startswith("surface:") for x in tags):
+            extra += [f"surface:{s}" for s in self.direct_surfaces]
         return extid or f"KIWI-{case_id}", (*tags, *extra)
 
     # ---- CaseStore --------------------------------------------------------------------------------
@@ -447,7 +455,7 @@ class KiwiCaseStore:
             # `== &quot;ok&quot;`
             out.append(Case(extid=extid, text=_unescape(case.get("text")),
                             status=case["case_status__name"], tags=case_tags_,
-                            summary=_unescape(case.get("summary"))))
+                            summary=_unescape(case.get("summary")), store_id=str(case["id"])))
         return out
 
     def create_run(self, feature: str, build: str, env: str, extids: list[str] | None = None,

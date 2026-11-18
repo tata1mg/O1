@@ -37,6 +37,9 @@ class Case:
     summary: str = ""
     priority: str = "P3"
     case: dict = field(default_factory=dict)  # the canonical dict, when the backend keeps it (json does)
+    #: the backend's own id for the case (Kiwi's TestCase id), "" when it has none (json). Maestro flows
+    #: that name a case by its Kiwi number (`Cart #191`) are matched through it.
+    store_id: str = ""
 
 
 @dataclass
@@ -163,5 +166,6 @@ def get_store(ctx) -> CaseStore:
             run_template=ctx.flag("testing.run_template", "{feature} · {env} · {build}"),
             plan_id=str(ctx.flag("testing.kiwi_plan_id", "") or ""),
             direct=bool(ctx.flag("testing.kiwi_direct", False)),
+            direct_surface=str(ctx.flag("testing.kiwi_direct_surface", "web") or "web"),
         )
     raise ValueError(f"unknown testing.storage {backend!r}; known: json, kiwi")

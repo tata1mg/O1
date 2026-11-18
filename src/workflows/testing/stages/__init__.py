@@ -44,6 +44,10 @@ DECISIONS: tuple[str, ...] = (
     "ui_agent_cases_selected",   # execute_ui_agent: the cases handed to agents, and those with nothing to judge
     "ui_agent_case_not_passed",  # execute_ui_agent: a FAIL / BLOCKED / ERROR, with its one-line breakdown
     "ui_agent_case_not_executed",  # execute_ui_agent: a case with no expected result, left for QA input
+    "app_cases_planned",         # execute_app: each Android case's engine — its validated flow, the agent, or not run
+    "app_case_not_passed",       # execute_app: a FAIL / BLOCKED / ERROR, flow or agent
+    "app_build_mismatch",        # execute_app: the devices carry different app builds
+    "flow_converted",            # convert_flows: a draft's outcome — green, stuck or rejected
 )
 
 
@@ -197,3 +201,34 @@ def guidance_note(ctx: RunContext, stage_name: str) -> str:
         return ""
     return ("\n\n## Feedback on your previous attempt (fix exactly these, keep everything else)\n\n"
             + p.read_text().strip() + "\n")
+
+
+def keep_dated(ctx: RunContext, started: Any, outputs: tuple[str, ...]) -> None:
+    """Keep this run's `outputs` (its results.json / results.md) under the time it started, beside the live ones.
+
+    A run folder is per feature, not per run: `execute --feature F` reuses the newest one, and the harness
+    removes a stage's declared outputs before a forced re-run. So the next run does not write over this
+    run's summary — it is deleted before the stage even starts (a guest run replaced a logged-in run's
+    summary that way, 2026-11-17). Setting the old file aside at the start of a run therefore came too late
+    for results.json; a copy the harness does not know about, written when the run ends, is what survives.
+    """
+    stamp = started.strftime("%Y%m%dT%H%M%SZ")
+    for rel in outputs:
+        src = ctx.path(rel)
+        if src.is_file():
+            target, n = src.with_name(f"{src.stem}.{stamp}{src.suffix}"), 2
+            while target.exists():  # two runs in one second (tests; a retry)
+                target, n = src.with_name(f"{src.stem}.{stamp}-{n}{src.suffix}"), n + 1
+            shutil.copyfile(src, target)
+
+
+def forbid_of(ctx: RunContext, stage_name: str) -> tuple[str, list[str]]:
+    """(the guard's forbidden-action regex, the groups allowed) for a run, or EngineFailure on a bad --allow."""
+    from .. import ui_agent
+
+    override = str(ctx.flag("testing.agent_forbid", "") or "")
+    allow = "" if override else str(ctx.flag("testing.agent_allow", "") or "")
+    try:
+        return ui_agent.forbid_pattern(allow, override), ui_agent.allowed_groups(allow)
+    except ValueError as exc:
+        raise EngineFailure(f"{stage_name}: {exc}") from None

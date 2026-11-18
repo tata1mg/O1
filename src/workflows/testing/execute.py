@@ -49,7 +49,15 @@ from workflows.testing.preflight import load_config, resolved_flags  # noqa: E40
 PROJECT = Path(__file__).resolve().parents[3]
 KINDS = {"web": (("derive_ui", "execute_web"), "testing.execute_web", "qa/ui/results.json"),
          "backend": (("derive_spec", "execute_be"), "testing.execute", "qa/results.json"),
-         "ui-agent": (("execute_ui_agent",), "testing.execute_ui_agent", "qa/agent/results.json")}
+         "ui-agent": (("execute_ui_agent",), "testing.execute_ui_agent", "qa/agent/results.json"),
+         "android": (("execute_app",), "testing.execute_app", "qa/android/results.json"),
+         # not an executor: the draft flows an Android agent PASS left, run to green (/test-agent:convert-flows)
+         "convert": (("convert_flows",), "testing.convert_flows", "qa/android/conversions.json")}
+#: `ui-agent --platform` -> the kinds it runs, one harness launch each, so a web failure never stops Android.
+PLATFORMS = {"web": ("ui-agent",), "android": ("android",), "both": ("ui-agent", "android"),
+             "auto": ("ui-agent", "android")}
+#: `--untagged` -> testing.kiwi_direct_surface: where a CONFIRMED case with no surface: tag runs.
+UNTAGGED = {"web": "web", "android": "android", "both": "both", "skip": "none"}
 #: `all` is the generated suite, both halves; the agent is its own choice.
 ALL_KINDS = ("web", "backend")
 DIRECT = "kiwi-direct"  # `origin` in qa/sources.json of a run bootstrapped from a Kiwi plan
@@ -106,7 +114,8 @@ def command(kind: str, run_dir: Path, *, env: str = "", build: str = "", headed:
             cases: str = "", curl: str = "", flags=None, only_existing: bool = False,
             engine: str = "", base_url: str = "", ui_auth: str = "", hosts: str = "",
             browser: str = "", read_only: bool = False, parallel: int = 0, production: bool = False,
-            test_account: bool = False) -> list[str]:
+            test_account: bool = False, untagged: str = "", android_mode: str = "", app_variant: str = "",
+            devices: str = "", maestro_repo: str = "", device_roles: str = "", allow: str = "") -> list[str]:
     """The harness command line for one kind, or SystemExit naming what is missing."""
     stages, enable, results = KINDS[kind]
     if kind == "web" and only_existing:
@@ -120,12 +129,14 @@ def command(kind: str, run_dir: Path, *, env: str = "", build: str = "", headed:
         next((str(x["environment"]) for x in lasts if x.get("environment")), "")
     build = build or str((flags.get("testing.build") if flags else "") or "") or \
         next((str(x["build"]) for x in lasts if x.get("build")), "")
+    # Android names its run after the app version on the device, so it needs no --build.
+    build = build or ("from-device" if kind in ("android", "convert") else "")
     missing = [n for n, v in (("feature (qa/sources.json)", feature), ("--env", env), ("--build", build)) if not v]
     if kind == "web" and only_existing and not (run_dir / "qa" / "ui" / "plan.json").is_file():
         missing.append("qa/ui/plan.json — no test is written yet; run without --only-existing to write them")
     direct = sources.get("origin") == DIRECT
     if direct and kind in ALL_KINDS:
-        missing.append("a Kiwi-direct run has no generated suite: use `ui-agent`")
+        missing.append("a Kiwi-direct run has no generated suite: use `ui-agent` (web and/or Android)")
     if kind == "backend":
         curl = curl or str((flags.get("testing.curl") if flags else "") or "")
         if not curl:
@@ -141,6 +152,8 @@ def command(kind: str, run_dir: Path, *, env: str = "", build: str = "", headed:
         cmd += ["--enable", "testing.kiwi_direct"]
         if sources.get("kiwi_plan_id"):
             cmd += ["--set", f"testing.kiwi_plan_id={sources['kiwi_plan_id']}"]
+        if untagged:  # what the user answered for the cases with no surface: tag
+            cmd += ["--set", f"testing.kiwi_direct_surface={UNTAGGED[untagged]}"]
     if kind in ("web", "ui-agent") and headed:
         cmd += ["--enable", "testing.ui_headed"]
     if kind == "web" and not only_existing:
@@ -170,6 +183,23 @@ def command(kind: str, run_dir: Path, *, env: str = "", build: str = "", headed:
         cmd += ["--enable", "testing.agent_read_only"]
     if kind == "ui-agent" and browser:
         cmd += ["--set", f"testing.agent_browser={browser}"]
+    if kind in ("android", "convert") and devices:
+        cmd += ["--set", f"testing.devices={devices}"]
+    if kind in ("ui-agent", "android") and allow:
+        cmd += ["--set", f"testing.agent_allow={allow}"]
+    if kind == "android" and device_roles:
+        cmd += ["--set", f"testing.device_roles={device_roles}"]
+    if kind in ("android", "convert") and maestro_repo:
+        cmd += ["--set", f"testing.maestro_repo={Path(maestro_repo).expanduser()}"]
+    if kind == "android":
+        if android_mode:
+            cmd += ["--set", f"testing.android_mode={android_mode}"]
+        if app_variant:
+            cmd += ["--set", f"testing.app_variant={app_variant}"]
+        if production:
+            cmd += ["--enable", "testing.agent_production"]
+            if test_account:
+                cmd += ["--enable", "testing.agent_test_account"]
     return cmd
 
 
@@ -210,7 +240,7 @@ class _Overrides:
         return self._over[name] if name in self._over else self._flags.get(name, default)
 
 
-def pending_agent(run_dir: Path) -> dict:
+def pending_agent(run_dir: Path, untagged: str = "") -> dict:
     """{will_run, no_expected_result, skipped_backend, error} for `ui-agent`: the CONFIRMED web cases the
     agent will take, those of them with no Expected Result (the agent cannot give a verdict on them), and
     the CONFIRMED `exec:http` cases it leaves to the backend executor. Reads the Kiwi plan the run names."""
@@ -219,7 +249,8 @@ def pending_agent(run_dir: Path) -> dict:
     from workflows.testing import ui_agent
     from workflows.testing.preflight import KIWI_TIMEOUT_S, store_for
 
-    out = {"will_run": [], "no_expected_result": [], "skipped_backend": 0, "error": ""}
+    out = {"will_run": [], "no_expected_result": [], "skipped_backend": 0, "needs_allow": {}, "needs_session": [],
+           "error": ""}
     sources = _load(run_dir / "qa" / "sources.json")
     previous = socket.getdefaulttimeout()
     socket.setdefaulttimeout(KIWI_TIMEOUT_S)
@@ -227,7 +258,9 @@ def pending_agent(run_dir: Path) -> dict:
         flags = resolved_flags(load_config())
         over = {}
         if sources.get("origin") == DIRECT:
-            over = {"testing.kiwi_direct": True, "testing.kiwi_plan_id": str(sources.get("kiwi_plan_id") or "")}
+            # cases with no surface: tag are counted as web only once the user has said so (--untagged)
+            over = {"testing.kiwi_direct": True, "testing.kiwi_plan_id": str(sources.get("kiwi_plan_id") or ""),
+                    "testing.kiwi_direct_surface": UNTAGGED.get(untagged, "none")}
         flags = _Overrides(flags, over) if over else flags
         store = store_for(flags, run_dir)
         feature = sources.get("feature")
@@ -235,8 +268,64 @@ def pending_agent(run_dir: Path) -> dict:
         cases = ui_agent.select_cases(store, feature, include_manual=manual)
         out["no_expected_result"] = [c.extid for c in cases if not ui_agent.expected_result(c.text)]
         out["will_run"] = [c.extid for c in cases if ui_agent.expected_result(c.text)]
+        for group in ("neucoins", "coupons"):
+            hits = [c.extid for c in cases if c.extid in out["will_run"] and
+                    re.search(ui_agent.FORBID_GROUPS[group], c.text or "", re.I)]
+            if hits:
+                out["needs_allow"][group] = hits
+        out["needs_session"] = [c.extid for c in cases if c.extid in out["will_run"] and
+                                ui_agent.case_auth(c) == ui_agent.USER]
         out["skipped_backend"] = len(store.list_cases(feature, status="CONFIRMED", tags=("exec:http",)))
     except Exception as exc:  # report, never raise: the command turns this into a message
+        out["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        socket.setdefaulttimeout(previous)
+    return out
+
+
+def pending_android(run_dir: Path, repo: str = "", mode: str = "", untagged: str = "") -> dict:
+    """What the Android stage will do, case by case, read from Kiwi and the maestro-automation flows:
+    {by_flow: [{extid, flow}], by_agent: [{extid, why}], not_run: [{extid, why}], untagged: [ids], both:
+    [ids], error}. `untagged` are CONFIRMED UI cases with no surface: tag — the command asks where they run.
+    `both` are cases tagged for web AND android (one Kiwi case, run on each)."""
+    import socket
+
+    from workflows.testing import app_agent, maestro_index
+    from workflows.testing.preflight import KIWI_TIMEOUT_S, store_for
+
+    out = {"by_flow": [], "by_agent": [], "not_run": [], "untagged": [], "both": [], "error": ""}
+    sources = _load(run_dir / "qa" / "sources.json")
+    previous = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(KIWI_TIMEOUT_S)
+    try:
+        flags = resolved_flags(load_config())
+        over = {"testing.kiwi_direct_surface": "none"}
+        if sources.get("origin") == DIRECT:
+            over |= {"testing.kiwi_direct": True, "testing.kiwi_plan_id": str(sources.get("kiwi_plan_id") or "")}
+        flags = _Overrides(flags, over)
+        store = store_for(flags, run_dir)
+        feature = sources.get("feature")
+        everything = store.list_cases(feature, status="CONFIRMED")
+        ui = [c for c in everything if "exec:http" not in c.tags]
+        out["untagged"] = [c.extid for c in ui if not any(t.startswith("surface:") for t in c.tags)]
+        out["both"] = [c.extid for c in ui if "surface:web" in c.tags and "surface:android" in c.tags]
+        manual = bool(flags.get("testing.agent_include_manual", False))
+        cases = app_agent.select_cases(store, feature, include_manual=manual)
+        if untagged in ("android", "both"):  # the user's answer for the untagged cases: they run here too
+            cases += [c for c in ui if c.extid in out["untagged"] and "exec:ui" in c.tags]
+        root = Path(repo or str(flags.get("testing.maestro_repo") or "~/o_1/maestro-automation")).expanduser()
+        flows = maestro_index.index(root / ".maestro" / "flows") if (root / ".maestro" / "flows").is_dir() else {}
+        if not flows:
+            out["error"] = f"no maestro-automation flows at {root} — every Android case would go to the agent"
+        for p in app_agent.plan(cases, flows, mode or str(flags.get("testing.android_mode") or "auto")):
+            extid = p["case"].extid
+            if p["engine"] == app_agent.FLOW_ENGINE:
+                out["by_flow"].append({"extid": extid, "flow": p["flow"].name})
+            elif p["engine"] == app_agent.AGENT_ENGINE:
+                out["by_agent"].append({"extid": extid, "why": p["why"]})
+            else:
+                out["not_run"].append({"extid": extid, "why": p["why"]})
+    except Exception as exc:  # report, never raise
         out["error"] = f"{type(exc).__name__}: {exc}"
     finally:
         socket.setdefaulttimeout(previous)
@@ -386,7 +475,8 @@ def confirm_production(production: bool, test_account: bool, *, logged_in: bool,
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="execute")
-    ap.add_argument("kind", nargs="?", default="web", choices=(*KINDS, "all"))
+    ap.add_argument("kind", nargs="?", default="web", choices=(*KINDS, "all"),
+                    help="web, backend, ui-agent (with --platform), android, all, or convert (draft flows -> green)")
     ap.add_argument("--run-dir")
     ap.add_argument("--env", default="")
     ap.add_argument("--build", default="")
@@ -427,6 +517,23 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--resolve-cases", default="", metavar="TOKENS",
                     help="with --plan: print (JSON) which case ids words like '173, ct2' mean, then exit")
     ap.add_argument("--plan", default="", help="--lookup / --resolve-cases: the Kiwi test plan id")
+    ap.add_argument("--platform", default="", choices=("", *PLATFORMS),
+                    help="ui-agent: web, android, both, or auto (each case on the surfaces its Kiwi tags name; "
+                         "the default)")
+    ap.add_argument("--untagged", default="", choices=("", *UNTAGGED),
+                    help="Kiwi-direct: where CONFIRMED cases with no surface: tag run — web, android, both or "
+                         "skip (the command asks when --pending lists any)")
+    ap.add_argument("--android-mode", default="", choices=("", "auto", "flow", "agent"),
+                    help="android: auto = the case's VALIDATED Maestro flow, else an agent (default)")
+    ap.add_argument("--app-variant", default="", choices=("", "dev-release", "debug", "prod"),
+                    help="android: the app build on the device (default dev-release; prod needs --production)")
+    ap.add_argument("--devices", default="", help="android: device serials to use, comma-separated")
+    ap.add_argument("--allow", default="",
+                    help="ui-agent/android: forbidden-action groups this run may touch, e.g. coupons,neucoins "
+                         "(neucoins needs --test-account)")
+    ap.add_argument("--device-roles", default="",
+                    help="android: serial=role,... — guest, an account profile (kept signed in) or pool")
+    ap.add_argument("--maestro-repo", default="", help="android: the maestro-automation checkout")
     args = ap.parse_args(argv)
     cfg = load_config()
     if args.lookup or args.resolve_cases:
@@ -450,8 +557,14 @@ def main(argv: list[str] | None = None) -> int:
         run_dir = latest_run(cfg)
     if run_dir is None or not run_dir.is_dir():
         raise SystemExit("execute: no testing run found — pass --run-dir")
-    if args.pending and args.kind == "ui-agent":
-        print(json.dumps({"run_dir": str(run_dir), "kind": "ui-agent", **pending_agent(run_dir)}, indent=2))
+    if args.pending and args.kind in ("ui-agent", "android"):
+        out = {"run_dir": str(run_dir), "kind": args.kind, "platform": args.platform or "auto"}
+        kinds = PLATFORMS[args.platform or "auto"] if args.kind == "ui-agent" else ("android",)
+        if "ui-agent" in kinds:
+            out |= pending_agent(run_dir, args.untagged)
+        if "android" in kinds:
+            out["android"] = pending_android(run_dir, args.maestro_repo, args.android_mode, args.untagged)
+        print(json.dumps(out, indent=2))
         return 0
     if args.pending:
         print(json.dumps({"run_dir": str(run_dir), **pending(run_dir)}, indent=2))
@@ -461,12 +574,21 @@ def main(argv: list[str] | None = None) -> int:
                                       logged_in=bool(args.ui_auth or (flags.get("testing.ui_auth") if flags else "")),
                                       base_url=args.base_url or "the configured address")
     code = 0
-    for kind in (ALL_KINDS if args.kind == "all" else (args.kind,)):
+    kinds = ALL_KINDS if args.kind == "all" else \
+        PLATFORMS[args.platform or "web"] if args.kind == "ui-agent" else (args.kind,)
+    for kind in kinds:
         cmd = command(kind, run_dir, env=args.env, build=args.build, headed=args.headed, cases=args.cases,
                       curl=args.curl, flags=flags, only_existing=args.only_existing,
                       engine=args.engine, base_url=args.base_url, ui_auth=args.ui_auth, hosts=args.hosts,
                       browser=args.browser, read_only=args.read_only,
-                      parallel=args.parallel, production=args.production, test_account=test_account)
+                      parallel=args.parallel, production=args.production,
+                      # the web question is about a recorded browser session; on Android the statement is
+                      # about the device's account, and the command asks it before passing --test-account
+                      test_account=(args.production and args.test_account) if kind in ("android", "convert")
+                      else test_account,
+                      untagged=args.untagged, android_mode=args.android_mode, app_variant=args.app_variant,
+                      devices=args.devices, maestro_repo=args.maestro_repo, device_roles=args.device_roles,
+                      allow=args.allow)
         print(" ".join(shlex.quote(c) for c in cmd), flush=True)
         if not args.print_only:
             log = run_dir / "logs" / f"run.{kind}.out"  # one log per launch, as /test-agent:test writes them

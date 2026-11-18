@@ -189,18 +189,18 @@ NAMES = (
        "execute_ui_agent: the operator's statement that the logged-in session (--ui-auth) belongs to a TEST "
        "account, not a customer's. Required for a logged-in run on production; `execute ui-agent "
        "--production` asks for it. Recorded in the results."),
-    _f("agent_forbid", str,
-       r"neu\s*coins?|redeem|wallet|apply\s+(coupon|offer|code)|coupon\s+apply|remove\s+coupon|"
-       r"place\s+order|proceed\s+to\s+(pay|checkout|buy)|check\s*out|pay\s+now|payment|"
-       r"(add|remove|buy|renew|cancel)\s+care\s*plan|care\s*plan\s+(add|remove)|"
-       r"(save|delete|remove)\s+(this\s+|new\s+)?(address|patient|profile)|"
-       r"upload\s+prescription|log\s*out|sign\s*out|delete\s+account",
-       "execute_ui_agent: a regex over the target of each browser action (the agent's own words for the "
-       "element, and what it types). A match is refused by the browser guard and the clause becomes `not "
-       "reached`. The default covers what changes money, an order or the account: NeuCoins and wallet, "
-       "applying coupons, checkout and payment, Care Plan add/remove, address / patient / profile edits, "
-       "prescription upload, logout. A case that tests one of these needs a test account and a narrower "
-       "pattern (empty = nothing forbidden). A tripwire on declared intent, not a sandbox."),
+    _f("agent_forbid", str, "",
+       "execute_ui_agent / execute_app / convert_flows: a hand-written regex over the target of each browser or "
+       "device action (the agent's own words for the element, and what it types). Set, it replaces the "
+       "default list entirely. Empty (default) = every group in ui_agent.FORBID_GROUPS that testing.agent_allow "
+       "does not name: NeuCoins and wallet, coupons, checkout and payment, Care Plan add/remove, address / "
+       "patient / profile edits, prescription upload, logout. A match is refused by the guard and the clause "
+       "becomes `not reached`. A tripwire on declared intent, not a sandbox."),
+    _f("agent_allow", str, "",
+       "execute_ui_agent / execute_app: forbidden-action groups this run may touch, comma-separated, from "
+       "neucoins, coupons, checkout, careplan, account, rx, logout (`execute ui-agent --allow coupons`). The "
+       "agent is told to undo what it did (remove the coupon it applied). neucoins on a logged-in run needs "
+       "testing.agent_test_account. Ignored when testing.agent_forbid is set."),
     _f("agent_read_only", bool, False,
        "execute_ui_agent: tell the agent to change nothing — no add to cart, booking, order, address, patient "
        "or profile edit, no form submitted. A clause that needs one is `not reached`. An instruction to the "
@@ -227,6 +227,43 @@ NAMES = (
     _f("kiwi_direct", bool, False,
        "Run a Kiwi plan this workflow did not upload: a CONFIRMED case with no extid: tag is identified as "
        "KIWI-<case id>, and a case with no exec: tag is treated as a UI case. Set by `execute --kiwi-plan`."),
+    _f("kiwi_direct_surface", str, "web",
+       "Direct mode: the platform a CONFIRMED case with no surface: tag runs on — web (as before), android, "
+       "both, or none (left out, and listed by `execute --pending` so the command can ask). Set by "
+       "`execute --untagged`.", choices=("web", "android", "both", "none")),
+    # ---- Android (execute_app, convert_flows) ---------------------------------------------------------
+    _f("execute_app", bool, False,
+       "Run the execute_app stage: each CONFIRMED Android UI case runs on an emulator — as its VALIDATED "
+       "Maestro flow when one covers it, otherwise an agent drives the app through Maestro MCP. OFF by default: "
+       "it acts on a device as a real user and records results."),
+    _f("maestro_repo", str, "~/o_1/maestro-automation",
+       "The maestro-automation checkout: its .maestro/flows (which case each flow covers, and whether it is "
+       "VALIDATED), scripts/ (app_id.sh, ensure_account.sh, maestro_report.py) and .maestro/devices.yaml."),
+    _f("android_mode", str, "auto",
+       "execute_app: auto = a case's VALIDATED flow when it has one, else the agent; flow = flows only (cases "
+       "with none are listed, not run); agent = the agent for every case.", choices=("auto", "flow", "agent")),
+    _f("app_variant", str, "dev-release",
+       "execute_app: the build variant on the device (scripts/app_id.sh): dev-release, debug or prod. prod "
+       "needs testing.agent_production, as a production web run does.", choices=("dev-release", "debug", "prod")),
+    _f("devices", str, "",
+       "execute_app: the device serials to use, comma-separated. Empty = every `adb devices` entry in "
+       "`device` state. One case runs on a device at a time."),
+    _f("device_roles", str, "",
+       "execute_app: each device's role, `serial=role` comma-separated: guest (no-account cases only), an "
+       "account profile such as care_plan_user (that account's cases only; the device is kept signed in to it, "
+       "no sign-in is attempted) or pool (anything). Empty = the maestro repo's .maestro/devices.yaml when more "
+       "than one device is ready, else pool."),
+    _f("app_max_actions", int, 60,
+       "execute_app: Maestro commands one case's agent may run (each command inside a `run` call counts) "
+       "before it stops and marks what is left."),
+    _f("app_case_timeout_s", int, 900, "execute_app: wall time for one case's agent, in seconds."),
+    _f("flow_timeout_s", int, 900, "execute_app: wall time for one `maestro test` of one flow, in seconds."),
+    _f("convert_flows", bool, False,
+       "Run the convert_flows stage: each agent PASS that left a draft flow is linted and run on a device "
+       "until green (plain `maestro test` first, then a bounded fix by a model); never records attempts in "
+       "Kiwi, adds one comment to the case's execution with the outcome. Set by `/test-agent:convert-flows`."),
+    _f("convert_fix_rounds", int, 3,
+       "convert_flows: model fix rounds for a draft that fails its plain run, before it is left as stuck."),
     _f("maestro_report", str, "", "publish_app: the JUnit report of a Maestro run (--maestro-report)."),
     _f("maestro_flows", str, "",
        "publish_app: the flows folder the run used, <druid>/.maestro/flows (--maestro-flows). Its headers' "

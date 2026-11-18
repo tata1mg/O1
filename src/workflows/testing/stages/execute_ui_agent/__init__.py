@@ -42,7 +42,7 @@ from harness.contracts import EngineFailure, RunContext, Stage, StageResult
 
 from ... import ui_agent, ui_record
 from ...store import get_store
-from .. import _stage_persona, feature_of, only_cases, read_json, read_json_gated, write_json
+from .. import _stage_persona, feature_of, forbid_of, keep_dated, only_cases, read_json, read_json_gated, write_json
 
 SKILL_PATH = Path(__file__).resolve().parents[2] / "skills" / "qa-ui-agent" / "SKILL.md"
 #: The one command a case's agent may run: the stage's own verdict check, on its own verdict.
@@ -97,6 +97,11 @@ def _settings(ctx: RunContext) -> dict:
                             f"--save-storage=<file> <base url>` and log in.")
     # `testing.ui_login` (a number and an OTP, for execute_web's login step) is deliberately not used: the
     # agent is never given a credential. Without a recorded session the cases run logged out, and say so.
+    forbid, allowed = forbid_of(ctx, "execute_ui_agent")
+    if "neucoins" in allowed and auth and not test_account:
+        raise EngineFailure("execute_ui_agent: --allow neucoins on a logged-in run lets the agent redeem or toggle "
+                            "the account's NeuCoins. Only on a TEST account: pass --test-account (the command "
+                            "asks), or drop neucoins from --allow.")
     browser = str(ctx.flag("testing.agent_browser", "") or "")
     problem = ui_agent.browser_problem(browser)
     if problem:
@@ -114,13 +119,26 @@ def _settings(ctx: RunContext) -> dict:
             "browser": browser,
             "read_only": bool(ctx.flag("testing.agent_read_only", False)),
             "production": production, "test_account": bool(production and auth and test_account),
-            "forbid": str(ctx.flag("testing.agent_forbid", "") or ""),
+            "forbid": forbid, "allow": allowed,
             "max_actions": int(ctx.flag("testing.agent_max_actions", 60)),
             "case_timeout_s": int(ctx.flag("testing.agent_case_timeout_s", 900))}
 
 
+def case_settings(case, settings: dict) -> dict:
+    """The run's settings as one case sees them: a guest case gets no session (and no test-account line),
+    whatever the run was given. A case that needs a user, or has no opinion, keeps the run's session."""
+    if ui_agent.case_auth(case) != ui_agent.GUEST or not settings.get("auth"):
+        return settings
+    return {**settings, "auth": "", "test_account": False}
+
+
+def login_of(settings: dict) -> str:
+    return "recorded session" if settings.get("auth") else "none"
+
+
 def build_prompt(case, folder: Path, settings: dict, notes: str, code_context: bool, route: str = "") -> str:
     rel = f"{ui_agent.AGENT_DIR}/{folder.name}"
+    settings = case_settings(case, settings)
     lines = [
         f"Execute test case {case.extid} in the browser and return a verdict.",
         "",
@@ -153,14 +171,12 @@ def build_prompt(case, folder: Path, settings: dict, notes: str, code_context: b
         f"outside your folder and the verdict would be rejected). Name the file as the clause's `evidence`.",
         "Make one browser call per message and look at its result before the next.",
         *(["This is the PRODUCTION site. " + (
-            "The account is a test account, but an order, a payment or a coupon here is still a real one."
+            "The account is a test account, but " + ("an order or a payment" if "coupons" in
+                                                     settings.get("allow", ()) else
+                                                     "an order, a payment or a coupon") + " here is still a real one."
             if settings.get("test_account") else "You are a guest: nothing you do reaches an account.")]
           if settings.get("production") else []),
-        *(["Some actions are refused in this run whatever the case says: anything that redeems or spends "
-           "(NeuCoins, wallet, applying a coupon), checkout and payment, adding or removing a Care Plan, "
-           "editing an address, patient or profile, uploading a prescription, logging out. Do not try them "
-           "and do not look for a way round a refusal. A clause that needs one is `not reached`."]
-          if settings.get("forbid") else []),
+        *(ui_agent.allow_lines(settings.get("allow") or ()) if settings.get("forbid") else []),
         *(["THIS RUN IS READ-ONLY. Look, search, sort, filter, open and go back — nothing else. Do not add to "
            "the cart, book, place or cancel an order, pay, save or delete an address or a patient, change the "
            "profile, apply a coupon, or submit any form. A clause that cannot be judged without one of these "
@@ -198,6 +214,7 @@ def _run_case(stage: Stage, ctx: RunContext, case, folder: Path, label: str, set
     # reset is not a limit.
     count_file = Path(tempfile.gettempdir()) / f"rfc-agent-actions-{uuid.uuid4().hex}"
     servers = _servers(ctx)
+    settings = case_settings(case, settings)
     req = EngineRequest(
         prompt=build_prompt(case, folder, settings, notes, "fleetlens" in servers, route),
         cwd=ctx.run_dir, label=label, trace_path=events_path(ctx.run_dir, label),
@@ -272,11 +289,29 @@ def _run_case(stage: Stage, ctx: RunContext, case, folder: Path, label: str, set
         write_json(folder / ui_agent.VERDICT, verdict)
     calls = calls or 0
     # the case's own file says how long it took and what it cost, not only the run's summary
-    write_json(folder / ui_agent.VERDICT, {**verdict, "duration_s": duration, "cost_usd": cost})
+    write_json(folder / ui_agent.VERDICT, {**verdict, "duration_s": duration, "cost_usd": cost,
+                                           "login": login_of(settings)})
     return {**verdict, "duration_s": duration, "browser_calls": calls, "browser_actions": acted,
+            "login": login_of(settings),
             # None with a session that ran: it was cut off before reporting its cost, which is then unknown
             "cost_usd": cost, "cost_known": cost is not None, "_trace": [trace],
             "finished_at": datetime.now(UTC).isoformat(timespec="seconds"), "folder": str(folder)}
+
+
+def _needs_session(case, folder: Path) -> dict:
+    """A case that needs a logged-in user on a run with no session: BLOCKED before any browser or model starts
+    — its outcome is known, and a session would only spend money finding it out."""
+    if folder.exists():
+        shutil.rmtree(folder)
+    folder.mkdir(parents=True)
+    verdict = {**ui_agent.blocked(case.extid, "needs a logged-in session, none given",
+                                  "The case needs a logged-in user (its Precondition or an auth:user tag) and this "
+                                  "run has no --ui-auth. No session was started.", cause="test data"),
+               "login": "none"}
+    write_json(folder / ui_agent.VERDICT, verdict)
+    return {**verdict, "duration_s": 0.0, "browser_calls": 0, "browser_actions": 0, "cost_usd": 0.0,
+            "cost_known": True, "_trace": [], "finished_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "folder": str(folder)}
 
 
 def _recovered_summary(ctx: RunContext, label: str, trace_path: Path):
@@ -359,25 +394,6 @@ def _row(verdict: dict, header: dict) -> dict:
             "attachments": [{"name": "screenshot", "path": str(Path(verdict["folder"]) / shot)}] if shot else []}
 
 
-def _keep_summary(ctx: RunContext, started: datetime) -> None:
-    """Keep this run's results.json / results.md under the time it started, beside the live ones.
-
-    A run folder is per feature, not per run: `execute --feature F` reuses the newest one, and the harness
-    removes a stage's declared outputs before a forced re-run. So the next run does not write over this
-    run's summary — it is deleted before the stage even starts (a guest run replaced a logged-in run's
-    summary that way, 2026-11-17). Setting the old file aside at the start of a run therefore came too late
-    for results.json; a copy the harness does not know about, written when the run ends, is what survives.
-    """
-    stamp = started.strftime("%Y%m%dT%H%M%SZ")
-    for rel in (RESULTS_OUT, TABLE_OUT):
-        src = ctx.path(rel)
-        if src.is_file():
-            target, n = src.with_name(f"{src.stem}.{stamp}{src.suffix}"), 2
-            while target.exists():  # two runs in one second (tests; a retry)
-                target, n = src.with_name(f"{src.stem}.{stamp}-{n}{src.suffix}"), n + 1
-            shutil.copyfile(src, target)
-
-
 def _store_down(doing: str, exc: Exception) -> EngineFailure:
     """A store that cannot be reached, said in a sentence instead of a traceback (third pilot: Kiwi answered
     503 and the run ended in an xmlrpc ProtocolError). Both calls it guards come before any session starts."""
@@ -432,7 +448,7 @@ def _engine(stage: Stage, ctx: RunContext) -> StageResult:
         raise _store_down("create the run in", exc) from None
     header = {"feature": feature, "environment": settings["environment"], "build": settings["build"],
               "base_url": settings["base_url"], "device": settings["device"] or "desktop",
-              "login": "recorded session" if settings["auth"] else "none",
+              "login": login_of(settings), "allow": settings["allow"],
               "production": settings["production"], "test_account_confirmed": settings["test_account"],
               "run_id": run.run_id, "run_url": run.url}
     not_executed = []
@@ -468,6 +484,8 @@ def _engine(stage: Stage, ctx: RunContext) -> StageResult:
 
         def one(case, notes=notes) -> dict:
             folder = ctx.path(ui_agent.AGENT_DIR) / case.extid
+            if ui_agent.case_auth(case) == ui_agent.USER and not settings["auth"]:
+                return _needs_session(case, folder)
             verdict = _run_case(stage, ctx, case, folder, f"{stage.name}.{case.extid}", settings, notes)
             if verdict["status"] == ui_agent.FAIL and confirm:
                 verdict = _confirm(stage, ctx, case, verdict, settings, notes)
@@ -490,10 +508,12 @@ def _engine(stage: Stage, ctx: RunContext) -> StageResult:
                     if isinstance(value, int | float) and not isinstance(value, bool):
                         usage[key] = usage.get(key, 0) + value
             if verdict["extid"] in attached:
-                ui_record.record_row(ctx, stage.name, store, run.run_id, _row(verdict, header), header)
+                case_header = {**header, "login": verdict.get("login") or header["login"]}
+                ui_record.record_row(ctx, stage.name, store, run.run_id, _row(verdict, case_header), case_header)
             results.append({k: verdict.get(k) for k in (
                 "extid", "status", "cause", "reason", "blocked_on", "confirmation", "confirmed", "flaky",
-                "duration_s", "first_run_s", "second_run_s", "browser_calls", "browser_actions", "cost_usd")} | {
+                "duration_s", "first_run_s", "second_run_s", "browser_calls", "browser_actions", "cost_usd",
+                "login")} | {
                     "summary": ui_agent.summary(verdict), "parts_met": met, "parts": total,
                     "recorded": verdict["extid"] in attached})
             if verdict["status"] != ui_agent.PASS:
@@ -507,7 +527,7 @@ def _engine(stage: Stage, ctx: RunContext) -> StageResult:
         text += f"  ·  {len(not_executed)} not executed"
     # every report of this stage carries the per-case table, time included
     text += "\n\n" + ui_agent.results_table(results, not_executed, unpriced)
-    _keep_summary(ctx, started)
+    keep_dated(ctx, started, (RESULTS_OUT, TABLE_OUT))
     return StageResult(final_text=text, duration_s=time.monotonic() - t0, cost_usd=cost or None,
                        tool_calls=tool_calls, usage=usage or None, num_turns=turns or None,
                        engine_desc=f"agent x{len(runnable)} (batches of {size})")

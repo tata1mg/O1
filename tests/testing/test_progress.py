@@ -256,3 +256,35 @@ def test_watch_joins_a_run_already_under_way_without_replaying_it(tmp_path, monk
     lines = out.getvalue().splitlines()
     assert lines[0].startswith("PROGRESS generate_cases · 9m · reading the sources · thinking (no output for")
     assert lines[-1].startswith("WATCH rearm --from ")
+
+
+def test_verdicts_so_far_counts_only_this_runs(tmp_path):
+    import os
+
+    from workflows.testing.progress import StageState
+
+    old, new = tmp_path / "qa/android/TC-OLD/verdict.json", tmp_path / "qa/android/TC-NEW/verdict.json"
+    for p in (old, new):
+        p.parent.mkdir(parents=True)
+        p.write_text("{}")
+    os.utime(old, (1000.0, 1000.0))                    # left by an earlier run of the same feature
+    os.utime(new, (5000.0, 5000.0))
+    t = Tracker(tmp_path)
+    assert t._count(StageState("execute_app", 4000.0, "working")) == "1 verdicts so far"
+    assert t._count(StageState("execute_app", 6000.0, "working")) == ""
+
+
+def test_the_watcher_runs_as_a_script(tmp_path):
+    """`python -m …progress` runs the module top to bottom: every helper must be defined above the main
+    guard (a helper placed below it was a NameError on the first `execute_app` heartbeat, 2026-11-18)."""
+    import ast
+    import subprocess
+    import sys
+
+    (tmp_path / "logs").mkdir()
+    out = subprocess.run([sys.executable, "-m", "workflows.testing.progress", str(tmp_path), "--watch", "--max-s", "1"],
+                         capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    body = ast.parse(Path(progress.__file__).read_text()).body
+    guard = next(i for i, n in enumerate(body) if isinstance(n, ast.If) and "__main__" in ast.unparse(n.test))
+    assert not [n.name for n in body[guard + 1:] if isinstance(n, ast.FunctionDef)]

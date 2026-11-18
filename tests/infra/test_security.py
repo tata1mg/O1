@@ -61,9 +61,10 @@ def test_no_allowlist_contains_a_write_tool():
 def test_hook_guarded_exceptions_have_live_enforcement():
     """A write-capable tool may be granted ONLY with a PreToolUse constraint actually in place.
     use_figma: the guard must hold non-empty fixed scripts AND deny non-matching code."""
-    from rfc_agent.mcp_tools import BROWSER_ACTION_TOOLS
+    from rfc_agent.mcp_tools import BROWSER_ACTION_TOOLS, DEVICE_ACTION_TOOLS
 
-    assert set(HOOK_GUARDED_TOOLS) == {"use_figma", *BROWSER_ACTION_TOOLS}  # browser: test_guard_browser.py
+    # browser: test_guard_browser.py; device: test_guard_device.py
+    assert set(HOOK_GUARDED_TOOLS) == {"use_figma", *BROWSER_ACTION_TOOLS, *DEVICE_ACTION_TOOLS}
     from rfc_agent.hooks.guard_writes import USE_FIGMA_SCRIPTS, _use_figma_allowed
 
     assert USE_FIGMA_SCRIPTS and all(s.strip() for s in USE_FIGMA_SCRIPTS)

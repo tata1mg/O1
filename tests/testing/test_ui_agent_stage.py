@@ -83,7 +83,7 @@ class AgentEngine:
 
 def case(extid: str, expected: str = "The listing opens.") -> Case:
     return Case(extid=extid, summary=f"summary of {extid}", tags=ui_agent.WEB_UI_TAGS,
-                text=render_text({"precondition": "logged in", "steps": "1. Open the listing",
+                text=render_text({"precondition": "the listing page is reachable", "steps": "1. Open the listing",
                                   "expected": expected}))
 
 
@@ -656,7 +656,7 @@ def test_the_browser_will_not_act_without_a_verdict_file_or_past_a_stale_one(tmp
     ("browser_snapshot", {}, False),
 ])
 def test_actions_that_spend_or_change_the_account_are_refused(agent_ctx, tool, inp, refused):
-    pattern = agent_ctx.flag("testing.agent_forbid")
+    pattern = ui_agent.forbid_pattern()                         # the default: every group
     reason = guard_browser.forbidden(tool, inp, pattern)
     assert bool(reason) is refused, reason
     if refused:
@@ -674,8 +674,8 @@ def test_the_forbidden_pattern_reaches_the_guard_and_the_prompt(agent_ctx, monke
     engine = AgentEngine({WEB: passing(WEB)})
     run(agent_ctx, engine)
     req = engine.requests[0]
-    assert req.env[guard_browser.FORBID_ENV] == agent_ctx.flag("testing.agent_forbid")
-    assert "refused in this run whatever the case says" in req.prompt
+    assert req.env[guard_browser.FORBID_ENV] == ui_agent.forbid_pattern()
+    assert "refused in this run whatever the case says" in req.prompt and "Allowed in this run" not in req.prompt
 
 
 def test_the_stage_composes_only_on_request():
@@ -716,3 +716,91 @@ def test_a_row_with_its_own_comment_is_posted_masked_with_the_evidence_and_no_co
     store.comments.clear()
     ui_record.record_row(ctx_factory(tmp_path / "r2"), "s", store, "r", row | {"comment_on_pass": False}, header)
     assert store.comments == []                                      # a PASS asks for its comment
+
+
+# ---- per-case session and the allow-list ------------------------------------------------------------------
+
+def auth_case(extid: str, precondition: str, tags=()) -> Case:
+    return Case(extid=extid, summary=f"summary of {extid}", tags=(*ui_agent.WEB_UI_TAGS, *tags),
+                text=render_text({"precondition": precondition, "steps": "1. Open the cart",
+                                  "expected": "The cart opens."}))
+
+
+@pytest.mark.parametrize("precondition, tags, need", [
+    ("User is a guest (not logged in)", (), "guest"),
+    ("User is not logged in", (), "guest"),
+    ("Logged out; cart is empty", (), "guest"),
+    ("User is logged in with a Care Plan", (), "user"),
+    ("Care Plan member with items in cart", (), "user"),
+    ("Signed-in user", (), "user"),
+    ("Guest first, then logged in as a care plan user", (), ""),       # both: no opinion
+    ("Cart has 2 items", (), ""),                                         # neither
+    ("User is logged in", ("auth:guest",), "guest"),                     # a tag wins
+    ("User is a guest", ("auth:user",), "user"),
+])
+def test_case_auth(precondition, tags, need):
+    assert ui_agent.case_auth(auth_case("TC-A", precondition, tags)) == need
+
+
+def test_a_guest_case_runs_without_the_session_a_user_case_keeps_it(agent_ctx, monkeypatch, tmp_path):
+    auth = tmp_path / "state.json"
+    auth.write_text("{}")
+    agent_ctx.flags._v["testing.ui_auth"] = str(auth)
+    given(monkeypatch, auth_case("TC-G", "User is a guest"), auth_case("TC-U", "User is logged in"))
+    engine = AgentEngine({"TC-G": passing("TC-G"), "TC-U": passing("TC-U")})
+    got = by_id(run(agent_ctx, engine))
+    req = {r.label.rsplit(".", 1)[1]: r for r in engine.requests}
+    guest_args = " ".join(req["TC-G"].containment.mcp_servers[ui_agent.SERVER]["args"])
+    user_args = " ".join(req["TC-U"].containment.mcp_servers[ui_agent.SERVER]["args"])
+    assert "--storage-state" not in guest_args and "--storage-state" in user_args
+    assert "NOT logged in" in req["TC-G"].prompt and "already logged in" in req["TC-U"].prompt
+    assert (got["TC-G"]["login"], got["TC-U"]["login"]) == ("none", "recorded session")
+
+
+def test_a_user_case_on_a_run_with_no_session_is_blocked_before_any_session(agent_ctx, monkeypatch):
+    given(monkeypatch, auth_case("TC-U", "User is logged in"))
+    engine = AgentEngine({})
+    got = by_id(run(agent_ctx, engine))
+    assert engine.requests == [] and got["TC-U"]["status"] == "BLOCKED"
+    assert got["TC-U"]["cause"] == "test data" and got["TC-U"]["cost_usd"] == 0.0
+    assert STAGE.gate(agent_ctx) == []
+
+
+def test_forbid_pattern_groups():
+    default = ui_agent.forbid_pattern()
+    coupons = ui_agent.forbid_pattern("coupons")
+    assert guard_browser.forbidden("browser_click", {"element": "Apply coupon FLAT3"}, default)
+    assert not guard_browser.forbidden("browser_click", {"element": "Apply coupon FLAT3"}, coupons)
+    assert not guard_browser.forbidden("browser_click", {"element": "Remove coupon"}, coupons)
+    assert guard_browser.forbidden("browser_click", {"element": "Redeem NeuCoins"}, coupons)
+    assert not guard_browser.forbidden("browser_click", {"element": "Redeem NeuCoins"},
+                                       ui_agent.forbid_pattern("neucoins"))
+    assert ui_agent.forbid_pattern("coupons", override="xyz") == "xyz"
+    with pytest.raises(ValueError, match="unknown group"):
+        ui_agent.forbid_pattern("coupon")
+
+
+def test_an_allowed_group_reaches_guard_and_prompt_and_results(agent_ctx, monkeypatch):
+    agent_ctx.flags._v["testing.agent_allow"] = "coupons"
+    given(monkeypatch, case(WEB))
+    engine = AgentEngine({WEB: passing(WEB)})
+    res = run(agent_ctx, engine)
+    req = engine.requests[0]
+    assert req.env[guard_browser.FORBID_ENV] == ui_agent.forbid_pattern("coupons")
+    assert "Allowed in this run: applying or removing a coupon" in req.prompt
+    assert "remove every coupon you applied" in req.prompt and res["allow"] == ["coupons"]
+
+
+def test_neucoins_on_a_logged_in_run_needs_the_test_account_statement(agent_ctx, monkeypatch, tmp_path):
+    from harness.contracts import EngineFailure
+
+    auth = tmp_path / "state.json"
+    auth.write_text("{}")
+    agent_ctx.flags._v["testing.ui_auth"] = str(auth)
+    agent_ctx.flags._v["testing.agent_allow"] = "neucoins"
+    given(monkeypatch, case(WEB))
+    with pytest.raises(EngineFailure, match="neucoins"):
+        run(agent_ctx, AgentEngine({}))
+    agent_ctx.flags._v["testing.agent_allow"] = "wallets"
+    with pytest.raises(EngineFailure, match="unknown group"):
+        run(agent_ctx, AgentEngine({}))

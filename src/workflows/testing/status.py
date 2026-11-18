@@ -30,10 +30,12 @@ if __package__ in (None, ""):  # run as a script: make `workflows.testing` impor
 GENERATE_STAGES = ("sources", "generate_cases", "render_xlsx", "store_cases", "prerequisites")
 #: Runs on demand (`/test-agent:evaluate`); never blocks or resumes generation, review or execution.
 EVALUATE_STAGE = "evaluate"
-EXECUTE_STAGES = ("derive_spec", "execute_be", "derive_ui", "execute_web", "execute_ui_agent", "publish_app")
+EXECUTE_STAGES = ("derive_spec", "execute_be", "derive_ui", "execute_web", "execute_ui_agent", "publish_app",
+                  "execute_app", "convert_flows")
 #: Where each executor writes its results, by kind.
 RESULTS = {"backend": "qa/results.json", "web": "qa/ui/results.json", "app": "qa/app/results.json",
-           "agent": "qa/agent/results.json"}
+           "agent": "qa/agent/results.json", "android": "qa/android/results.json",
+           "conversions": "qa/android/conversions.json"}
 
 
 def _load(path: Path, default=None):
@@ -139,6 +141,9 @@ def results_summary(run_dir: Path, rel: str = RESULTS["backend"]) -> dict | None
                        "cost_usd": r.get("cost_usd")} for r in res.get("results") or []],
             "table": _agent_table(res),
             "not_executed": [r.get("extid") for r in res.get("not_executed") or []],
+            # execute_app only: cases not run (gated, no flow, no expected result), and draft flows ready
+            "not_run": [{"extid": r.get("extid"), "reason": r.get("reason")} for r in res.get("not_run") or []],
+            "drafts": [r.get("extid") for r in res.get("drafts") or []],
             "skipped_unconfirmed": len(res.get("skipped_unconfirmed") or []),
             "skipped_wrong_execution": len(res.get("skipped_wrong_execution") or []),
             "not_passing": failing[:20]}
@@ -151,6 +156,11 @@ def _agent_table(res: dict) -> str | None:
     if not rows or "summary" not in rows[0]:
         return None
     from . import ui_agent
+
+    if "engine" in rows[0]:  # execute_app: flow or agent per case
+        from .stages.execute_app import results_table
+
+        return results_table(rows, res.get("not_run") or [])
 
     return ui_agent.results_table(rows, res.get("not_executed") or [], res.get("cost_unknown_for") or [])
 
@@ -300,6 +310,8 @@ def report(run_dir: Path, *, kiwi: bool = False) -> dict:
         "results_web": results_summary(run_dir, RESULTS["web"]),
         "results_app": results_summary(run_dir, RESULTS["app"]),
         "results_agent": results_summary(run_dir, RESULTS["agent"]),
+        "results_android": results_summary(run_dir, RESULTS["android"]),
+        "conversions": (_load(run_dir / RESULTS["conversions"]) or {}).get("results"),
         "ui_plan": ui_plan_summary(run_dir),
         "xlsx": next((str(p) for p in sorted((run_dir / "qa").glob("*.xlsx"))), None),
         "cost_usd": round(sum(r["cost_usd"] or 0 for r in st.values()), 2),
@@ -366,6 +378,18 @@ def milestone(run_dir: Path, stage: str) -> str:
         each = f" · {int(spent // 60)}m {int(spent % 60):02d}s of agent time over {len(r['cases'])} cases" \
             if r.get("cases") else ""
         return f"execute_ui_agent: {tally or 'nothing ran'}{parts}{idle}{each} · {r.get('run_url') or ''}{took}"
+    if stage == "execute_app":
+        r = results_summary(run_dir, RESULTS["android"]) or {}
+        tally = " · ".join(f"{v} {k}" for k, v in sorted((r.get("tally") or {}).items()))
+        not_run = f" · {len(r['not_run'])} not run" if r.get("not_run") else ""
+        drafts = f" · {len(r['drafts'])} draft flow(s) ready to convert" if r.get("drafts") else ""
+        return f"execute_app: {tally or 'nothing ran'}{not_run}{drafts} · {r.get('run_url') or ''}{took}"
+    if stage == "convert_flows":
+        rows = (_load(run_dir / RESULTS["conversions"]) or {}).get("results") or []
+        tally: dict[str, int] = {}
+        for row in rows:
+            tally[row.get("state")] = tally.get(row.get("state"), 0) + 1
+        return "convert_flows: " + (" · ".join(f"{v} {k}" for k, v in sorted(tally.items())) or "nothing") + took
     if stage == "derive_ui":
         p = ui_plan_summary(run_dir) or {"tests": 0, "skipped": []}
         return (f"derive_ui: {p['tests']} Playwright tests written, {len(p['skipped'])} cases left for a person"

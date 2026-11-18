@@ -34,9 +34,11 @@ from harness.contracts import Workflow
 from . import flags as _flags
 from .scores import run_scores
 from .stages import DECISIONS
+from .stages.convert_flows import STAGE as CONVERT_FLOWS
 from .stages.derive_spec import STAGE as DERIVE_SPEC
 from .stages.derive_ui import STAGE as DERIVE_UI
 from .stages.evaluate import STAGE as EVALUATE
+from .stages.execute_app import STAGE as EXECUTE_APP
 from .stages.execute_be import STAGE as EXECUTE_BE
 from .stages.execute_ui_agent import STAGE as EXECUTE_UI_AGENT
 from .stages.execute_web import STAGE as EXECUTE_WEB
@@ -101,6 +103,10 @@ def compose_pipeline(flags) -> tuple[str, ...]:
         stages.append("execute_ui_agent")
     if store and on("publish_app", False):
         stages.append("publish_app")
+    if store and on("execute_app", False):
+        stages.append("execute_app")
+    if store and on("convert_flows", False):
+        stages.append("convert_flows")
     return tuple(stages)
 
 
@@ -197,7 +203,7 @@ def config_get(cfg):
 WORKFLOW = Workflow(
     name="testing",
     stages=(SOURCES, GENERATE_CASES, RENDER_XLSX, EVALUATE, STORE_CASES, PREREQUISITES, DERIVE_SPEC,
-            EXECUTE_BE, DERIVE_UI, EXECUTE_WEB, EXECUTE_UI_AGENT, PUBLISH_APP),
+            EXECUTE_BE, DERIVE_UI, EXECUTE_WEB, EXECUTE_UI_AGENT, PUBLISH_APP, EXECUTE_APP, CONVERT_FLOWS),
     default_pipeline=DEFAULT_PIPELINE,
     description="QA suite generation, evaluation, storage, and backend / web UI / app UI execution (ported "
                 "from test_agent).",

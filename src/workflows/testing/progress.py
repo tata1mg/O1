@@ -49,6 +49,8 @@ DEFAULT_PHASE = {
     "derive_spec": "deriving the request spec", "execute_be": "sending the requests",
     "derive_ui": "starting", "execute_web": "running the browser tests", "publish_app": "recording the Maestro run",
     "execute_ui_agent": "agents are working through the cases in browsers",
+    "execute_app": "running the Android cases on the devices (flows, then agents)",
+    "convert_flows": "running the draft flows to green",
 }
 #: Silence after which a model stage is reported as thinking: it logs a 💭 line only once a thought ENDS.
 QUIET_S = 90
@@ -187,9 +189,12 @@ class Tracker:
         if cur.stage == "generate_cases" and cur.phase == "writing scenarios":
             n = count_ids(self.run_dir / "qa/scenarios.json", "TS-")
             return f"{n} scenarios so far" if n else ""
-        if cur.stage == "execute_ui_agent":
-            done = [p for p in (self.run_dir / "qa/agent").glob("*/verdict.json")
-                    if not p.parent.name.endswith(".confirm")]
+        if cur.stage in ("execute_ui_agent", "execute_app"):
+            # only this run's: a case folder from an earlier run (a case not selected this time) keeps its
+            # verdict.json, and counting it said "6 verdicts so far" before the first case ended (2026-11-18)
+            folder = self.run_dir / ("qa/agent" if cur.stage == "execute_ui_agent" else "qa/android")
+            done = [p for p in folder.glob("*/verdict.json")
+                    if not p.parent.name.endswith(".confirm") and _mtime(p) >= cur.started - 1]
             return f"{len(done)} verdicts so far" if done else ""
         if cur.stage == "derive_ui" and cur.phase == "writing Playwright tests":
             n = len(list((self.run_dir / "qa/ui/tests").glob("TC-*.spec.ts")))
@@ -352,6 +357,13 @@ def watch(run_dir: Path, *, start: int | None, max_s: float = MAX_S, poll_s: flo
         offset = f.tell() - len(pending)
     say([f"WATCH rearm --from {offset}"])
     return offset
+
+
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:  # removed between the glob and the stat
+        return 0.0
 
 
 def main(argv: list[str] | None = None) -> int:

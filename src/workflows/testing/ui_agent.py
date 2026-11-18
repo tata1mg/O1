@@ -113,6 +113,99 @@ def expected_result(case_text: str) -> str:
     return "" if body.lower().strip(" .") in _EMPTY or _RE_PLACEHOLDER.match(body) else body
 
 
+# ---- which session a case needs --------------------------------------------------------------------------
+
+GUEST, USER = "guest", "user"
+AUTH_TAGS = {"auth:guest": GUEST, "auth:user": USER}
+_RE_PRECONDITION = re.compile(r"\*\*Precondition\*\*\s*(?P<body>.*?)(?=\n\*\*[^*\n]+\*\*\s*\n|\Z)", re.S)
+# "not logged in" / "logged out" are guest words: they are taken out before the logged-in words are looked
+# for, or "User is not logged in" would read as a logged-in case.
+_RE_GUEST = re.compile(r"\bguest\b|\bnot\s+(?:yet\s+)?(?:logged|signed)[- ]?in\b|\b(?:logged|signed)[- ]?out\b|"
+                       r"\bwithout\s+(?:logging|signing)[- ]?in\b|\bno\s+(?:user\s+)?session\b", re.I)
+_RE_USER = re.compile(r"\b(?:logged|signed)[- ]?in\b|\blog(?:ged)?\s+in\s+(?:as|with)\b|"
+                      r"\bcare\s*plan\s+(?:user|member)\b", re.I)
+
+
+def precondition(case_text: str) -> str:
+    m = _RE_PRECONDITION.search(case_text or "")
+    return (m.group("body") if m else "").strip()
+
+
+def case_auth(case) -> str:
+    """The session a case needs: GUEST, USER, or "" (no opinion: the run's session).
+
+    A Kiwi tag wins (`auth:guest` / `auth:user`): it is explicit. Without one the Precondition decides —
+    guest words and no logged-in words -> GUEST; logged-in words and no guest words -> USER; both or
+    neither -> no opinion. The words are a heuristic; the tags are the reliable form.
+    """
+    tags = {str(t).lower() for t in (getattr(case, "tags", ()) or ())}
+    for tag, need in AUTH_TAGS.items():
+        if tag in tags:
+            return need
+    pre = precondition(getattr(case, "text", ""))
+    guest = bool(_RE_GUEST.search(pre))
+    user = bool(_RE_USER.search(_RE_GUEST.sub(" ", pre)))
+    return GUEST if guest and not user else USER if user and not guest else ""
+
+
+# ---- what a run may not touch ----------------------------------------------------------------------------
+
+#: The browser guard's forbidden actions, by group. `testing.agent_allow` names groups the run may touch; the
+#: rest are joined into the guard's regex (`testing.agent_forbid`, when set, replaces all of this).
+FORBID_GROUPS = {
+    "neucoins": r"neu\s*coins?|redeem|wallet",
+    "coupons": r"apply\s+(coupon|offer|code)|coupon\s+apply|remove\s+coupon",
+    "checkout": r"place\s+order|proceed\s+to\s+(pay|checkout|buy)|check\s*out|pay\s+now|payment",
+    "careplan": r"(add|remove|buy|renew|cancel)\s+care\s*plan|care\s*plan\s+(add|remove)",
+    "account": r"(save|delete|remove)\s+(this\s+|new\s+)?(address|patient|profile)|delete\s+account",
+    "rx": r"upload\s+prescription",
+    "logout": r"log\s*out|sign\s*out",
+}
+#: How the prompt names each group.
+FORBID_WORDS = {
+    "neucoins": "redeeming or toggling NeuCoins or the wallet", "coupons": "applying or removing a coupon",
+    "checkout": "checkout and payment", "careplan": "adding or removing a Care Plan",
+    "account": "editing an address, patient or profile, or deleting the account",
+    "rx": "uploading a prescription", "logout": "logging out",
+}
+#: An allowed group the agent must leave as it found it, said in the prompt.
+UNDO = {"coupons": "remove every coupon you applied", "neucoins": "switch NeuCoins back to how you found them"}
+
+
+def allowed_groups(allow: str) -> list[str]:
+    """`testing.agent_allow` -> its groups, or ValueError naming an unknown one."""
+    groups = [a.strip().lower() for a in (allow or "").split(",") if a.strip()]
+    unknown = sorted(set(groups) - set(FORBID_GROUPS))
+    if unknown:
+        raise ValueError(f"--allow: unknown group(s) {', '.join(unknown)}; choose from "
+                         f"{', '.join(FORBID_GROUPS)}")
+    return [g for g in FORBID_GROUPS if g in groups]
+
+
+def forbid_pattern(allow: str = "", override: str = "") -> str:
+    """The guard's regex: `override` (testing.agent_forbid) when set, else every group not allowed."""
+    if override:
+        return override
+    allowed = set(allowed_groups(allow))
+    return "|".join(p for g, p in FORBID_GROUPS.items() if g not in allowed)
+
+
+def allow_lines(allowed) -> list[str]:
+    """What the prompt says about forbidden actions: the same groups the guard holds it to."""
+    refused = [FORBID_WORDS[g] for g in FORBID_GROUPS if g not in allowed]
+    out = []
+    if allowed:
+        undo = "; ".join(UNDO[g] for g in allowed if g in UNDO)
+        out.append(f"Allowed in this run: {', '.join(FORBID_WORDS[g] for g in allowed)}. Whatever you do with "
+                   f"them you undo before you finish{' (' + undo + ')' if undo else ''}, exactly like the cart "
+                   f"rule; if you could not, say so under `deviations`.")
+    if refused:
+        out.append(f"Some actions are refused in this run whatever the case says: {'; '.join(refused)}. Do not "
+                   f"try them and do not look for a way round a refusal. A clause that needs one is `not "
+                   f"reached`.")
+    return out
+
+
 def status_from_parts(parts: list[dict]) -> str:
     """The case status its clauses give, by precedence: FAIL over BLOCKED over PASS."""
     states = [c.get("state") for p in parts for c in p.get("expected") or [] if isinstance(c, dict)]

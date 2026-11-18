@@ -1,6 +1,6 @@
 ---
-description: Execute the CONFIRMED cases of an existing testing run — web UI (Playwright), backend (HTTP), or both — recorded in Kiwi; run the already-written web tests at once, or write tests for newly confirmed cases first; or have an agent drive a browser through each web case (ui-agent), also straight from a Kiwi plan with no earlier run. Takes flags, or plain words such as "cart-sanity on prod, cases 173,172, logged in as careplan, show the browser"
-argument-hint: [web|backend|ui-agent|all] [--only-existing] [--run-dir <testing run>] [--feature F --kiwi-plan ID] [--env E] [--build B] [--base-url U] [--ui-auth FILE] [--hosts H] [--production] [--headed] [--cases TC-…,TC-…] [--curl FILE]  — or plain words: "cart-sanity on prod, cases 173,172, logged in as careplan, show the browser"
+description: Execute the CONFIRMED cases of an existing testing run — web UI (Playwright), backend (HTTP), or both — recorded in Kiwi; run the already-written web tests at once, or write tests for newly confirmed cases first; or have an agent drive a browser through each web case and run each Android case on an emulator — its validated Maestro flow, else an agent through Maestro MCP (ui-agent --platform web|android|both|auto, by the cases' Kiwi surface tags), also straight from a Kiwi plan with no earlier run. Takes flags, or plain words such as "cart-sanity on prod, cases 173,172, logged in as careplan, show the browser"
+argument-hint: [web|backend|ui-agent|android|all] [--platform auto|web|android|both] [--untagged web|android|both|skip] [--android-mode auto|flow|agent] [--app-variant V] [--devices S,S] [--device-roles S=guest,S=care_plan_user] [--allow coupons,neucoins] [--only-existing] [--run-dir <testing run>] [--feature F --kiwi-plan ID] [--env E] [--build B] [--base-url U] [--ui-auth FILE] [--hosts H] [--production] [--headed] [--cases TC-…,TC-…] [--curl FILE]  — or plain words: "cart-sanity on prod, cases 173,172, logged in as careplan, show the browser"
 ---
 
 Execute cases for: `$ARGUMENTS`
@@ -35,6 +35,13 @@ Execute cases for: `$ARGUMENTS`
      <its path>`; none or several → ask, listing the session names (names only; never open a session file).
      Nothing said → ask "guest or logged in?" only when the plan's cases could need login; otherwise guest.
      Never invent a path.
+   - **Platform.** "android", "app", "on the emulator", "mobile app" → `--platform android`; "web", "browser",
+     "mweb", "dweb" → `--platform web`; "both", "web and android" → `--platform both`. Nothing said →
+     `--platform auto` (each case on the surfaces its Kiwi tags name). "flows only" → `--android-mode flow`;
+     "agent only" → `--android-mode agent`. "debug build" → `--app-variant debug`. "5554 as guest, 5556
+     logged in as careplan" → `--device-roles emulator-5554=guest,emulator-5556=care_plan_user` (a device
+     whose role is an account is kept signed in by hand and only runs that account's cases; a guest device
+     only the no-account ones). Not said → the maestro repo's `.maestro/devices.yaml` when 2+ devices are up.
    - **How.** "show the browser", "headed", "watch", "visible" → `--headed`; "N at a time", "in parallel" →
      `--parallel N` (not with `--headed`: say a visible browser runs one case at a time); "read only",
      "don't change anything" → `--read-only`.
@@ -66,10 +73,35 @@ Execute cases for: `$ARGUMENTS`
    - Otherwise post one line: `<len(will_run)>` cases an agent will execute in a browser, in batches of 5;
      and, when non-empty, the `no_expected_result` ids — these are not executed and stay IDLE in the Kiwi run
      until someone writes what they expect.
+   - `needs_session` non-empty and no `--ui-auth` → say these cases need a logged-in user (their
+     Precondition, or an `auth:user` tag) and will be BLOCKED with no session started; offer to add
+     `--ui-auth`. Guest cases (Precondition says guest / not logged in, or `auth:guest`) run without the
+     session even when one is given, so one run covers both.
+   - `needs_allow.coupons` / `needs_allow.neucoins` non-empty → these cases apply a coupon or redeem
+     NeuCoins, which the guard refuses by default (they come back BLOCKED). Ask (AskUserQuestion)
+     **"These cases <apply coupons / redeem or toggle NeuCoins> on <host>: allow it for this run?"** with
+     `Yes, allow` (add `--allow coupons` and/or `--allow neucoins`, comma-joined) and `No` (they stay BLOCKED).
+     NeuCoins on a logged-in run also needs `--test-account` (step 3's question). The agent is told to undo
+     what it applied. Never add `--allow` yourself.
    - Say once, before the first `ui-agent` run of a session: each case is a model session on every run
      (cost and time are per case), the agent acts on the environment as a real user, and it logs in only
      from a recorded session (`testing.ui_auth` / `--ui-auth`), never from a number and OTP — without one the
      cases run logged out. `--headed` shows the browser and runs the cases one at a time.
+   - **Platform.** Run `--pending` with the same `--platform` (default `auto`). It reports the web side as
+     above and, for Android, `android.by_flow` (cases that run as their VALIDATED Maestro flow — no model),
+     `android.by_agent` (no validated flow: an agent drives the app), `android.not_run` (with why: a gated
+     flow, no expected result) and `android.error`. Post one line per platform: `web: N by agent ·
+     android: F by flow, A by agent, R not run`. Cases in `android.both` carry both surface tags and run on
+     each.
+   - **Untagged.** `android.untagged` non-empty → these CONFIRMED cases have no `surface:` tag, so nothing
+     says where they run. Ask (AskUserQuestion): **"N cases have no platform tag — where should they run?"**
+     with `Web`, `Android`, `Both` and `Skip them`, and add `--untagged web|android|both|skip`. Never pick
+     for the user; suggest tagging them in Kiwi (`surface:web` / `surface:android`) so the question goes away.
+   - Say once, before the first Android run of a session: a case with a validated flow costs nothing and
+     runs the same every time; a case without one is a model session on every run, acting in the app as a
+     real user on the device's signed-in account; the run needs `adb`, the Maestro CLI, a booted emulator
+     with the app installed and the maestro-automation checkout (`testing.maestro_repo`). Order-placing
+     flows are not run in this version.
    With `--feature` (and optionally `--kiwi-plan <id>`) no earlier run is needed: the run folder is created
    for that feature and the Kiwi plan is read as it is — a case with no `extid:` tag is shown as
    `KIWI-<case id>`. Only `ui-agent` works on such a run.
@@ -84,13 +116,19 @@ Execute cases for: `$ARGUMENTS`
      accept production. `--base-url <origin>` and `--ui-auth <session file>` are passed the same way when
      config does not already hold them.
    - `ENGINE FAILURE … needs Chromium build` → post the two fixes the message names and ask which.
+   - `ENGINE FAILURE execute_app: adb is not installed` / `no Android device is ready` / `the Maestro CLI is
+     not installed` / `no maestro-automation checkout` (Android only) → post the message as it is: the web
+     half still runs; the Android half needs that machine set up. Never try to install or boot anything.
+   - **Production app.** `--app-variant prod` drives the production app: add `--production` and ask, as for
+     the web, whether the device is signed in to a TEST account; only on yes add `--test-account`.
    - **Production.** When the user asks to run on production, or the address is the live site, add
      `--production` (then `--hosts` is not needed). If the run is logged in (`--ui-auth`, or a session in
      config), FIRST ask (AskUserQuestion): **"This will drive production (<host>) logged in. The agent adds
      to the cart and changes what the account sees. Is the session a test account?"** with `Yes, a test
      account` and `No — stop`. Only on yes add `--test-account`; on no, stop, or offer to run as a guest
      (no `--ui-auth`). Never add `--test-account` yourself. A guest run on production is not asked. Say
-     once that checkout, payment, coupons, NeuCoins, Care Plan and address changes stay refused there.
+     once that checkout, payment, coupons, NeuCoins, Care Plan and address changes stay refused there
+     unless `--allow` names them.
    - Otherwise post the run dir, kind(s), env and build in one line. When the kind includes `web` and
      `--headed` was not given, ask once: `Watch the browser` (add `--headed`) or `Run in the background`.
 
@@ -118,6 +156,13 @@ Execute cases for: `$ARGUMENTS`
    requests are in its Kiwi comment), and for web the HTML report:
    `cd <PROJ>/tools/ui-runner && npx playwright show-report <results_web.html_report>`.
 
+For Android, report from `results_android` the same way: the tally, the Kiwi run link
+(`<feature> · android-<env> · <app version>`), and ALWAYS `results_android.table` as it is — Case | Engine |
+Verdict | Time | Cost | What was found — then `not_run` with reasons. A flow FAIL is reported FAIL as it is
+(no second run; the flow's owners triage it). Then list `results_android.drafts`: the cases whose agent PASS
+left a draft flow, and say that `/test-agent:convert-flows` turns them into validated flows — this command
+stops at the verdicts and never converts.
+
 For `ui-agent`, report from `results_agent`: the tally, `parts_met` of `parts`, the Kiwi run link, and
 ALWAYS the per-case table in `results_agent.table` as it is — Case | Verdict | Time | Cost | What the agent
 found, with its Total row. Never drop the Time or the What-the-agent-found column or summarise the table
@@ -129,5 +174,5 @@ it came with the parts figure, never by softening the status. A FAIL was run twi
 run did not repeat it (flaky). ERROR means the agent returned no usable verdict (the harness's, not the
 product's). The full verdict and screenshots of a case are in `<run dir>/qa/agent/<case id>/`.
 
-Every run records into the same Kiwi test run (`<feature> · <env> · <build>`) and overwrites each execution's
-status. `--cases TC-…,…` narrows a run to those ids.
+Every web run records into the same Kiwi test run (`<feature> · <env> · <build>`), every Android run into
+`<feature> · android-<env> · <app version>`; a re-run overwrites each execution's status. `--cases TC-…,…` narrows a run to those ids.

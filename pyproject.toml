@@ -38,6 +38,7 @@ packages = ["src/rfc_agent", "src/harness", "src/workflows"]
 
 [tool.ruff]
 line-length = 120
+src = ["src"]
 target-version = "py312"
 extend-exclude = ["tests/fixtures", "deprecated"]
 

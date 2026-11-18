@@ -39,11 +39,17 @@ def record_row(ctx: RunContext, stage_name: str, store, run_id: str, row: dict, 
         row["detail"] = row["detail"].replace(value, "***")  # an error quoting a typed value
     custom = isinstance(row.get("comment"), str) and bool(row["comment"].strip())
     finished_at = row["finished_at"] or datetime.now(UTC)
+    # A row with its own comment was judged by an agent unless it says otherwise (`executor`: the Android
+    # stage records `maestro-flow` rows this way too); `props` adds what that executor knows (device, flow).
+    props = {"environment": header["environment"], "build": header["build"],
+             "base_url": header.get("base_url", ""),
+             **({"executor": row.get("executor") or "agent"} if custom else
+                {"playwright_status": row["playwright_status"]}),
+             **{k: str(v) for k, v in (row.get("props") or {}).items() if v not in (None, "")}}
     execution_id = store.record_execution(
         run_id, row["extid"], row["status"], actual=row["detail"], duration_s=row["duration_s"],
-        props={"environment": header["environment"], "build": header["build"], "base_url": header["base_url"],
-               **({"executor": "agent"} if custom else {"playwright_status": row["playwright_status"]})},
-        finished_at=finished_at)
+        props=props, finished_at=finished_at)
+    row["execution_id"] = execution_id  # for a later comment on the same execution (convert_flows)
     attached_now, too_big = [], []
     for att in row["attachments"]:
         name = EVIDENCE.get(att["name"], "").format(extid=row["extid"])
@@ -65,7 +71,7 @@ def record_row(ctx: RunContext, stage_name: str, store, run_id: str, row: dict, 
             execution_id,
             _own_comment(row, store, execution_id, attached_now, login, too_big) if custom else
             evidence_comment(row, header, store, execution_id, attached_now, login, too_big))
-    return {k: row[k] for k in ("extid", "status", "playwright_status", "detail", "duration_s")}
+    return {k: row.get(k) for k in ("extid", "status", "playwright_status", "detail", "duration_s")}
 
 
 def evidence_comment(row: dict, header: dict, store, execution_id: str, attached: list[str],

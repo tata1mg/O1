@@ -244,14 +244,62 @@ not work, and writes `qa/agent/<extid>/verdict.json` with a screenshot for every
   `testing.agent_browser=chrome`. The stage checks this before any session starts.
 - **Production.** `execute ui-agent --production` allows the live site. A logged-in run there asks you to
   confirm the session is a test account (or takes `--test-account`); a guest run is not asked. What changes
-  money or the account stays refused (`testing.agent_forbid`). Each run's `results.json` records
+  money or the account stays refused unless `--allow` names its group (`coupons`, `neucoins`, …; see
+  `testing.agent_allow`), and the agent is told to undo what it applied. Each run's `results.json` records
   `production` and `test_account_confirmed`; every run's summary is also kept as
   `results.<start time>.json` / `.md`, since the next run in the same folder replaces the live one.
+- **Guest and logged-in cases in one run.** Each case gets the session it needs: an `auth:guest` / `auth:user`
+  Kiwi tag decides, else its Precondition ("guest", "not logged in" → guest; "logged in", "Care Plan user" →
+  user). A guest case runs without `--ui-auth` even when one is given; a user case on a run with no session is
+  BLOCKED before any session starts. A case with no opinion uses the run's session. The verdict records
+  `login` per case, and the Kiwi comment shows it.
 - **Straight from Kiwi.** `execute ui-agent --feature <F> [--kiwi-plan <id>]` needs no earlier run: it
   creates the run folder and reads the plan as it is (`testing.kiwi_direct`): a CONFIRMED case with no
   `extid:` tag is `KIWI-<case id>`, and one with no `exec:` tag is treated as a UI case. Without the
   generated prerequisites a case must state its own preconditions, or it ends BLOCKED (`test data`).
 - **Cost.** A model session per case on every run, where a script is written once. Not yet measured.
+
+### Android: its Maestro flow, else an agent on the emulator (`execute_app`)
+
+`/test-agent:execute ui-agent --platform auto|web|android|both` runs each CONFIRMED UI case on the
+surface(s) its Kiwi `surface:` tags name; a case tagged `surface:web` and `surface:android` runs on both.
+In a Kiwi-direct run, cases with no `surface:` tag are listed by `--pending` and the command asks where
+they run (`--untagged web|android|both|skip`, flag `testing.kiwi_direct_surface`). Web is
+`execute_ui_agent` as above; Android is the `execute_app` stage (`testing.execute_app`), launched
+separately so one platform's failure never stops the other.
+
+Per Android case (`app_agent.plan`, `maestro_index`):
+
+| Engine | When | Cost | Verdict |
+|---|---|---|---|
+| **flow** | a flow in maestro-automation (`testing.maestro_repo`) names the case — `# Covers:`, a `label:`, or `Kiwi … #<id>` — and its first `# STATUS:` line says VALIDATED / GREEN / RE-VALIDATED | none | `maestro test` + `maestro_report.py`, attributed by `maestro.attribute`; a FAIL is reported as it is |
+| **agent** | no validated flow | a model session per run | `maestro mcp` on one device, the web agent's verdict rules (`ui_agent.validate_verdict`), FAIL re-run once |
+| **not run** | `mock-required` or `manual-order-placing` flows, no expected result, `--android-mode flow` with no flow | — | listed in the results, not recorded |
+
+- Devices: every ready `adb` device with the app (`--app-variant`, `scripts/app_id.sh`) installed, or
+  `--devices`; one owner per device (`devices.DeviceLock`). The app version on the device names the Kiwi run:
+  `<feature> · android-<env> · <versionName (versionCode)>`.
+- Accounts: a flow's `# REQUIRES:` (or its `needs-*-account` tag), or a case's `account:<profile>` tag, signs
+  the device in with `ensure_account.sh` first (static dev OTP only); exit 78 makes the case BLOCKED.
+- The agent's tools are `inspect_screen`, `take_screenshot`, `cheat_sheet` and `run`;
+  `rfc_agent/hooks/guard_device.py` holds every call to the session's device and app, an allow-list of Maestro
+  commands (no `clearState`, scripts, `${…}`, other apps, outside links, flow files except the repo's
+  `common/` sub-flows), the forbidden-target pattern (`testing.agent_forbid`) and a per-case command limit.
+- Each clause the agent judges is proved with an `assertVisible` through Maestro and a `takeScreenshot` into
+  its case folder (`qa/android/<case>/`). On a PASS it writes `draft.yaml`, the commands that worked;
+  `execute` lints it (no `point:` taps, at least one assertion) and lists it under `drafts` — and stops there.
+
+### Draft flows to validated flows: `/test-agent:convert-flows`
+
+`execute convert` runs the `convert_flows` stage on the drafts `execute_app` marked ready: the draft becomes
+`qa/android/<case>/flow.yaml` in the repo's house style (Covers / STATUS / REQUIRES header, `appId: ${APP_ID}`,
+tag `agent-draft`), is run plainly on a device, and only on failure gets up to `testing.convert_fix_rounds`
+model rounds that may change selectors and waits in that file (skill `qa-flow-fixer`), stopping when a round
+fails at the same step as the last. Green flows get `STATUS: VALIDATED (green) … by convert_flows`. No
+attempt is recorded as a Kiwi execution; the case's execution gets one comment with the outcome
+(`qa/android/conversions.json`). `python -m workflows.testing.convert_flows promote <run dir> --folder
+<flows folder> [--apply]` copies green flows onto a branch `agent-flows/<folder>-<date>` in a git worktree
+beside the maestro-automation checkout — nothing committed or pushed; once merged, those cases run as flows.
 
 ### Evidence and Kiwi's upload limit
 
@@ -319,7 +367,8 @@ drops `derive_spec` and `execute_be`, since both read from the store. The harnes
 | `testing.agent_confirm_fail` | bool | `True` | `execute_ui_agent`: re-run a FAIL once in a fresh browser |
 | `testing.agent_production` | bool | `False` | `execute_ui_agent`: the base address is production (`execute ui-agent --production`). The forbidden actions still apply |
 | `testing.agent_test_account` | bool | `False` | `execute_ui_agent`: the operator's confirmation that a logged-in session on production is a test account; `--production` asks for it |
-| `testing.agent_forbid` | str | (a regex) | `execute_ui_agent`: targets no browser action may touch — NeuCoins/wallet, applying coupons, checkout and payment, Care Plan add/remove, saving or deleting an address/patient, prescription upload, logout. Refused by the browser guard; the clause becomes `not reached`. Empty = nothing forbidden. A tripwire on the agent's own description of the element, not a sandbox |
+| `testing.agent_forbid` | str | "" | `execute_ui_agent` / `execute_app` / `convert_flows`: a hand-written regex that replaces the forbidden-action list. Empty = every group of `ui_agent.FORBID_GROUPS` (neucoins, coupons, checkout, careplan, account, rx, logout) not named in `testing.agent_allow`. Refused by the guard; the clause becomes `not reached`. A tripwire on the agent's own description of the element, not a sandbox |
+| `testing.agent_allow` | str | "" | `execute_ui_agent` / `execute_app`: groups this run may touch (`--allow coupons,neucoins`); the agent is told to undo them. `neucoins` on a logged-in run needs `testing.agent_test_account` |
 | `testing.agent_read_only` | bool | `False` | `execute_ui_agent`: tell the agent to change nothing (`execute ui-agent --read-only`); an instruction, not a block |
 | `testing.agent_include_manual` | bool | `False` | `execute_ui_agent`: also take CONFIRMED web cases tagged `exec:manual` |
 | `testing.agent_code_context` | bool | `False` | `execute_ui_agent`: give the agent read-only code lookup (fleetlens), for finding a route only |
