@@ -210,7 +210,15 @@ class FakeAndroid(devices.Android):
         return [s for s in self.serials if not wanted or s in wanted]
 
     def app_version(self, serial):
-        return "15.2.0 (1520)"
+        return "15.2.0 (1520)" if serial not in self.other_build else ""
+
+    other_build: dict = {}                          # serial -> the app id it carries instead of this variant's
+
+    def _installed(self, serial, app_id):
+        return self.other_build.get(serial) == app_id
+
+    def _avds(self):
+        return ["pilot35"]
 
     def sign_in(self, serial, profile):
         self.signed.append((serial, profile))
@@ -375,8 +383,12 @@ def test_a_bad_draft_is_rejected_and_a_failing_agent_case_leaves_none(app_ctx, r
 def test_no_device_is_an_engine_failure_naming_it(app_ctx, repo):
     from harness.contracts import EngineFailure
 
-    with pytest.raises(EngineFailure, match="no Android device is ready"):
+    with pytest.raises(EngineFailure, match=r"no Android emulator or device is running.*emulator -avd pilot35"):
         run_stage(app_ctx, FakeAndroid(repo, serials=()), AppAgent())
+    android = FakeAndroid(repo)
+    android.other_build = {SERIAL: devices.APP_IDS["debug"]}
+    with pytest.raises(EngineFailure, match=r"has the debug build .*Add --app-variant debug"):
+        run_stage(app_ctx, android, AppAgent())
 
 
 def test_a_flow_covering_one_case_that_fails_failed_that_case(repo):

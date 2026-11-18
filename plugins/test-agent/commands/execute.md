@@ -116,9 +116,13 @@ Execute cases for: `$ARGUMENTS`
      accept production. `--base-url <origin>` and `--ui-auth <session file>` are passed the same way when
      config does not already hold them.
    - `ENGINE FAILURE … needs Chromium build` → post the two fixes the message names and ask which.
-   - `ENGINE FAILURE execute_app: adb is not installed` / `no Android device is ready` / `the Maestro CLI is
-     not installed` / `no maestro-automation checkout` (Android only) → post the message as it is: the web
-     half still runs; the Android half needs that machine set up. Never try to install or boot anything.
+   - `ENGINE FAILURE execute_app: adb is not installed` / `no Android emulator or device is running` / `the
+     Maestro CLI is not installed` / `no maestro-automation checkout` (Android only) → post the message as it
+     is: the web half still runs; the Android half needs that machine set up. Never try to install or boot
+     anything.
+   - `ENGINE FAILURE execute_app: <serial> has the <variant> build …, not the <other> build` → the device
+     carries another build of the app. Ask (AskUserQuestion) `Use the <variant> build` (re-run with
+     `--app-variant <variant>`; `prod` also needs `--production`) or `Stop`.
    - **Production app.** `--app-variant prod` drives the production app: add `--production` and ask, as for
      the web, whether the device is signed in to a TEST account; only on yes add `--test-account`.
    - **Production.** When the user asks to run on production, or the address is the live site, add

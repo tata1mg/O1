@@ -206,9 +206,10 @@ def _engine(stage: Stage, ctx: RunContext) -> StageResult:
     if problem:
         raise EngineFailure(f"convert_flows: {problem}.")
     wanted = [s.strip() for s in str(ctx.flag("testing.devices", "") or "").split(",") if s.strip()]
-    serials = [s for s in android.ready(wanted or None) if android.app_version(s)]
+    booted = android.ready(wanted or None)
+    serials = [s for s in booted if android.app_version(s)]
     if not serials:
-        raise EngineFailure(f"convert_flows: no Android device is ready with {android.app_id} installed.")
+        raise EngineFailure(f"convert_flows: {android.why_not_ready(booted, wanted or None)}.")
     store = get_store(ctx)
     cases = {c.extid: c for c in app_agent.select_cases(store, feature, include_manual=True) if c.extid in rows}
     settings = {"app_id": android.app_id, "rounds": int(ctx.flag("testing.convert_fix_rounds", 3)),

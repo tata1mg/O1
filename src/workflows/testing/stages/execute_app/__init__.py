@@ -301,13 +301,11 @@ def _engine(stage: Stage, ctx: RunContext) -> StageResult:
         raise EngineFailure(f"execute_app: {problem}.")
     settings = settings_of(ctx, android)
     wanted = [s.strip() for s in str(ctx.flag("testing.devices", "") or "").split(",") if s.strip()]
-    serials = android.ready(wanted or None)
-    versions = {s: android.app_version(s) for s in serials}
-    serials = [s for s in serials if versions[s]]
+    booted = android.ready(wanted or None)
+    versions = {s: android.app_version(s) for s in booted}
+    serials = [s for s in booted if versions[s]]
     if not serials:
-        raise EngineFailure(f"execute_app: no Android device is ready with {android.app_id} installed "
-                            f"(`adb devices`{', narrowed to ' + ', '.join(wanted) if wanted else ''}). Boot an "
-                            f"emulator and install the {android.variant} build.")
+        raise EngineFailure(f"execute_app: {android.why_not_ready(booted, wanted or None)}. Nothing was run.")
     settings["build"] = settings["build"] or versions[serials[0]]
     if len({versions[s] for s in serials}) > 1:
         decisions.record(ctx, stage.name, "app_build_mismatch", why="the devices carry different app builds; the "

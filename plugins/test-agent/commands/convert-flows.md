@@ -25,7 +25,7 @@ Convert draft flows for: `$ARGUMENTS`
    TASK="testing · convert-flows" uv run --project <PROJ> python -m workflows.testing.execute convert [--run-dir R | --feature F] [--cases …] [--devices …] [--maestro-repo …]
    ```
 
-   `ENGINE FAILURE convert_flows: adb is not installed` / `no Android device is ready` → post it as it is
+   `ENGINE FAILURE convert_flows: adb is not installed` / `no Android emulator or device is running` / `… has the <variant> build` → post it as it is
    and stop; never install or boot anything.
 
 4. **Report** from `status --json` → `conversions`: one line per case — `green` (the flow file path),

@@ -205,6 +205,43 @@ class Android:
         serials = parse_adb_devices(out) if code == 0 else []
         return [s for s in serials if not wanted or s in wanted]
 
+    def why_not_ready(self, booted: list[str], wanted: list[str] | None = None) -> str:
+        """Why no device can run this variant, in words that name the fix. `booted` = `ready(wanted)`.
+
+        One message used to cover two causes (2026-11-18: the emulator had shut down, AND the run asked for the
+        dev-release build while the emulator carries the debug one) — neither was visible from it."""
+        if not booted:
+            narrowed = f" among {', '.join(wanted)}" if wanted else ""
+            avds = self._avds()
+            boot = (f" Boot one: `emulator -avd {avds[0]}`" + (f" (AVDs here: {', '.join(avds)})" if len(avds) > 1
+                                                               else "") + "." if avds else
+                    " Create and boot an emulator, or plug in a device.")
+            return f"no Android emulator or device is running{narrowed} (`adb devices` lists none).{boot}"
+        found = []
+        for serial in booted:
+            others = [v for v, app in APP_IDS.items() if v != self.variant and self._installed(serial, app)]
+            if others:
+                found.append(f"{serial} has the {others[0]} build ({APP_IDS[others[0]]})")
+        if found:
+            hint = found[0].split(" has the ")[1].split(" build")[0]
+            return (f"{'; '.join(found)}, not the {self.variant} build ({self.app_id}). Add --app-variant {hint}, "
+                    f"or install the {self.variant} build")
+        return f"{', '.join(booted)} {'is' if len(booted) == 1 else 'are'} running but none has {self.app_id} " \
+               f"(the {self.variant} build) installed. Install it with `adb install <apk>`"
+
+    def _installed(self, serial: str, app_id: str) -> bool:
+        code, out = self._run([adb_bin(), "-s", serial, "shell", "pm", "list", "packages", app_id], timeout=20)
+        return code == 0 and f"package:{app_id}" in out.split()
+
+    def _avds(self) -> list[str]:
+        for root in sdk_roots():
+            exe = Path(root) / "emulator" / "emulator"
+            if exe.is_file():
+                code, out = self._run([str(exe), "-list-avds"], timeout=20)
+                return [line.strip() for line in out.splitlines() if code == 0 and line.strip()
+                        and not line.startswith(("INFO", "WARNING"))]
+        return []
+
     def app_version(self, serial: str) -> str:
         code, out = self._run([adb_bin(), "-s", serial, "shell", "dumpsys", "package", self.app_id], timeout=30)
         return parse_version(out) if code == 0 else ""
