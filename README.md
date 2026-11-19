@@ -65,8 +65,10 @@ Pipeline diagrams in more detail: [docs/HLD.md](docs/HLD.md).
 
 ## Installing
 
-Follow **[INSTALL.md](INSTALL.md)**. It covers the prerequisites (Claude Code, access to your Confluence / Jira and
-code host), installing the plugin, and first-time setup. The shorter "Setup" section further down is for
+Follow **[INSTALL.md](INSTALL.md)**. It picks the guide for the tool you run in: [CLAUDE_INSTALL.md](CLAUDE_INSTALL.md)
+for Claude Code, [AXON_INSTALL.md](AXON_INSTALL.md) for Axon (`/rfc` and `/test`). They cover the prerequisites (access to
+your Confluence / Jira and code host), installing the plugin, and first-time setup. Every setting is in
+[CONFIG.md](CONFIG.md). The shorter "Setup" section further down is for
 people working from a checkout.
 
 ## The stages
@@ -213,14 +215,16 @@ config.json survives updates; a git-installed plugin cache is wiped on update):
 ```
 
 The same marketplace also lists **test-agent** (`plugins/test-agent/`): `/plugin install
-test-agent@rfc-agent-marketplace`. Three commands (src/workflows/testing/README.md, "From chat"):
+test-agent@rfc-agent-marketplace`. Four commands (src/workflows/testing/README.md, "From chat"):
 
 - `/test-agent:test` turns a finished RFC run into a QA suite in Kiwi, tells you what prestag needs, and once
   you have confirmed the cases runs them: backend cases over HTTP, web UI cases in Playwright, app UI cases
   from a Maestro run.
-- `/test-agent:execute [web|backend|all]` runs the CONFIRMED cases of an existing run again, on any
-  environment; `--only-existing` starts the web tests already written at once, without the model.
+- `/test-agent:execute [web|backend|ui-agent|android|all]` runs the CONFIRMED cases of an existing run or Kiwi plan,
+  on any environment: web in Playwright or by an agent in a browser, Android by its Maestro flow or an agent on the
+  emulator; `--only-existing` starts the web tests already written at once, without the model.
 - `/test-agent:evaluate` scores a suite against the rubric and the 14 compliance checks, on demand.
+- `/test-agent:convert-flows` turns Android agent passes into validated Maestro flows (Claude Code only).
 
 Then `/rfc-agent:setup` once, and `/rfc-agent:rfc --prd <url>` per RFC (deliverables land in
 `$RUNS_ROOT/<jira-key-or-slug>-<timestamp>/`, default `~/rfc-runs/`; continue a stopped run with

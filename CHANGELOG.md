@@ -3,6 +3,36 @@
 All notable changes to this project. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions match `.claude-plugin/plugin.json`.
 
+## 0.2.1
+
+test-agent is listed in the same marketplace as **0.9.0** (new on `main`: the plugin, with the testing workflow's
+execution stages). Its version is in `plugins/test-agent/.claude-plugin/plugin.json`.
+
+### Added
+
+- **`/rfc feedback` on Axon.** `/rfc feedback [--run-dir R] [up|down]` asks the same questions as
+  `/rfc-agent:feedback` for a finished, stopped, failed or unknown-end run (and a re-rating, with a preview) and
+  saves them on the run's Langfuse trace through `feedback.py`. Axon offers it once when a run ends. Each area has
+  a `Something else (type it)` row for a gap that is not listed, and a note is asked only where a gap was ticked.
+- **`GIT_REPOS_REMOTE`** (env `RFC_AGENT_GIT_REPOS_REMOTE`): the team's clone address, with `{repo}` where the repo
+  name goes. Scope and the Android setup clone from it first and fall back to the first checkout in `REPOS_ROOT`.
+  Setup asks for it once, so install no longer needs a repo to be cloned.
+
+### Changed
+
+- **One install flow.** `INSTALL.md` is a router: the agent detects Claude Code or Axon, follows only that guide,
+  and stops with a "raise a GitHub issue" message on any other harness. The Claude guide is `CLAUDE_INSTALL.md`,
+  the Axon guide `AXON_INSTALL.md` (moved out of `docs/`, installs from `main`, assumes Axon is installed and
+  signed in). `SETUP.md` is replaced by `CONFIG.md` (settings and a failure table). `docs/AXON.md` is folded into
+  `AXON_INSTALL.md` and removed. **Links to the old paths break.**
+- test-agent is 0.9.0 (it was never on `main`; 0.9.0 stays above the 0.8.0 some testers already hold).
+
+### Fixed
+
+- `/test-agent:*` run from the marketplace's folder, not the plugin cache that setup synced, so the Kiwi client
+  was missing on the first test. `/rfc-agent:setup` now installs and checks that folder too.
+- Axon rating: a typed note after "Nothing wrong" was scored as a gap.
+
 ## 0.2.0
 
 ### Added

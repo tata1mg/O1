@@ -170,14 +170,15 @@ evaluation does not block review or execution.
 
 ### Inside Axon (Pi): `/test`
 
-The same three commands exist in Axon as one, `/test`, from the Pi extension
+The same commands exist in Axon as one, `/test`, from the Pi extension
 `src/rfc_agent/axon_ext/test-command.js` (installed with `/rfc`: see [AXON_INSTALL.md](../../../AXON_INSTALL.md)):
 
 | Claude Code | Axon |
 |---|---|
 | `/test-agent:test [flags]` | `/test [flags]` |
-| `/test-agent:execute [web\|backend\|all] [flags]` | `/test execute [web\|backend\|all] [flags]` |
+| `/test-agent:execute [web\|backend\|ui-agent\|android\|all] [flags]` | `/test execute [web\|backend\|ui-agent\|android\|all] [flags]` |
 | `/test-agent:evaluate [--run-dir R]` | `/test evaluate [--run-dir R]` |
+| `/test-agent:convert-flows` | not on Axon |
 | (ask Claude) | `/test status [run dir]`, `/test attach <run dir>`, `/test doctor`, the `test_status` tool |
 
 No model drives it: the extension calls the same helpers the Claude commands name (`preflight`, `status`,
