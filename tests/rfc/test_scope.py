@@ -288,6 +288,11 @@ def _answer_no_design(tmp_path, proceed):
         assert json.loads(prop.read_text())["no_design"] == "the PRD links no Figma design"
         (tmp_path / confirm.ANSWERS).write_text(json.dumps({"selected": [1], "proceed_without_design": proceed}))
 
+    # The helper runs twice on the same folder. Without this, the second thread sees the FIRST call's proposal at
+    # once and can write its answers before via_file() clears the old answers file, which then deletes them and
+    # the call times out ("no selection arrived"): a race that failed on CI roughly once in forty runs.
+    for stale in (confirm.PROPOSAL, confirm.ANSWERS):
+        (tmp_path / stale).unlink(missing_ok=True)
     t = threading.Thread(target=answer, daemon=True)
     t.start()
     return confirm.via_file(_items(), lambda n: confirm.Item("repo", n, n, extra={}), "hdr", tmp_path,
