@@ -1,0 +1,19 @@
+docs/AXON_INSTALL.md
+  s_a109dc9958cffd::t_9363fceeecbcad 91-104,147-149,176-184,202-203,361-363,458-459,473,481
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9913973080e6b65dab54f8113cc9181eaa96cef0",
+  "prompts": {},
+  "sessions": {
+    "s_a109dc9958cffd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f6ee47f2-d82c-4742-8fd4-5282f2c31320",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Prabhashish S.Wasu <prabhashish.wasu@1mg.com>"
+    }
+  }
+}
