@@ -1,0 +1,42 @@
+tests/fixtures/axon/feedback_command_cases.mjs
+  s_34882a4571e7f4::t_bf20f38c46423a 1-24,26-193
+  s_34882a4571e7f4::t_816422c0bd9573 25
+tests/rfc/test_axon_rfc_command.py
+  s_34882a4571e7f4::t_bf20f38c46423a 35,37-49
+  s_34882a4571e7f4::t_a31927466d885d 36
+  s_34882a4571e7f4::t_7640bb98e4cc7e 34
+src/rfc_agent/axon_ext/rfc-command.js
+  s_34882a4571e7f4::t_2d759fbf24ffd8 436,438-441,480-482,493,505,507
+  s_34882a4571e7f4::t_b179bb4f997a74 511,514
+  s_34882a4571e7f4::t_88b9babe4e6db8 15-18,310-435,437,442-479,483-492,494-504,506,508-510,512-513,515-552
+  s_34882a4571e7f4::t_436f6e00405264 618-619,750-751,785,821-858,905,929-946,958,1003
+  s_34882a4571e7f4::t_59ba4b086d9367 553
+tests/fixtures/axon/rfc_command_cases.mjs
+  s_34882a4571e7f4::t_bf20f38c46423a 78
+tests/fixtures/axon/fake_uv.py
+  s_34882a4571e7f4::t_bf20f38c46423a 6-9,59-72
+docs/AXON_INSTALL.md
+  s_34882a4571e7f4::t_6c8c8e0894c50e 422-429
+commands/feedback.md
+  s_34882a4571e7f4::t_b179bb4f997a74 125-127
+docs/FEEDBACK.md
+  s_34882a4571e7f4::t_6c8c8e0894c50e 10-20
+  s_34882a4571e7f4::t_b179bb4f997a74 26,116
+  s_34882a4571e7f4::t_62025078db9563 21-25,27-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "85b774ee47e2ed7a67825f6521ffb7c90b98b823",
+  "prompts": {},
+  "sessions": {
+    "s_34882a4571e7f4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "14eb72c9-6e0c-478d-987c-c8d967bc76e1",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}
