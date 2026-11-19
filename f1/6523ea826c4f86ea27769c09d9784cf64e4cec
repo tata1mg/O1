@@ -1,0 +1,25 @@
+src/rfc_agent/scope/atlassian.py
+  s_9593bf3535dd2a::t_95bca830f94e17 27-28
+src/rfc_agent/config.py
+  s_9593bf3535dd2a::t_95bca830f94e17 26-27
+tests/rfc/test_feedback.py
+  s_9593bf3535dd2a::t_95bca830f94e17 624-625
+src/rfc_agent/feedback.py
+  s_9593bf3535dd2a::t_95bca830f94e17 31-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f16523ea826c4f86ea27769c09d9784cf64e4cec",
+  "prompts": {},
+  "sessions": {
+    "s_9593bf3535dd2a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6644bd3b-6bab-4bfd-aee3-ab5fb8e8f273",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}
