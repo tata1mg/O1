@@ -1,0 +1,87 @@
+src/workflows/testing/README.md
+  s_ac1f424ea06043::t_d55fe8bf585ed9 174
+AXON_INSTALL.md
+  s_9593bf3535dd2a::t_54b2295047953f 221-231,236
+  s_9593bf3535dd2a::t_485488d01f275b 364-365
+  s_ac1f424ea06043::t_d55fe8bf585ed9 27-28,163,171,440-519
+  s_9593bf3535dd2a::t_25f5f76ba07a17 37
+  s_9593bf3535dd2a::t_269f3aff56e298 161-162,164,170
+  s_9593bf3535dd2a::t_dd7a880b73ae8b 12-14,16,18,20,22,24-26
+  s_9593bf3535dd2a::t_a2c878ec28805d 124-130
+  s_ac1f424ea06043::t_d58f2c1e103c73 266
+INSTALL.md
+  s_9593bf3535dd2a::t_d8d6870fd15ada 59-61
+  s_ac1f424ea06043::t_d58f2c1e103c73 27
+  s_ac1f424ea06043::t_45f03c2204e08c 9,11,19-20,31,33-34,36,38-39,41-44,46,48-52,54,56-57,63,65-67,69-71,73
+  s_ac1f424ea06043::t_0fd98334228e1f 3,6-7,10,22,24-25
+CLAUDE_INSTALL.md
+  s_9593bf3535dd2a::t_cd9926c5dc7fda 228
+  s_ac1f424ea06043::t_d55fe8bf585ed9 1-227,229-235
+  s_ac1f424ea06043::t_d58f2c1e103c73 236
+src/rfc_agent/scope/atlassian.py
+  s_ac1f424ea06043::t_d58f2c1e103c73 27
+README.md
+  s_ac1f424ea06043::t_d58f2c1e103c73 186,203
+  s_ac1f424ea06043::t_d55fe8bf585ed9 20
+config.example.json
+  s_ac1f424ea06043::t_c274688689f6ac 71,75-76
+  s_9593bf3535dd2a::t_83f94c93ed9de1 5-6
+commands/setup.md
+  s_9593bf3535dd2a::t_33a6354341074a 285-286
+  s_9593bf3535dd2a::t_25e4897caeffed 16-19
+  s_9593bf3535dd2a::t_18bdf3095f36f9 313-316
+  s_ac1f424ea06043::t_d58f2c1e103c73 339
+  s_9593bf3535dd2a::t_041c431b410e1e 130-133,135,138,141-154
+  s_9593bf3535dd2a::t_ac8678f798c4f0 74-77
+  s_9593bf3535dd2a::t_5a490e3196884f 265-267
+  s_ac1f424ea06043::t_d55fe8bf585ed9 40
+package.json
+  s_ac1f424ea06043::t_d55fe8bf585ed9 5
+src/rfc_agent/scope/repos.py
+  s_9593bf3535dd2a::t_4b2d55eee84868 33-34
+  s_9593bf3535dd2a::t_c46f70e5717ec7 86-100
+  s_9593bf3535dd2a::t_cd0338731200c0 239
+  s_9593bf3535dd2a::t_444c5a9eaf44d5 228
+src/rfc_agent/config.py
+  s_9593bf3535dd2a::t_16211dd869440d 49
+  s_9593bf3535dd2a::t_ced49185a9d729 26
+docs/harness/ENGINES.md
+  s_ac1f424ea06043::t_d55fe8bf585ed9 268
+tests/rfc/test_scope.py
+  s_9593bf3535dd2a::t_34c6461b93ebfe 508-544
+CONFIG.md
+  s_9593bf3535dd2a::t_bf51b14361120f 138
+  s_ac1f424ea06043::t_47cde1fb23a601 83
+  s_ac1f424ea06043::t_ed8bf3be45ba56 1-32,34-82,84-137,139-140
+  s_9593bf3535dd2a::t_e281c27e8f3ac2 33
+tests/conftest.py
+  s_9593bf3535dd2a::t_e6a6ab27935ede 12-14
+src/workflows/testing/preflight.py
+  s_9593bf3535dd2a::t_f9288835f783cd 557,559,562-563
+CHANGELOG.md
+  s_ac1f424ea06043::t_d55fe8bf585ed9 14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "900af10121360ea2c2c11de1ca7b83004ca03f4f",
+  "prompts": {},
+  "sessions": {
+    "s_9593bf3535dd2a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6644bd3b-6bab-4bfd-aee3-ab5fb8e8f273",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    },
+    "s_ac1f424ea06043": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ff0fa5e0-adf9-4283-9d28-42a2832ac016",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}
