@@ -621,7 +621,8 @@ def test_rating_again_without_a_stage_clears_the_stage_of_the_earlier_rating(tmp
 def test_minutes_are_numeric_scores_only_when_typed():
     base = dict(rating="up", comment=None, stage=None, trace_id="T1", session_id="s", run_name="r", version=None)
     typed = feedback.build_scores(**base, minutes_saved=45, minutes_spent=20)
-    got = {s["name"]: (s["value"], s["data_type"]) for s in typed if s["name"] in ("rfc_minutes_saved", "rfc_minutes_spent")}
+    names = ("rfc_minutes_saved", "rfc_minutes_spent")
+    got = {s["name"]: (s["value"], s["data_type"]) for s in typed if s["name"] in names}
     assert got == {"rfc_minutes_saved": (45.0, "NUMERIC"), "rfc_minutes_spent": (20.0, "NUMERIC")}
     untyped = feedback.build_scores(**base)
     assert not [s for s in untyped if s["name"] in ("rfc_minutes_saved", "rfc_minutes_spent")]
