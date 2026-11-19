@@ -12,7 +12,10 @@ checks every item below and fills the missing config by asking. Run `/rfc-agent:
 - [ ] Atlassian ✔ Connected in `claude mcp list` (claude.ai connector or a user-scope `atlassian` server)
 - [ ] (recommended) `MCP.mcpServers.fleetlens` reachable (VPN if internal)
 - [ ] Langfuse keys (required: runs are always traced)
-- [ ] Figma desktop app installed and signed in, with the rfc-agent snapshot plugin imported (required)
+- [ ] Figma desktop app installed and signed in, with the rfc-agent snapshot plugin imported (required for RFCs)
+- [ ] Testing (test-agent) only: `uv sync --extra testing`, `TESTING` Kiwi settings, `~/.tcms.conf` (mode 600),
+      `npm ci` in `tools/ui-runner`; check with `python -m workflows.testing.preflight testing`. Android is
+      optional (`preflight setup-android`). `/rfc-agent:setup` walks through all of it
 
 ## 1. Host toolchain
 

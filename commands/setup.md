@@ -1,10 +1,12 @@
 ---
-description: First-time setup for a new user — checks every prerequisite of the pipeline, fills the missing config by asking, and ends READY or BLOCKED
+description: First-time setup for a new user — for RFCs (/rfc-agent:rfc), testing (/test-agent:*) or both; checks every prerequisite, fills the missing config by asking, and ends READY or BLOCKED
 argument-hint: (no arguments)
 ---
 
-Set up rfc-agent on this machine for the pipeline (`/rfc-agent:rfc`, Scope → Summarize). The user may be brand
-new. YOU run the checks, fix what you can, and ask the user only for what you can't know or do.
+Set up this machine for the RFC pipeline (`/rfc-agent:rfc`, Scope → Summarize), for testing (`/test-agent:test`,
+`/test-agent:execute`, `/test-agent:convert-flows`), or both. test-agent has no code of its own: it runs this
+plugin's harness, config and tracing, so testing needs the shared steps below too. The user may be brand new. YOU
+run the checks, fix what you can, and ask the user only for what you can't know or do.
 
 `PROJ="${CLAUDE_PLUGIN_ROOT}"` · `CFG=~/.config/rfc-agent/config.json` — everything the user supplies: team values
 (Atlassian site, fleetlens URL, Bitbucket workspace, service inventory, Langfuse host),
@@ -29,6 +31,25 @@ harness's own working values; read-only — never edit it, an update replaces th
 6. CRITICAL steps block the run. If one can't be fixed now, keep going with the rest, then report BLOCKED.
    OPTIONAL steps may stay unfinished: mark them `skipped` with what the pipeline loses.
 
+## 0. What is this machine for — ask first
+
+If the user already said (INSTALL.md passes it on: "for testing", "for RFCs", "for both"), use that. Otherwise ask
+(AskUserQuestion) **"What will you use it for?"**:
+- `Both (Recommended)` — every step below.
+- `RFCs from PRDs` — steps 1–9; skip 10–11.
+- `Testing only (Kiwi cases, web and Android runs)` — skip steps 5, 6, 7 and 9, and step 4's REPOS_ROOT is
+  optional. Say in one line that `/rfc-agent:rfc` won't be ready, and that setup can be run again to add it.
+
+| Step | RFCs | Testing |
+|---|---|---|
+| 1 Tools · 2 CLI sign-in · 3 Config · 8 Langfuse | CRITICAL | CRITICAL |
+| 4 Folders | CRITICAL | RUNS_ROOT only |
+| 5 Repo access · 6 Atlassian · 7 fleetlens · 9 Figma | as below | skipped |
+| 10 Testing (Kiwi, Playwright) | skipped | CRITICAL |
+| 11 Android | skipped | OPTIONAL, asked |
+
+Mark a skipped step `skipped — not needed for <choice>` in the report.
+
 ## 1. Tools — CRITICAL
 
 **Check:** `uv --version && git --version && [ "$(type -t rg)" = file ] && rg --version | head -1`. (Claude Code's
@@ -41,7 +62,10 @@ own `rg` is a shell function, which doesn't count: the pipeline needs a real bin
 macOS "Install Command Line Tools" dialog and exits: ask the user to click Install, wait until it finishes,
 then run the script again.
 
-**Python env:** `uv run --project "$PROJ" python -V` prints 3.12.x. If not: `uv sync --project "$PROJ"`.
+**Python env:** `uv run --project "$PROJ" python -V` prints 3.12.x. If not: `uv sync --project "$PROJ"`. For
+testing, sync with the testing extra instead (Kiwi's client, the workbook and screenshot libraries):
+`uv sync --project "$PROJ" --extra testing`. Use it every time on a testing machine: a plain `uv sync` removes the
+extra again.
 
 ## 2. Claude CLI sign-in — CRITICAL
 
@@ -85,7 +109,10 @@ or is still the example's placeholder, find candidates: folders under `~` (depth
 (`CFG`'s `MCP.mcpServers.bitbucket.env.BITBUCKET_DEFAULT_WORKSPACE`, if set). Ask (AskUserQuestion): the best candidate (Recommended), other candidates,
 `~/code (create it)`; Other = a path. Create it if it doesn't exist.
 
-**RUNS_ROOT** is where RFC runs and deliverables land. Ask with `~/rfc-runs` (Recommended) first. It must NOT be
+For **Testing only**, REPOS_ROOT is optional: skip it unless they also want Android (step 11 clones
+maestro-automation next to it).
+
+**RUNS_ROOT** is where RFC and testing runs and deliverables land. Ask with `~/rfc-runs` (Recommended) first. It must NOT be
 inside REPOS_ROOT (the pipeline searches REPOS_ROOT, and old runs there get cited as if they were code). Create it.
 
 Write both into `CFG` with a Python edit (rule 5).
@@ -214,7 +241,46 @@ uv run --project "$PROJ" python -c "from rfc_agent.scope import figma; missing, 
   re-check. If it still says `NOT imported` but the user sees the entry, accept it and note "confirmed by the
   user" (Figma may write its settings file later).
 
-## 10. Android test runs (test-agent) — OPTIONAL
+## 10. Testing: Kiwi and Playwright (test-agent) — CRITICAL for testing
+
+Test cases live in the team's Kiwi TCMS; web cases run through Playwright (tools/ui-runner) and the ui-agent
+drives a browser through Playwright MCP.
+
+**Check** (no feature or RFC run needed; prints no secret):
+`uv run --project "$PROJ" python -m workflows.testing.preflight testing --json`. Each row has `id`, `level`, `msg`,
+`fix`. Go through the rows that aren't `ok`:
+
+- **`kiwi` with "testing.storage is …"** — Kiwi isn't set up here. Ask (AskUserQuestion; team values, not
+  secrets) for the Kiwi web URL, the product prefix (e.g. `Sandbox / `) and the Kiwi username the agent records
+  as, then run `… preflight setup-kiwi --kiwi-web <url> --product-prefix "<prefix>" --kiwi-user <user>`. It
+  writes `TESTING` in `CFG`. Re-check.
+- **`kiwi_conf` missing** — the Kiwi login is a password, so the user creates the file (rule 3: never through
+  the chat, and not on a command line either, where it stays in shell history). Create the empty file and open
+  it for them: `touch ~/.tcms.conf && chmod 600 ~/.tcms.conf && open -t ~/.tcms.conf`. Ask them to type these
+  three lines with their own values (the url is the Kiwi web URL from `CFG`'s `TESTING.kiwi_web` plus
+  `/xml-rpc/`) and save:
+  ```
+  [tcms]
+  url = https://<kiwi-host>/xml-rpc/
+  username = <user>
+  password = <password>
+  ```
+  Ask "Done?", then re-check. A `warn` that it's readable by others → `chmod 600 ~/.tcms.conf`.
+- **`kiwi_client` "tcms-api is not installed"** — `uv sync --project "$PROJ" --extra testing`.
+- **`kiwi` unreachable** — VPN off, or the Kiwi server is down. Say which; it stays BLOCKED until it answers.
+- **`playwright` or `agent_browser`** — needs Node 18+ (`node -v`; if missing, ask the user to install Node 22
+  from nodejs.org: no Homebrew assumed). Then run `cd "$PROJ/tools/ui-runner" && npm ci && npx playwright install
+  chromium`, then whatever the `agent_browser` row's `fix` names (Playwright MCP's own Chromium build). Both
+  download browsers (~150 MB each): say so in one line first. Re-check. They stay a note, not a block, only if
+  the user runs backend cases alone.
+- **`claude`** — step 2.
+
+**Web logins — OPTIONAL, don't create them here.** Runs against a logged-in page take a recorded session
+(`--ui-auth <file>`) or a test-account file, both under `~/.secrets/playwright/` and made per environment the
+first time `/test-agent:test` or `/test-agent:execute` needs one; those commands walk through it. Only say they
+exist.
+
+## 11. Android test runs (test-agent) — OPTIONAL
 
 `/test-agent:execute` can run CONFIRMED cases on the Android app: each case's validated Maestro flow, else an
 agent on an emulator. The flows live in another team's repo, **maestro-automation**, which needs a real git
@@ -238,13 +304,18 @@ Then report `adb` and `maestro` from the check: either missing is a note, not a 
 Android SDK platform-tools and the Maestro CLI, and a booted emulator with the app"). Never install the SDK,
 an emulator or an APK from here.
 
-## 11. Report
+## 12. Report
 
 One table, one row per step: ✅ / ❌ / skipped, plus a short note (versions, resolved paths, the clone URL
 template, what's skipped and why). End with exactly one of:
 
-- **READY** — then show the first command: `/rfc-agent:rfc --prd <confluence-url>` (add `--repos a,b` if the
-  context layer is skipped).
+- **READY** — then show the first command for each path set up:
+  - RFCs: `/rfc-agent:rfc --prd <confluence-url>` (add `--repos a,b` if the context layer is skipped).
+  - Testing: `/test-agent:execute ui-agent --feature <name> --kiwi-plan <plan id>` runs an existing Kiwi plan's
+    CONFIRMED cases; `/test-agent:test --rfc-run-dir <run>` writes cases from a finished RFC run. Plain words work
+    too: "cart-sanity on stag, cases 173,172".
+  - If test-agent isn't installed (`claude plugin list` has no `test-agent@rfc-agent-marketplace`), say to run
+    `claude plugin install test-agent@rfc-agent-marketplace` and restart Claude Code.
 - **BLOCKED: <first failed CRITICAL step>** — with the one action that unblocks it.
 
 Not needed, so don't set them up or check them: Google Sheets, the Figma MCP server or connector (designs come

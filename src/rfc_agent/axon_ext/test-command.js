@@ -834,6 +834,12 @@ export default function make(pi, { project, uv = "uv" } = {}) {
   async function execute(argv) {
     const eng = engineFor(argv);
     let args = withoutEngine(argv);
+    if (["ui-agent", "android"].includes(args[0])) {
+      // their browser and device guards are Claude Code hooks: the stages refuse every engine but claude-code
+      return post(`test execute ${args[0]} runs from Claude Code only for now (/test-agent:execute ${args[0]} …): ` +
+        "its safety guards are Claude Code hooks. It uses this same install, config and Kiwi login. " +
+        "Here: /test execute web|backend|all.");
+    }
     const kind = ["web", "backend", "all"].includes(args[0]) ? args[0] : "web";
     const rd = argValue(args, "--run-dir");
     if (rd) args = args.map((a, i) => (args[i - 1] === "--run-dir" ? path.resolve(latest.cwd, expand(a)) : a));

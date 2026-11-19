@@ -109,6 +109,10 @@ It asks the same questions as the Claude commands (RFC run, feature key, environ
 progress above the editor, and starts the harness detached, so quitting Axon does not stop it. Agents run
 on Axon unless you pass `--engine`. Details: [src/workflows/testing/README.md](../src/workflows/testing/README.md).
 
+`/test-agent:execute ui-agent|android` and `/test-agent:convert-flows` have no Axon form yet: their browser and
+device guards are Claude Code hooks, so those stages refuse any other engine, and `/test execute ui-agent|android`
+says so before running anything. Setting up testing on Axon: [AXON_INSTALL.md](AXON_INSTALL.md#testing-on-axon).
+
 ## 3. Run from a terminal or Claude Code
 
 ```bash

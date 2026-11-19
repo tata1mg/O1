@@ -128,6 +128,15 @@ const ex = calls().filter((c) => c.argv[2] === "workflows.testing.execute" && !c
 check("execute ran --only-existing on axon", ex && ex.argv.includes("--only-existing") && ex.argv.join(" ").includes("--engine axon"), ex);
 check("execute asked pending first", asked.some((a) => /newly confirmed web case/.test(a.title)));
 
+// ---- /test execute ui-agent | android: Claude Code only, said before anything runs
+for (const kind of ["ui-agent", "android"]) {
+  messages.length = 0;
+  const before = calls().length;
+  await commands.test.handler(`execute ${kind} --feature cart-sanity`, ctx);
+  check(`execute ${kind} points to Claude Code`, messages.some((x) => x.includes(`/test-agent:execute ${kind}`)), messages);
+  check(`execute ${kind} runs nothing`, calls().length === before, calls().slice(before));
+}
+
 // ---- /test evaluate
 messages.length = 0;
 await commands.test.handler("evaluate", ctx);

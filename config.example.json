@@ -72,5 +72,8 @@
       "MODELS": {},
       "THRESHOLD_COMPACTION": false
     }
+  },
+  "TESTING": {
+    "_comment": "test-agent's settings (the `testing.*` flags). Left empty here on purpose: /rfc-agent:setup fills them by asking — `preflight setup-kiwi` writes storage, kiwi_web, product_prefix, kiwi_user (team values); `preflight setup-web` the environments and base URL template; `preflight setup-android` maestro_repo. The Kiwi password never goes here: it stays in ~/.tcms.conf (chmod 600). Every flag: src/workflows/testing/README.md."
   }
 }

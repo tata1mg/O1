@@ -2,8 +2,13 @@
 
 This puts an `/rfc` command into Axon, the org's managed Pi. `/rfc --prd <confluence-url>` turns a PRD into a
 grounded tech RFC: it runs the whole pipeline with its agents on Axon, shows progress above the editor, and asks
-each pause as a question in the session. You don't need Claude Code. It runs on a Mac and takes about
-20 minutes to set up.
+each pause as a question in the session. The same install adds `/test`, which writes QA test cases into Kiwi
+and runs the confirmed web and backend ones ([Testing on Axon](#testing-on-axon)). You don't need Claude Code.
+It runs on a Mac and takes about 20 minutes to set up.
+
+Only testing? Do steps 1–4, then [Testing on Axon](#testing-on-axon), which has its own check. Skip 5–7
+(Atlassian, Figma and `/rfc doctor` are for RFCs), and in step 4 only `RUNS_ROOT` and the Langfuse keys are
+needed.
 
 How the pipeline works, and what differs from Claude Code: [AXON.md](AXON.md).
 
@@ -168,6 +173,60 @@ Add `--jira <KEY>` if there's a ticket. Every flag the `rfc` command takes works
 If it stops, fix what it reports, then continue it with `/rfc --run-dir <run folder>` (the folder is in the
 closing message). Finished stages are kept. `/rfc --prd` again starts a new run in a new folder.
 
+## Testing on Axon
+
+`/test` runs the same `testing` workflow as Claude Code's test-agent, with its agents on Axon.
+
+| On Axon | Command |
+|---|---|
+| Write cases from a finished RFC run into Kiwi, then run them once you confirm them | `/test --rfc-run-dir <run folder>` |
+| Run CONFIRMED web (Playwright tests) and backend cases again | `/test execute [web\|backend\|all]` |
+| Score a suite | `/test evaluate --run-dir <run folder>` |
+| Follow or check a run | `/test status`, `/test attach <run folder>`, `/test doctor` |
+
+**Not on Axon yet:** the agent kinds of Claude Code's `/test-agent:execute`: `ui-agent` (an agent drives a
+browser through each web case, also straight from a Kiwi plan), `android` (an emulator), and
+`/test-agent:convert-flows`. Their safety guards (which pages the agent may open and which actions it may
+click) are Claude Code hooks, and the stages refuse to start on Axon. Run those from Claude Code
+([INSTALL.md](../INSTALL.md)): it uses this same clone, config and Kiwi login.
+
+### Set up testing
+
+Once, after steps 1–4:
+
+1. The testing extra (Kiwi's client and the report libraries). Use it on every later sync too: a plain
+   `uv sync` removes it again.
+   ```bash
+   uv sync --project "$RFC" --extra testing
+   ```
+2. The team's Kiwi settings (not secret: the Kiwi web URL, the product prefix such as `Sandbox / `, and the
+   Kiwi user the agent records as):
+   ```bash
+   uv run --project "$RFC" python -m workflows.testing.preflight setup-kiwi --kiwi-web <kiwi url> --product-prefix "<prefix>" --kiwi-user <user>
+   ```
+3. Your Kiwi login. It holds your password, so create the file in an editor, not with a command:
+   ```bash
+   touch ~/.tcms.conf && chmod 600 ~/.tcms.conf && open -t ~/.tcms.conf
+   ```
+   Type these lines with your values (the url is the Kiwi web URL plus `/xml-rpc/`) and save:
+   ```
+   [tcms]
+   url = https://<kiwi-host>/xml-rpc/
+   username = <user>
+   password = <password>
+   ```
+4. Playwright, for web cases. Needs Node 18+ (`node -v`); it downloads a browser:
+   ```bash
+   cd "$RFC/tools/ui-runner" && npm ci && npx playwright install chromium
+   ```
+5. Check. It prints one line per item and ends `TESTING READY`:
+   ```bash
+   uv run --project "$RFC" python -m workflows.testing.preflight testing --engine axon
+   ```
+   `ui-agent` and `Android` lines are notes for Claude Code; on Axon they don't block anything.
+
+Web runs against a logged-in page ask for a login file the first time; `/test` explains it then.
+
 ## Updating
 
 ```bash
@@ -175,7 +234,8 @@ axon pi update --extensions
 ```
 
 On a branch ref this pulls the latest commit. A tag stays where it is. Then `/reload` in any open Axon session,
-and run `uv sync --project "$RFC"` in case dependencies changed. To move to a new tag, remove the package and
+and run `uv sync --project "$RFC"` in case dependencies changed (`--extra testing` too if you run `/test`; and
+`npm ci` in `$RFC/tools/ui-runner` if its `package-lock.json` changed). To move to a new tag, remove the package and
 install it again at the new ref:
 
 ```bash
@@ -196,6 +256,9 @@ axon pi remove git:github.com/tata1mg/O1
 | `context layer unavailable` / fleetlens FAIL | VPN on, and check the fleetlens URL and token in the config file |
 | `Langfuse observability is ON but the Langfuse keys are missing` | Paste the keys from the vault into the config file |
 | A repo shows `no access` or `clone failed` | Check you can `git clone` that repo yourself, and fix your git credentials for its host |
+| `/test`: `there is no Kiwi login` / `testing.storage is 'json'` | [Set up testing](#set-up-testing), steps 2–3 |
+| `/test`: `tcms-api is not installed` | `uv sync --project "$RFC" --extra testing` |
+| `execute_ui_agent runs on the claude-code engine only` | ui-agent and Android runs need Claude Code ([Testing on Axon](#testing-on-axon)) |
 | Terminal approval prompts when you ask Axon other things | That's Axon's org terminal policy, for bash commands. `/terminal-permissions` shows what it allows |
 
 ## Uninstall

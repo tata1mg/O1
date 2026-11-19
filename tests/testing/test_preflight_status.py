@@ -437,3 +437,46 @@ def test_check_on_axon_does_not_need_the_claude_cli(tmp_path, rfc_run, monkeypat
     assert "claude" not in ids and ids["engine"] == "info"
     ids = {c["id"]: c["level"] for c in preflight.check("HDPO", str(rfc_run), network=False)["checks"]}
     assert ids["claude"] == "fail"
+
+
+def _machine(monkeypatch, *, kiwi="ok", browser="", android=None):
+    from workflows.testing import ui_agent
+
+    monkeypatch.setattr(preflight, "load_config", lambda: {})
+    monkeypatch.setattr(preflight, "resolved_flags", lambda cfg=None: {})
+    monkeypatch.setattr(preflight, "check_claude", lambda cfg: [preflight._check("claude", "ok", "claude")])
+    monkeypatch.setattr(preflight, "check_kiwi", lambda flags, network=True: [preflight._check("kiwi", kiwi, "kiwi")])
+    monkeypatch.setattr(preflight, "check_langfuse", lambda: [preflight._check("langfuse", "ok", "lf")])
+    monkeypatch.setattr(preflight, "check_executors", lambda: [preflight._check("playwright", "ok", "pw"),
+                                                               preflight._check("maestro", "info", "m")])
+    monkeypatch.setattr(ui_agent, "browser_problem", lambda browser="": browser_problem)
+    browser_problem = browser
+    monkeypatch.setattr(preflight, "android_status", lambda: android or {
+        "configured": False, "checkout_ok": False, "path": "", "adb": False, "maestro": False})
+
+
+def test_the_testing_machine_check_needs_no_feature_or_rfc_run(monkeypatch):
+    _machine(monkeypatch)
+    v = preflight.testing_setup()
+    assert v["ok"]
+    ids = [c["id"] for c in v["checks"]]
+    assert ids == ["claude", "kiwi", "langfuse", "playwright", "agent_browser", "android"]
+    android = v["checks"][-1]
+    assert android["level"] == "info" and "setup-android" in android["fix"]  # optional: never a failure
+
+
+def test_the_testing_machine_check_fails_on_kiwi_and_only_warns_on_the_browser(monkeypatch):
+    _machine(monkeypatch, kiwi="fail", browser="node is not installed")
+    v = preflight.testing_setup()
+    assert not v["ok"]
+    browser = next(c for c in v["checks"] if c["id"] == "agent_browser")
+    assert browser["level"] == "warn" and browser["fix"] == "node is not installed"
+
+
+def test_the_testing_machine_check_on_axon_skips_the_claude_cli(monkeypatch):
+    _machine(monkeypatch, android={"configured": True, "checkout_ok": True, "path": "/m", "adb": True,
+                                   "maestro": False})
+    v = preflight.testing_setup(engine="axon")
+    assert v["checks"][0]["id"] == "engine"
+    android = v["checks"][-1]
+    assert android["level"] == "info" and "maestro not found" in android["msg"]

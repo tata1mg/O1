@@ -464,6 +464,44 @@ def setup_kiwi(values: dict, config_path: Path | None = None, allowed: tuple[str
     return path
 
 
+# ---- the machine check /rfc-agent:setup runs for test-agent ---------------------------------------------
+
+
+def testing_setup(*, network: bool = True, engine: str = "") -> dict:
+    """What test-agent needs on this machine, with no feature or RFC run: the config, the claude CLI, Langfuse,
+    Kiwi (settings, ~/.tcms.conf, tcms-api, reachability), the Playwright runner and the ui-agent browser.
+    Android is reported, never failed: it is optional (`setup-android --check` has the detail)."""
+    from . import ui_agent
+
+    cfg = load_config()
+    checks = []
+    if cfg is None:
+        checks.append(_check("config", "fail", "~/.config/rfc-agent/config.json not found", "run /rfc-agent:setup"))
+    if engine and engine != "claude-code":
+        checks.append(_check("engine", "info", f"agents run on {engine}"))
+    else:
+        checks += check_claude(cfg)
+    flags = resolved_flags(cfg)
+    checks += check_kiwi(flags, network=network)
+    if cfg is not None:
+        checks += check_langfuse()
+    checks += [c for c in check_executors() if c["id"] == "playwright"]
+    problem = ui_agent.browser_problem(str(flags.get("testing.agent_browser") or ""))
+    checks.append(_check("agent_browser", "warn", "ui-agent cannot start its browser", problem)
+                  if problem else _check("agent_browser", "ok", "ui-agent browser (Playwright MCP) ready"))
+    a = android_status()
+    if a["configured"] and a["checkout_ok"]:
+        tools = [n for n in ("adb", "maestro") if not a[n]]
+        checks.append(_check("android", "ok" if not tools else "info",
+                             f"Android: maestro-automation at {a['path']}" +
+                             (f"; {' and '.join(tools)} not found" if tools else ""),
+                             "install the Android SDK platform-tools and the Maestro CLI" if tools else ""))
+    else:
+        checks.append(_check("android", "info", "Android runs are not set up (optional)",
+                             "preflight setup-android --clone, or --path <your maestro-automation checkout>"))
+    return {"ok": not any(c["level"] == "fail" for c in checks), "checks": checks}
+
+
 # ---- one-time Android setup ----------------------------------------------------------------------------
 
 
@@ -598,6 +636,10 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--into", default="", help="--clone: the folder to clone into (default: next to REPOS_ROOT's repos)")
     a.add_argument("--url", default="", help="--clone: the clone URL (default: from the Bitbucket workspace)")
     a.add_argument("--json", action="store_true")
+    t = sub.add_parser("testing", help="what test-agent needs on this machine (no feature or RFC run needed)")
+    t.add_argument("--no-network", action="store_true")
+    t.add_argument("--engine", default="", help="the engine the agents run on (axon: skip the claude CLI check)")
+    t.add_argument("--json", action="store_true")
     s = sub.add_parser("setup-kiwi")
     s.add_argument("--kiwi-web", required=True)
     s.add_argument("--product-prefix", required=True)
@@ -651,6 +693,15 @@ def main(argv: list[str] | None = None) -> int:
                            "insecure_tls": args.insecure_tls})
         print(f"wrote TESTING Kiwi settings to {path} (no password: that stays in ~/.tcms.conf)")
         return 0
+    if args.cmd == "testing":
+        verdict = testing_setup(network=not args.no_network, engine=args.engine)
+        if args.json:
+            print(json.dumps(verdict, indent=2))
+        else:
+            for row in verdict["checks"]:
+                print(f"{_ICON[row['level']]} {row['msg']}" + (f"  → {row['fix']}" if row["fix"] else ""))
+            print("TESTING READY" if verdict["ok"] else "TESTING NOT READY")
+        return 0 if verdict["ok"] else 1
     overrides = {k: getattr(args, k) for k in ("prd", "rfc", "contract", "plan", "figma", "test_data", "ui_login")}
     verdict = check(args.feature, args.rfc_run_dir, overrides, network=not args.no_network, engine=args.engine)
     if args.json:
