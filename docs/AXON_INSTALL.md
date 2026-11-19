@@ -88,11 +88,20 @@ Now open Axon (`axon`) and say one of the three sentences at the top.
 
 You are setting up rfc-agent, test-agent, or both, for the user. Follow the steps in order.
 
-`RFC` is `~/.axon/pi/git/github.com/tata1mg/O1`. `CFG` is `~/.config/rfc-agent/config.json`. In every command
-below, write those paths out in full. Do not use shell variables, `$(…)`, redirects or globs: Axon's terminal
-policy asks the user to approve a command that has one, and a plain command usually runs without a prompt. If a
-prompt still appears, tell the user it is Axon's terminal policy and that approving it is safe for the commands in
-this guide.
+`RFC` is the folder `axon pi list` prints under `git:github.com/tata1mg/O1` (normally
+`~/.axon/pi/git/github.com/tata1mg/O1`; if the user pointed you at this guide inside another checkout, it is that
+checkout). `CFG` is `~/.config/rfc-agent/config.json`.
+
+**How to write commands.** Axon's terminal policy refuses, or asks the user to approve, any command with shell
+syntax. Measured in a headless session: `ls ~/.axon/pi/extensions` and `test -f … && echo ok` were refused, and the
+same commands with an absolute path and no `&&` ran. So in every command below:
+
+- replace `~` with the user's home folder written out (`/Users/<name>/…`), and write `RFC` and `CFG` out in full;
+- one command per call: no `&&`, `;`, pipes, redirects, `$VAR`, `$(…)` or globs;
+- to look at a folder or a file's existence, prefer your own `ls` and `find` tools over the shell.
+
+A `python -c "…"` one-liner is fine as given. If a prompt still appears, tell the user it is Axon's terminal policy
+and that approving it is safe for the commands in this guide.
 
 **What for.** Take it from the user's request: "rfc-agent" alone → RFCs; "test-agent" alone → testing; both named
 → both. If it isn't clear, ask "What will you use it for?" with "Both (Recommended)", "RFCs from PRDs" and
@@ -135,8 +144,9 @@ this guide.
 
 There are two ways `/rfc` and `/test` get into Axon, and having both gives two copies of each command.
 
-**Check:** `axon pi list` shows `git:github.com/tata1mg/O1`, and `ls ~/.axon/pi/extensions` shows neither
-`rfc-agent.js` nor `test-agent.js`. Then move on.
+**Check:** `axon pi list` shows `git:github.com/tata1mg/O1` (with any `@<ref>` after it: say which ref it is, and
+move on), and the folder `~/.axon/pi/extensions` holds neither `rfc-agent.js` nor `test-agent.js`. An empty or
+missing folder passes.
 
 - The package is missing → the user skipped "Before Axon can help", and you are reading this from a checkout.
   Ask them to run `axon pi install git:github.com/tata1mg/O1@feat/axon-engine` and start again.
@@ -163,9 +173,15 @@ It installs what is missing without Homebrew or a password: uv and ripgrep go in
 missing it opens macOS's "Install Command Line Tools" dialog. **User:** click Install, wait for it to finish; then
 run the script again.
 
-**Check:** `uv run --project ~/.axon/pi/git/github.com/tata1mg/O1 python -V` prints 3.12.x. If not, build the
-environment (for testing or both, with the testing extra; use that form on every later sync too, because a plain
-`uv sync` removes the extra again):
+**Check:** `uv run --project ~/.axon/pi/git/github.com/tata1mg/O1 python -V` prints 3.12.x, and, for testing or
+both, this prints `testing extra: ok`:
+
+```bash
+uv run --project ~/.axon/pi/git/github.com/tata1mg/O1 python -c "import tcms_api; print('testing extra: ok')"
+```
+
+If either fails, build the environment (for testing or both, with the testing extra; use that form on every later
+sync too, because a plain `uv sync` removes the extra again):
 
 ```bash
 uv sync --project ~/.axon/pi/git/github.com/tata1mg/O1
@@ -183,7 +199,8 @@ themselves and restart Axon from a new terminal, so later runs have it too.
 
 Everything the user supplies goes in `CFG`.
 
-**Check:** `test -f ~/.config/rfc-agent/config.json`. If it is missing, ask "Do you have a teammate's rfc-agent
+**Check:** the file `~/.config/rfc-agent/config.json` exists (look with your `ls` tool; the shell form
+`test -f <full path>` prints nothing and answers with its exit code, 0 = there). If it is missing, ask "Do you have a teammate's rfc-agent
 config.json to start from?" (only its team values are reusable; their keys and folders are not):
 
 - No →
@@ -341,7 +358,9 @@ that they exist.
 on an emulator. The flows live in another team's repo, **maestro-automation**, which needs a git clone on this
 machine. Web and backend runs never need it.
 
-**Check:** `configured` and `checkout_ok` are true:
+**Check:** `configured` and `checkout_ok` are true, and so are `adb` and `maestro`. (`suggested_path` is only
+where `--clone` would put a new checkout; ignore it when one is configured.) The check does not look for Java or
+a booted emulator: `/test execute android` says so itself when one is missing.
 
 ```bash
 uv run --project ~/.axon/pi/git/github.com/tata1mg/O1 python -m workflows.testing.preflight setup-android --check --json
@@ -436,8 +455,8 @@ axon pi update --extensions
 ```
 
 On a branch ref this pulls the latest commit. A tag stays where it is. Then `/reload` in any open Axon session,
-and run `uv sync --project "$RFC"` in case dependencies changed (`--extra testing` too if you run `/test`; and
-`npm ci` in `$RFC/tools/ui-runner` if its `package-lock.json` changed). To move to a new tag, remove the package and
+and run `uv sync --project ~/.axon/pi/git/github.com/tata1mg/O1` in case dependencies changed (`--extra testing`
+too if you run `/test`; and `npm ci` in that folder's `tools/ui-runner` if its `package-lock.json` changed). To move to a new tag, remove the package and
 install it again at the new ref:
 
 ```bash
@@ -451,7 +470,7 @@ axon pi remove git:github.com/tata1mg/O1
 | `/rfc` isn't a command | Run `/reload`, or restart Axon. Check `axon pi list` shows `git:github.com/tata1mg/O1` |
 | An error that `/rfc` already exists, or two `/rfc` commands | You also have the development install (`python -m rfc_agent.axon_agent install`). Remove one: `uv run python -m rfc_agent.axon_agent uninstall` in that checkout |
 | `Your Axon session is invalid` / `Axon login is required` | `axon auth login --browser` |
-| `invalid peer certificate: UnknownIssuer` | The VPN re-signs HTTPS: `export UV_NATIVE_TLS=1` (step 3), then restart Axon from that terminal |
+| `invalid peer certificate: UnknownIssuer` | The VPN re-signs HTTPS: `export UV_NATIVE_TLS=1` (Step 2), then restart Axon from that terminal |
 | `rfc: … uv` not found | Axon didn't get your shell's PATH. Set `RFC_AGENT_UV` to the output of `which uv`, then restart Axon |
 | `could not list gateway models` | Check `axon auth status` and the VPN, then `axon doctor` |
 | `Axon's Atlassian MCP server … is not signed in` | `axon pi mcp login atlassian` |
@@ -459,7 +478,7 @@ axon pi remove git:github.com/tata1mg/O1
 | `Langfuse observability is ON but the Langfuse keys are missing` | Paste the keys from the vault into the config file |
 | A repo shows `no access` or `clone failed` | Check you can `git clone` that repo yourself, and fix your git credentials for its host |
 | `/test`: `there is no Kiwi login` / `testing.storage is 'json'` | Step 9 above, or ask Axon to "set up test-agent" again |
-| `/test`: `tcms-api is not installed` | `uv sync --project "$RFC" --extra testing` |
+| `/test`: `tcms-api is not installed` | `uv sync --project ~/.axon/pi/git/github.com/tata1mg/O1 --extra testing` |
 | `execute_ui_agent needs an engine with MCP` | The run was started with `--engine pi`. Drop it: `/test` uses Axon by default |
 | `no Android device is ready` / `no maestro-automation checkout` | Boot the emulator with the app installed; Step 10 sets up the checkout |
 | Terminal approval prompts when you ask Axon other things | That's Axon's org terminal policy, for bash commands. `/terminal-permissions` shows what it allows |
