@@ -13,9 +13,10 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-import xml.etree.ElementTree as ET
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+from defusedxml import ElementTree as ET  # the report is a file from a device run: parse it without entity expansion
 
 #: A case id. test_agent's `TC-[A-Z]+-\d+` matched its own sheets' two-part ids (`TC-AC-03`) and none of the
 #: generator's (`TC-ONEVOICE-ENTRY-FUNC-01`), so every flow covering a generated case published nothing.
