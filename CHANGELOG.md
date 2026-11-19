@@ -37,6 +37,9 @@ versions match `.claude-plugin/plugin.json`.
 
 ### Fixed
 
+- **Investigate: a Figma interaction with no action no longer crashes step 1b.** An on-click with no action
+  set exports as `"actions": [null]`, and reading prototype links raised `AttributeError`. Empty actions and
+  interactions are now skipped.
 - **Axon: a recovered retry no longer fails the agent.** A failed model attempt that Pi retried successfully
   kept its error; now only exhausted retries and aborts fail.
 - **Scope: the fleetlens token is no longer left on disk.** Without a run folder, the discovery agent's MCP
