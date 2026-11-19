@@ -12,6 +12,10 @@
  *   finish     the CLI's own closing lines (time, cost, unresolved findings, output paths) are posted into the
  *              conversation, so the user can go on to ask the model about the RFC.
  *
+ *   rating     `/rfc feedback [--run-dir R] [up|down]` (and one offer when a run ends) asks the questions
+ *              commands/feedback.md asks, as Pi dialogs, and records them with `python -m rfc_agent.feedback`: this
+ *              file only maps answers to that CLI's flags (feedbackArgs), it never scores anything.
+ *
  * The child is detached and writes to files, so it outlives the Axon session; `/rfc attach <run dir>` picks a
  * running (or finished) run up again, including a pause that is still waiting.
  *
@@ -303,6 +307,250 @@ async function askTriage(ui, prop) {
   return { selected: items.filter((_, i) => on[i]).map((f) => f.n), notes, feedback: "" };
 }
 
+// ---- rating: the questions of commands/feedback.md, answered as Pi dialogs --------------------------------
+
+const NOTHING = "Nothing wrong";
+const LAST = "picked last time";
+
+/** The four areas asked by default: dimension, label, and the three gaps shown (feedback.DIMENSIONS values). */
+export const AREAS = [
+  { dim: "coverage", label: "Coverage", gaps: [
+    ["missing_prd_flow", "Missing PRD flow"],
+    ["missing_figma_flow_or_state", "Missing Figma flow or state"],
+    ["marked_covered_but_not_addressed", "RFC says it's covered, but the software design in the RFC doesn't address it"]] },
+  { dim: "buildability", label: "Buildability", gaps: [
+    ["too_thin_to_build_from", "Too vague to start coding"],
+    ["interface_or_contract_unclear", "Ambiguous interface or API contract"],
+    ["build_order_or_dependency_missing", "Doesn't say what to build first or what depends on what"]] },
+  { dim: "approach", label: "Approach", gaps: [
+    ["poor_approach", "Poor approach for our systems, e.g. the wrong service or place to build it"],
+    ["ignores_engineering_standards", "Ignores engineering standards"],
+    ["tradeoff_not_justified", "Tradeoff not justified"]] },
+  { dim: "context_layer", label: "Context layer use", gaps: [
+    ["wrong_or_stale_code_fact", "Wrong or stale code fact"],
+    ["missed_existing_code_or_service", "Missed existing code, service or API"],
+    ["wrong_repos_or_pages", "Wrong repos or pages"]] },
+];
+
+export const STOP_REASONS = [
+  ["too_slow", "It was taking too long"],
+  ["too_costly", "Cost or tokens were too high"],
+  ["wrong_repos_or_pages", "Wrong repos or pages were picked"],
+  ["bad_input", "The PRD or Figma input was wrong"],
+  ["changed_mind", "I changed my mind, or no longer need it"],
+  ["other", "Other (type it)"],
+];
+
+export const FAILURE_REPORTS = [
+  ["usage_or_login_limit", "A usage or login limit"],
+  ["connector", "Atlassian, Figma or another connector"],
+  ["connection", "Connection or network"],
+  ["other", "Other (type it)"],
+];
+
+/** Ticks on an area's checklist (row 0 = Nothing wrong) → {verdict, issues}. A gap beats `Nothing wrong`; no tick
+ *  at all is an unanswered question: nothing is passed (and `--rerate` keeps the earlier answer). */
+export function areaAnswer(area, on) {
+  const issues = area.gaps.filter((_, i) => on[i + 1]).map(([v]) => v);
+  if (issues.length) return { verdict: "usable_with_gaps", issues, contradicted: !!on[0] };
+  if (on[0]) return { verdict: "usable", issues: [], contradicted: false };
+  return { verdict: null, issues: [], contradicted: false };
+}
+
+/** A typed number of minutes → a whole number ≥ 0, else null (skip). */
+export function parseMinutes(text) {
+  const t = String(text ?? "").trim();
+  return /^\d+$/.test(t) ? Number(t) : null;
+}
+
+/** The answers → argv for `python -m rfc_agent.feedback` (flags as commands/feedback.md §4 lists them). */
+export function feedbackArgs(a) {
+  const out = ["--run-dir", a.runDir];
+  const add = (flag, v) => { if (v !== undefined && v !== null && v !== "") out.push(flag, String(v)); };
+  add("--run-end", a.runEnd);
+  add("--rating", a.rating);
+  for (const [d, v] of Object.entries(a.verdicts || {})) out.push("--verdict", `${d}=${v}`);
+  for (const [d, i] of a.issues || []) out.push("--issue", `${d}=${i}`);
+  add("--stop-reason", a.stopReason);
+  add("--failure-check", a.failureCheck);
+  add("--failure-reported", a.failureReported);
+  add("--rerun", a.rerun);
+  add("--run-speed", a.runSpeed);
+  add("--run-cost", a.runCost);
+  add("--start-ready", a.startReady);
+  add("--minutes-saved", a.minutesSaved);
+  add("--minutes-spent", a.minutesSpent);
+  if (a.minutesSkipped && a.minutesSaved == null && a.minutesSpent == null) out.push("--minutes-skipped");
+  for (const [k, t] of Object.entries(a.notes || {})) if (String(t).trim()) out.push("--note", `${k}=${String(t).trim()}`);
+  add("--comment", a.comment);
+  add("--stage", a.stage);
+  if (a.rerate) out.push("--rerate");
+  if (a.preview) out.push("--preview");
+  return out;
+}
+
+/** The newest run folder under `root` (a "~/" root is expanded), or null. */
+export function newestRun(root, home = process.env.HOME || "") {
+  const dir = root.startsWith("~/") ? path.join(home, root.slice(2)) : root;
+  let best = null;
+  try {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!e.isDirectory()) continue;
+      const p = path.join(dir, e.name);
+      const t = fs.statSync(p).mtimeMs;
+      if (!best || t > best.t) best = { p, t };
+    }
+  } catch {}
+  return best?.p ?? null;
+}
+
+/** Every question of the rating form, in order. `uv` = (args) → {code,out,err} for `python -m rfc_agent.feedback`. */
+export async function askFeedback(ui, ctxJson, { runDir, thumb, record, say }) {
+  const prev = ctxJson.previous || null;
+  const base = { runDir, rating: undefined, verdicts: {}, issues: [], notes: {} };
+  let end = ctxJson.end;
+  if (ctxJson.recorded) ui.notify(ctxJson.recorded, "info");
+  const head = [ctxJson.recorded, ctxJson.line].filter(Boolean).join("\n");
+
+  if (end === "unknown" || !["finished", "stopped", "failed"].includes(end)) {
+    const c = await ui.select(`${head}\nHow did this run end?`, ["It finished", "I stopped it", "It failed", "Later"]);
+    end = { "It finished": "finished", "I stopped it": "stopped", "It failed": "failed" }[c];
+    if (!end) return say("No rating recorded. Run /rfc feedback any time.");
+    base.runEnd = end;
+  }
+
+  const mark = (on) => (on ? ` (${LAST})` : "");
+  const answers = { ...base };
+  let changed = true;
+  if (prev) {
+    const bits = [prev.rating && (prev.rating === "up" ? "👍" : "👎"), prev.stop_reason, prev.failure_check && `cause ok: ${prev.failure_check}`,
+      prev.rerun && `run again: ${prev.rerun}`, Object.keys(prev.verdicts || {}).length && `${Object.keys(prev.verdicts).length} areas`]
+      .filter(Boolean).join(", ");
+    const c = await ui.select(`${head}\nYou rated this run before: ${bits || "see the table"}. Keep or change?`, ["Keep it as it is", "Change some answers"]);
+    if (c === undefined) return say("No rating recorded.");
+    if (c === "Keep it as it is") changed = false;
+    else ui.notify("A question you leave unanswered keeps your earlier answer. Pick another option to change it.", "info");
+  }
+  const wasLast = (v) => changed && prev && v;
+
+  const ask = async () => {
+    if (end === "finished") {
+      if (!(await askFinished(ui, answers, prev, head, thumb, mark))) {
+        say("No rating recorded. Run /rfc feedback any time after reading the RFC.");
+        return false;
+      }
+    } else if (end === "stopped") {
+      const labels = STOP_REASONS.map(([, l], i) => l + mark(wasLast(prev?.stop_reason === STOP_REASONS[i][0])));
+      const c = await ui.select(`${head}\nWhat was the main reason you stopped it?`, labels);
+      const hit = STOP_REASONS[labels.indexOf(c)];
+      if (hit) {
+        answers.stopReason = hit[0];
+        if (hit[0] === "other") {
+          const t = (await ui.input("Type the reason you stopped it", "")) || "";
+          if (t.trim()) answers.notes.stop = t;
+        }
+      }
+      await askRerun(ui, answers, prev, mark, wasLast);
+    } else {
+      const given = ctxJson.cause ? `${ctxJson.cause}${ctxJson.excerpt ? `\n${ctxJson.excerpt}` : ""}` : "";
+      if (given) {
+        const YES = "Yes, that is what happened";
+        const NO = "No, something else happened";
+        const c = await ui.select(`${head}\nIs that what happened?\n${given}`,
+          [YES + mark(wasLast(prev?.failure_check === "yes")), NO + mark(wasLast(prev?.failure_check === "no"))]);
+        if (c !== undefined) answers.failureCheck = c.startsWith(YES) ? "yes" : "no";
+        if (answers.failureCheck === "no") {
+          const t = (await ui.input("What happened instead? (optional)", "")) || "";
+          if (t.trim()) answers.notes.failure = t;
+        }
+      } else {
+        const labels = FAILURE_REPORTS.map(([, l], i) => l + mark(wasLast(prev?.failure_reported === FAILURE_REPORTS[i][0])));
+        const c = await ui.select(`${head}\nWhat made it fail?`, labels);
+        const hit = FAILURE_REPORTS[labels.indexOf(c)];
+        if (hit) {
+          answers.failureReported = hit[0];
+          if (hit[0] === "other") {
+            const t = (await ui.input("Type what made it fail", "")) || "";
+            if (t.trim()) answers.notes.failure = t;
+          }
+        }
+      }
+      await askRerun(ui, answers, prev, mark, wasLast);
+    }
+    return true;
+  };
+  if (changed && !(await ask())) return;
+
+  if (prev) {
+    answers.rerate = true;
+    for (;;) {
+      const r = await record({ ...answers, preview: true });
+      say(r);
+      const c = await ui.select("Submit this?", ["Submit", "Change something"]);
+      if (c === "Submit") break;
+      if (c === undefined) return say("Nothing sent.");
+      // Change something: ask again (the earlier picks stay as the answers of this round)
+      if (!(await ask())) return;
+    }
+  }
+  return say(await record(answers));
+}
+
+async function askRerun(ui, answers, prev, mark, wasLast) {
+  const c = await ui.select("Would you run it again?", ["Yes" + mark(wasLast(prev?.rerun === "yes")), "No" + mark(wasLast(prev?.rerun === "no"))]);
+  if (c !== undefined) answers.rerun = c.startsWith("Yes") ? "yes" : "no";
+}
+
+/** The finished form. Returns false when the person chose Later (or dismissed it). */
+async function askFinished(ui, answers, prev, head, thumb, mark) {
+  const prevThumb = prev?.rating === "up" ? (Object.keys(prev.verdicts || {}).length ? "notes" : "good") : prev?.rating === "down" ? "down" : null;
+  {
+    let t = thumb; // "up" | "down" from the command line
+    if (!t) {
+      const opts = [`👍 Good${mark(prevThumb === "good")}`, `👍 Good, with notes${mark(prevThumb === "notes")}`,
+        `👎 Needs work${mark(prevThumb === "down")}`, "Later"];
+      const c = await ui.select(`${head}\nHow was this RFC overall?`, opts);
+      if (c === undefined || c === "Later") return false;
+      t = c === opts[2] ? "down" : c === opts[0] ? "up" : "notes";
+      answers.thumbKind = t;
+    } else answers.thumbKind = t === "up" ? "up" : "down";
+    answers.rating = t === "down" ? "down" : "up";
+    if (answers.thumbKind === "up") return true; // a plain 👍 is one tap
+  }
+
+  for (const area of AREAS) {
+    const was = prev?.verdicts?.[area.dim];
+    const wasIssues = prev?.issues?.[area.dim] || [];
+    const rows = [{ label: NOTHING, note: was === "usable" ? LAST : "", on: false },
+      ...area.gaps.map(([v, l]) => ({ label: l, note: wasIssues.includes(v) ? LAST : "", on: false }))];
+    const on = await checklist(ui, `${area.label}: anything wrong? (pick any)`, rows);
+    const r = areaAnswer(area, on);
+    if (r.contradicted) ui.notify(`${area.label} had both Nothing wrong and a gap ticked; recorded the gap`, "info");
+    if (r.verdict) {
+      answers.verdicts[area.dim] = r.verdict;
+      answers.issues = answers.issues.filter(([d]) => d !== area.dim);
+      r.issues.forEach((i) => answers.issues.push([area.dim, i]));
+    }
+    const note = ((await ui.input(`${area.label}: anything else to say? (optional)`, "")) || "").trim();
+    if (note) answers.notes[area.dim] = note;
+  }
+  if (answers.verdicts.buildability === "usable") answers.startReady = "yes";
+
+  const mins = async (q, was) => {
+    const hint = changedHint(was);
+    return parseMinutes(await ui.input(`${q}${hint}`, ""));
+  };
+  const saved = await mins("How many minutes did this RFC save you versus writing it yourself? (a number, or leave empty to skip)", prev?.minutes_saved);
+  const spent = await mins("After the RFC was generated, how many minutes did you spend reviewing and correcting it yourself? " +
+    "(a number, or leave empty to skip; leave out the run itself and any pauses)", prev?.minutes_spent);
+  if (saved !== null) answers.minutesSaved = saved;
+  if (spent !== null) answers.minutesSpent = spent;
+  if (saved === null && spent === null && !prev) answers.minutesSkipped = true;
+  return true;
+}
+
+const changedHint = (was) => (was != null ? `\nLast time: ${was} minutes. A number to change it, or leave it` : "");
+
 // ---- rfc_status: a run's state as a read-only tool -------------------------------------------------------
 
 export function tail(file, n) {
@@ -367,7 +615,8 @@ export function withReadOnlyTools(active, registered) {
 // ---- one watched run ----------------------------------------------------------------------------------
 
 class Run {
-  constructor(runDir, { pi, getCtx, child, pid }) {
+  constructor(runDir, { pi, getCtx, child, pid, offerRating }) {
+    this.offerRating = offerRating;
     this.dir = runDir;
     this.name = path.basename(runDir);
     this.pi = pi;
@@ -498,6 +747,8 @@ class Run {
       content: `rfc-agent run ${this.dir}\n${body}\n${tail}`,
       display: true,
     });
+    // Once, like the Claude Code command: a run that ended either way can be rated (stopped and failed have their own questions).
+    if (ui && this.offerRating) this.offerRating(this.dir).catch((e) => ui.notify(`rfc: rating failed (${e.message})`, "error"));
   }
 }
 
@@ -531,6 +782,7 @@ const HELP = [
   "/rfc --prd <confluence url | page id | file.md> [flags]   run the pipeline (agents on Axon by default)",
   "/rfc --run-dir <run> [--from <stage>]                      continue a stopped run (or redo a stage onward)",
   "/rfc attach <run dir>                                     follow a run started elsewhere (or answer its pause)",
+  "/rfc feedback [--run-dir <run>] [up|down]                 rate a run (finished, stopped or failed); saved on its Langfuse trace",
   "/rfc doctor                                               check Axon, models and fleetlens",
   "Flags are the rfc CLI's: --jira, --repos, --no-figma, --preset, --ask, --ask-review, --yes, --langfuse-verbose, --engine, --stage-engine.",
 ].join("\n");
@@ -565,6 +817,44 @@ export default function make(pi, { project, uv = "uv" } = {}) {
     if (!timer) timer = setInterval(tick, POLL_MS);
   };
   const uvRun = (args, cwd) => runCapture(uv, ["run", "--project", project, ...args], { cwd, env: childEnv() });
+
+  // ---- rating ----
+
+  const feedbackCli = (args, cwd) => uvRun(["python", "-m", "rfc_agent.feedback", ...args], cwd);
+
+  /** The questions, then the record: `rfc_agent.feedback` does all the scoring. */
+  async function rate(runDir, { thumb } = {}) {
+    const ui = latest?.ui;
+    if (!ui) return;
+    const cwd = latest.cwd || process.cwd();
+    const c = await feedbackCli(["--run-dir", runDir, "--context"], cwd);
+    let ctxJson;
+    try {
+      ctxJson = JSON.parse(c.out.trim().split("\n").pop());
+    } catch {
+      ui.notify(`rfc: could not read ${runDir} for rating: ${(c.err || c.out).trim().split("\n").pop()}`, "error");
+      return;
+    }
+    const say = (text) => text && pi.sendMessage({ customType: "rfc-agent", content: text, display: true });
+    ui.notify(`rfc: rating ${path.basename(runDir)}`, "info");
+    await askFeedback(ui, ctxJson, {
+      runDir, thumb, say,
+      record: async (answers) => {
+        const r = await feedbackCli(feedbackArgs(answers), cwd);
+        const text = (r.out + r.err).trim();
+        return r.code === 0 ? text : `rfc: the rating was not recorded (exit ${r.code})\n${text}`;
+      },
+    });
+  }
+
+  /** The one offer at the end of a run. */
+  async function offerRating(runDir) {
+    const ui = latest?.ui;
+    if (!ui) return;
+    const c = await ui.select(`Rate this run? (${path.basename(runDir)}) It lands on the run's Langfuse trace.`, ["Rate it now", "Later"]);
+    if (c === "Rate it now") await rate(runDir);
+    else ui.notify(`rfc: rate it any time with /rfc feedback --run-dir ${runDir}`, "info");
+  }
 
   let lastDir = null; // the run rfc_status reports when it is given none
   const watchedDir = () => [...runs.keys()].pop() || lastDir;
@@ -612,7 +902,7 @@ export default function make(pi, { project, uv = "uv" } = {}) {
   pi.registerCommand("rfc", {
     description: "rfc-agent: generate a tech RFC from a PRD (Scope → Summarize), agents on Axon",
     getArgumentCompletions: (prefix) =>
-      ["--prd ", "attach ", "doctor", "--run-dir ", "--from ", "--engine ", "--stage-engine ", "--ask", "--ask-review", "--yes"]
+      ["--prd ", "attach ", "doctor", "feedback ", "--run-dir ", "--from ", "--engine ", "--stage-engine ", "--ask", "--ask-review", "--yes"]
         .filter((c) => c.startsWith(prefix))
         .map((c) => ({ value: c, label: c.trim() })),
     handler: async (args, ctx) => {
@@ -636,6 +926,24 @@ export default function make(pi, { project, uv = "uv" } = {}) {
         return;
       }
 
+      if (argv[0] === "feedback") {
+        const rest = argv.slice(1);
+        let dir = argValue(rest, "--run-dir");
+        if (dir) dir = path.resolve(ctx.cwd, dir);
+        else dir = watchedDir();
+        if (!dir) {
+          const r = await uvRun(["python", "-c", "import rfc_agent.config as c; print(c.get_config().get('RUNS_ROOT') or '~/rfc-runs')"], ctx.cwd);
+          dir = newestRun(r.out.trim().split("\n").pop() || "~/rfc-runs");
+        }
+        if (!dir || !fs.existsSync(path.join(dir, "logs"))) {
+          ui.notify("rfc: /rfc feedback --run-dir <run folder> — no run folder found to rate", "error");
+          return;
+        }
+        ui.notify(`rfc: rating ${dir}`, "info");
+        await rate(dir, { thumb: rest.find((a) => a === "up" || a === "down") });
+        return;
+      }
+
       if (argv[0] === "attach") {
         const dir = path.resolve(ctx.cwd, argv[1] || "");
         if (!argv[1] || !fs.existsSync(path.join(dir, "logs"))) {
@@ -647,7 +955,7 @@ export default function make(pi, { project, uv = "uv" } = {}) {
         try {
           pid = Number(fs.readFileSync(path.join(dir, "logs", "axon-rfc.pid"), "utf8"));
         } catch {}
-        watch(new Run(dir, { pi, getCtx: () => latest, pid }));
+        watch(new Run(dir, { pi, getCtx: () => latest, pid, offerRating }));
         ui.notify(`rfc: following ${dir}`, "info");
         return;
       }
@@ -692,7 +1000,7 @@ export default function make(pi, { project, uv = "uv" } = {}) {
       });
       fs.closeSync(fd);
       fs.writeFileSync(path.join(logs, "axon-rfc.pid"), String(child.pid));
-      const run = new Run(runDir, { pi, getCtx: () => latest, child, pid: child.pid });
+      const run = new Run(runDir, { pi, getCtx: () => latest, child, pid: child.pid, offerRating });
       // Only this invocation's output; the logs of earlier attempts in a reused folder are history.
       run.files.out.offset = start;
       for (const k of ["progress", "activity"]) {
