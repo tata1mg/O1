@@ -15,7 +15,7 @@ dependencies = [
 # and skips the workbook instead of failing (D8/D10), and the JSON store needs neither.
 testing = [
     "openpyxl>=3.1,<4",
-    "pillow>=10,<13",
+    "pillow>=10,<14",
     "tcms-api>=15",
 ]
 
