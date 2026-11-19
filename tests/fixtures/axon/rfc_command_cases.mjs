@@ -75,6 +75,7 @@ const ui = {
       return options.find((o) => o.startsWith("[ ] svc_c"));
     }
     if (/Who owns cart/.test(title)) return "cart team";
+    if (/Rate this run/.test(title)) return "Later"; // the end-of-run offer; feedback_command_cases.mjs covers rating
     return options[0]; // Done / Plan looks right
   },
   async input(title) {

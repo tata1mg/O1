@@ -122,9 +122,9 @@ the gap wins.
   `--issue`s; the text is kept next to them. If the text clearly names a gap from the "not shown" column of that
   area, add that `--issue` as well. Don't add `other_see_comment` yourself: the command records the text as the area's
   `other_see_comment` gap when no listed gap was ticked.
-- **The overall question is single-choice**, so text typed under Other is the person's answer and takes preference
-  over any option: pass it as `--comment`, as typed. It carries no thumb, so ask the thumb once on its own
-  (`👍 Good` · `👍 Good, with notes` · `👎 Needs work`) and continue as above.
+- **The overall question has exactly four options** (`👍 Good`, `👍 Good, with notes`, `👎 Needs work`, `Later`) and
+  nothing else is offered on it. The chat tool adds an Other box to every question; do not mention it. If the person
+  types there anyway, pass the text as `--comment`, as typed, and ask the thumb once on its own.
 - The run question: both `Too slow to run` and `Too slow to review` → `--run-speed too_slow_to_run_and_review`; only
   `Too slow to run` → `--run-speed too_slow_to_run`; only `Too slow to review` → `--run-speed too_slow_to_review`;
   otherwise (anything else picked) `--run-speed fine`. `Too token heavy` → `--run-cost too_token_heavy`, otherwise

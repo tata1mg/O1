@@ -3,6 +3,10 @@
 
   … python -m rfc_agent.axon_agent doctor   prints READY (FAKE_UV_DOCTOR_FAIL=1: a FAIL line, exit 1)
   … python -m rfc_agent.scope run-dir …     prints $FAKE_UV_RUN_DIR
+  … python -m rfc_agent.feedback …          --context prints $FAKE_UV_CONTEXT (a file); otherwise appends the argv to
+                                            $FAKE_UV_FEEDBACK_LOG and prints a one-line result (+ a table line
+                                            for --preview, like the real CLI)
+  … python -c …                             prints $FAKE_UV_RUNS_ROOT (the RUNS_ROOT lookup)
   … rfc <args>                              plays a short pipeline: Scope selection, Investigate pause 1, Review
                                             triage, done. Each pause writes a proposal, prints the WAITING line and
                                             waits for the answers, which it copies to <run>/got-<name>.json.
@@ -51,6 +55,20 @@ def main() -> int:
         return 0
     if cmd[:3] == ["python", "-m", "rfc_agent.scope"]:
         print(os.environ["FAKE_UV_RUN_DIR"])
+        return 0
+    if cmd[:3] == ["python", "-m", "rfc_agent.feedback"]:
+        if "--context" in cmd:
+            print(Path(os.environ["FAKE_UV_CONTEXT"]).read_text())
+            return 0
+        with open(os.environ["FAKE_UV_FEEDBACK_LOG"], "a") as f:
+            f.write(json.dumps(cmd[3:]) + "\n")
+        if "--preview" in cmd:
+            print("| Area | Now |\n| (preview, nothing sent) |")
+        else:
+            print("feedback recorded: saved locally (not sent to Langfuse: fake)\n| Area | Sent |")
+        return 0
+    if cmd[0] == "python" and cmd[1] == "-c":
+        print(os.environ["FAKE_UV_RUNS_ROOT"])
         return 0
     assert cmd[0] == "rfc", cmd
     run = Path(cmd[cmd.index("--run-dir") + 1])

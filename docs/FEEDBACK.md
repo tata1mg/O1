@@ -7,6 +7,30 @@ Code: `src/rfc_agent/feedback.py` (the command), `src/rfc_agent/run_facts.py` an
 (what the run was about and what it consumed), `src/rfc_agent/observe.py` (records the trace id). Prompt:
 `commands/feedback.md`, and the last step of `commands/rfc.md`.
 
+**On Axon** the same rating is `/rfc feedback [--run-dir R] [up|down]` (`src/rfc_agent/axon_ext/rfc-command.js`), and
+it is offered once when a run ends. The questions and the three paths (finished, stopped, failed, plus "how did it end?"
+for `unknown`) are those of `commands/feedback.md`, asked as Pi dialogs: single choices with `ui.select`, "pick any"
+areas as a tick list (rows, then `✔ Done`), the typed Other as a short optional input per area, and the two time
+questions as inputs (a number, or empty to skip). Nothing is scored there: the extension only turns the answers into
+`python -m rfc_agent.feedback` flags (`--context`, `--rating`, `--verdict`, `--issue`, `--note`, `--run-end`,
+`--stop-reason`, `--failure-check`, `--failure-reported`, `--rerun`, `--rerate`, `--preview`, …) and shows the CLI's
+output as printed. A re-rating shows `(picked last time)` on the earlier picks and previews the whole resulting rating
+before Submit, as in Claude Code. Run speed, run cost and the readable/rollout areas are not asked, as there. Tests:
+`tests/fixtures/axon/feedback_command_cases.mjs`.
+
+Walkthrough, finished run (`/rfc feedback`; the same screens on Claude Code use AskUserQuestion):
+
+| Step | Claude Code | Axon |
+|---|---|---|
+| Which run | `--run-dir`, else this conversation's run, else newest under `RUNS_ROOT` | `--run-dir`, else the run `/rfc` follows, else newest under `RUNS_ROOT` |
+| Screen 1, overall | `👍 Good` · `👍 Good, with notes` · `👎 Needs work` · `Later`, nothing else offered | the same four rows. `/rfc feedback up` or `down` skips the screen |
+| Plain 👍 | recorded, nothing more | recorded, nothing more |
+| Screen 2, four areas | one multiSelect each: `Nothing wrong` + 3 gaps; Other = typed note | one tick list each (pick rows, `✔ Done`), then an optional one-line note input. A gap beats `Nothing wrong` |
+| Time | two typed questions (number or `skip`) | two inputs (number, or empty to skip) |
+| Re-rating | earlier picks marked, preview, `Submit` / `Change something` | the same |
+| Stopped / failed | reason or "is that what happened?", then "run it again?" | the same two questions, as `select` dialogs (+ one input for typed text) |
+| End of run | offered once | offered once (`Rate it now` / `Later`) |
+
 ---
 
 ## Flow
@@ -89,8 +113,7 @@ shown (`unneeded_flow_included`, `citation_does_not_support_claim`, `missing_alt
 `ignored_existing_pattern`, `wrong_emphasis`, `missing_performance_or_scale`, `missing_monitoring`) are set when the person types
 them under Other. What is typed under Other is kept against the question it was typed on (`--note <area>=…`, or `run`), next to
 whatever was ticked on that same question: the ticked gaps are the issue scores and the text is the comment of the
-question's score. A single-choice question (the overall one) takes the typed text as the answer in place of any
-option (`--comment`), and the thumb is asked again on its own. A note on an area means the area has a gap, so it is
+question's score. The overall question offers only its four options, so there is no typed answer there (`--comment` still exists for a line the person volunteers). A note on an area means the area has a gap, so it is
 never `usable`. Each note is scrubbed for secret-shaped strings and capped at 2000 characters, and all of them are
 also saved in `logs/feedback.jsonl`. The prompt records `usable` or `usable_with_gaps`;
 `not_usable` is still accepted by the command but is not asked. The run question sets speed and cost together;

@@ -419,6 +419,14 @@ Add `--jira <KEY>` if there's a ticket. Every flag the `rfc` command takes works
   first. `out/rfc.md` is the full RFC with every code reference.
 - **It keeps running if you quit Axon.** `/rfc attach <run folder>` follows it again and asks any pause still
   waiting.
+- **Rate it.** When the run ends, Axon offers once to rate it (`Rate it now` / `Later`). Any time after, run
+  `/rfc feedback` (the run you are following, else the newest under `RUNS_ROOT`) or
+  `/rfc feedback --run-dir <run folder>`. The questions depend on how the run ended: a finished RFC gets a thumb
+  (plain 👍 is one tap, 👍 with notes and 👎 add four areas and two time questions), a stopped run why you stopped it,
+  a failed run whether the recorded cause is right; the last two end with "Would you run it again?". Answers land on
+  that run's Langfuse trace, the same as `/rfc-agent:feedback` in Claude Code. Rating a run twice shows your earlier
+  answers and a preview before it replaces them. `up` or `down` after the command (`/rfc feedback up`) answers the
+  thumb. Area questions are lists: pick rows to tick or untick, then `✔ Done`.
 
 If it stops, fix what it reports, then continue it with `/rfc --run-dir <run folder>` (the folder is in the
 closing message). Finished stages are kept. `/rfc --prd` again starts a new run in a new folder.

@@ -32,6 +32,22 @@ def test_rfc_command_end_to_end(tmp_path):
 
 
 @pytest.mark.skipif(NODE is None, reason="node not on PATH (Axon requires Node >= 22.19 anyway)")
+def test_rfc_feedback_command(tmp_path):
+    """`/rfc feedback` for finished, stopped, failed, unknown-end and re-rated runs, as feedback.py flags."""
+    (tmp_path / "work").mkdir()
+    fake_uv = FIX / "fake_uv.py"
+    fake_uv.chmod(0o755)
+    out = subprocess.run(
+        [NODE, str(FIX / "feedback_command_cases.mjs"), str(axon_agent.RFC_COMMAND_JS), str(fake_uv), str(ROOT),
+         str(tmp_path / "work")],
+        capture_output=True, text=True, timeout=90,
+    )
+    assert out.returncode == 0, out.stderr
+    res = json.loads(out.stdout.strip().splitlines()[-1])
+    assert res["ok"], json.dumps(res["failures"], indent=2)
+
+
+@pytest.mark.skipif(NODE is None, reason="node not on PATH (Axon requires Node >= 22.19 anyway)")
 def test_test_command_end_to_end(tmp_path):
     """/test: phase A, the review handoff, phase B (web), /test execute, /test evaluate, test_status — against
     fake_uv_testing.py. Engines default to axon, and no PI_ variable reaches the children."""
