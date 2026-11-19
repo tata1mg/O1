@@ -10,7 +10,7 @@ Code: `src/rfc_agent/feedback.py` (the command), `src/rfc_agent/run_facts.py` an
 **On Axon** the same rating is `/rfc feedback [--run-dir R] [up|down]` (`src/rfc_agent/axon_ext/rfc-command.js`), and
 it is offered once when a run ends. The questions and the three paths (finished, stopped, failed, plus "how did it end?"
 for `unknown`) are those of `commands/feedback.md`, asked as Pi dialogs: single choices with `ui.select`, "pick any"
-areas as a tick list (rows, then `✔ Done`), the typed Other as a short optional input per area, and the two time
+areas as a tick list (rows, then `✔ Done`), Claude's typed Other as a `Something else (type it)` row that asks what the gap is, and the two time
 questions as inputs (a number, or empty to skip). Nothing is scored there: the extension only turns the answers into
 `python -m rfc_agent.feedback` flags (`--context`, `--rating`, `--verdict`, `--issue`, `--note`, `--run-end`,
 `--stop-reason`, `--failure-check`, `--failure-reported`, `--rerun`, `--rerate`, `--preview`, …) and shows the CLI's
@@ -25,7 +25,7 @@ Walkthrough, finished run (`/rfc feedback`; the same screens on Claude Code use 
 | Which run | `--run-dir`, else this conversation's run, else newest under `RUNS_ROOT` | `--run-dir`, else the run `/rfc` follows, else newest under `RUNS_ROOT` |
 | Screen 1, overall | `👍 Good` · `👍 Good, with notes` · `👎 Needs work` · `Later`, nothing else offered | the same four rows. `/rfc feedback up` or `down` skips the screen |
 | Plain 👍 | recorded, nothing more | recorded, nothing more |
-| Screen 2, four areas | one multiSelect each: `Nothing wrong` + 3 gaps; Other = typed note | one tick list each (pick rows, `✔ Done`), then an optional one-line note input. A gap beats `Nothing wrong` |
+| Screen 2, four areas | one multiSelect each: `Nothing wrong` + 3 gaps; Other = typed note | one tick list each (pick rows, `✔ Done`), with a last row `Something else (type it)` for Other. A note is asked only where a gap was ticked (what it is, or an optional addition), never after `Nothing wrong`, because the scorer reads any note on an area as a gap. A gap beats `Nothing wrong` |
 | Time | two typed questions (number or `skip`) | two inputs (number, or empty to skip) |
 | Re-rating | earlier picks marked, preview, `Submit` / `Change something` | the same |
 | Stopped / failed | reason or "is that what happened?", then "run it again?" | the same two questions, as `select` dialogs (+ one input for typed text) |

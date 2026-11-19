@@ -14,10 +14,12 @@ const check = (name, cond, got) => { if (!cond) failures.push({ name, got }); };
 // ---- pure helpers
 const area = m.AREAS.find((a) => a.dim === "coverage");
 check("areaAnswer: Nothing wrong", JSON.stringify(m.areaAnswer(area, [true, false, false, false])) ===
-  JSON.stringify({ verdict: "usable", issues: [], contradicted: false }));
+  JSON.stringify({ verdict: "usable", issues: [], other: false, contradicted: false }));
 check("areaAnswer: a gap beats Nothing wrong", JSON.stringify(m.areaAnswer(area, [true, false, true, false])) ===
-  JSON.stringify({ verdict: "usable_with_gaps", issues: ["missing_figma_flow_or_state"], contradicted: true }));
-check("areaAnswer: nothing ticked is unanswered", m.areaAnswer(area, [false, false, false, false]).verdict === null);
+  JSON.stringify({ verdict: "usable_with_gaps", issues: ["missing_figma_flow_or_state"], other: false, contradicted: true }));
+check("areaAnswer: nothing ticked is unanswered", m.areaAnswer(area, [false, false, false, false, false]).verdict === null);
+check("areaAnswer: Something else is a gap with no listed issue", JSON.stringify(m.areaAnswer(area, [false, false, false, false, true])) ===
+  JSON.stringify({ verdict: "usable_with_gaps", issues: [], other: true, contradicted: false }));
 check("parseMinutes", m.parseMinutes("30") === 30 && m.parseMinutes(" 0 ") === 0 && m.parseMinutes("skip") === null &&
   m.parseMinutes("-3") === null && m.parseMinutes("") === null && m.parseMinutes(undefined) === null);
 check("feedbackArgs finished", m.feedbackArgs({ runDir: "/r", rating: "down", verdicts: { coverage: "usable_with_gaps" },
@@ -94,17 +96,35 @@ const runDirArgs = (run) => ["--run-dir", run];
 {
   const r = await session("finished", { end: "finished" }, [
     [/How was this RFC overall/, "👎 Needs work"],
-    [/Coverage: anything wrong/, "[ ] Missing PRD flow"], [/Coverage: anything wrong/, "✔ Done"], [/Coverage: anything else/, "flow 3 is missing too"],
-    [/Buildability: anything wrong/, "[ ] Nothing wrong"], [/Buildability: anything wrong/, "✔ Done"], [/Buildability: anything else/, ""],
-    [/Approach: anything wrong/, "✔ Done"], [/Approach: anything else/, ""],
-    [/Context layer use: anything wrong/, "✔ Done"], [/Context layer use: anything else/, ""],
+    [/Coverage: anything wrong/, "[ ] Missing PRD flow"], [/Coverage: anything wrong/, "✔ Done"], [/Coverage: anything to add about it/, "flow 3 is missing too"],
+    [/Buildability: anything wrong/, "[ ] Nothing wrong"], [/Buildability: anything wrong/, "✔ Done"],
+    [/Approach: anything wrong/, "✔ Done"],
+    [/Context layer use: anything wrong/, "✔ Done"],
     [/How many minutes did this RFC save/, "45"], [/how many minutes did you spend reviewing/, "skip"],
   ]);
+  check("finished: no note is asked after Nothing wrong or an unanswered area", !asked.some((a) => /(Buildability|Approach|Context layer use): (anything else|anything to add|describe)/.test(a.title)), asked.map((a) => a.title));
   check("finished: one record, the CLI's flags", r.calls.length === 1 && JSON.stringify(r.calls[0]) === JSON.stringify([
     ...runDirArgs(r.run), "--rating", "down", "--verdict", "coverage=usable_with_gaps", "--verdict", "buildability=usable",
     "--issue", "coverage=missing_prd_flow", "--start-ready", "yes", "--minutes-saved", "45", "--note", "coverage=flow 3 is missing too"]), r.calls);
   check("finished: recorded line shown first", asked[0].title.includes("Recorded: finished") && asked[0].title.includes("$1.00"), asked[0]);
   check("finished: the CLI's output is shown as printed", messages.some((x) => x.content.startsWith("feedback recorded: saved locally")), messages);
+}
+// finished: a gap that is not listed is its own row; Nothing wrong never carries a typed note (the scorer reads a
+// note on an area as a gap, so a comment after Nothing wrong used to flip that area to usable_with_gaps)
+{
+  const r = await session("finished-other", { end: "finished" }, [
+    [/How was this RFC overall/, "👎 Needs work"],
+    [/Coverage: anything wrong/, "✔ Done"],
+    [/Buildability: anything wrong/, "[ ] Nothing wrong"], [/Buildability: anything wrong/, "✔ Done"],
+    [/Approach: anything wrong/, (o) => { check("the unlisted-gap row is the last one", o[o.length - 1] === "[ ] Something else (type it)", o); return o.find((x) => x.startsWith("[ ] Something else")); }],
+    [/Approach: anything wrong/, "✔ Done"], [/Approach: describe the gap/, "wrong service for this"],
+    [/Context layer use: anything wrong/, "[ ] Nothing wrong"], [/Context layer use: anything wrong/, "✔ Done"],
+    [/How many minutes did this RFC save/, ""], [/how many minutes did you spend reviewing/, ""],
+  ]);
+  check("unlisted gap: a gap verdict, no listed issue, the typed text as the note", r.calls.length === 1 && JSON.stringify(r.calls[0]) === JSON.stringify([
+    ...runDirArgs(r.run), "--rating", "down", "--verdict", "buildability=usable", "--verdict", "approach=usable_with_gaps",
+    "--verdict", "context_layer=usable", "--start-ready", "yes", "--minutes-skipped", "--note", "approach=wrong service for this"]), r.calls);
+  check("Nothing wrong areas are never asked for a note", !asked.some((a) => /(Buildability|Context layer use): (anything else|anything to add|describe)/.test(a.title)), asked.map((a) => a.title));
 }
 // finished, a plain 👍 is one tap
 {
@@ -169,9 +189,8 @@ const runDirArgs = (run) => ["--run-dir", run];
     [/rated this run before/, "Change some answers"],
     [/How was this RFC overall/, (o) => { check("thumb marked", o.find((x) => x.startsWith("👍 Good, with notes"))?.endsWith("(picked last time)"), o); return o.find((x) => x.startsWith("👍 Good, with notes")); }],
     [/Coverage: anything wrong/, (o) => { check("gap marked", o.find((x) => x.includes("Missing PRD flow"))?.includes("picked last time"), o); return "✔ Done"; }],
-    [/Coverage: anything else/, ""],
-    [/Buildability: anything wrong/, "✔ Done"], [/Buildability: anything else/, ""], [/Approach: anything wrong/, "✔ Done"], [/Approach: anything else/, ""],
-    [/Context layer use: anything wrong/, "✔ Done"], [/Context layer use: anything else/, ""],
+    [/Buildability: anything wrong/, "✔ Done"], [/Approach: anything wrong/, "✔ Done"],
+    [/Context layer use: anything wrong/, "✔ Done"],
     [/save you/, (o) => undefined], [/spend reviewing/, ""], [/Submit this\?/, "Submit"]]);
   check("re-rating a finished run keeps unanswered answers (nothing passed for them)", f.calls.length === 2 &&
     JSON.stringify(f.calls[1]) === JSON.stringify([...runDirArgs(f.run), "--rating", "up", "--rerate"]), f.calls);

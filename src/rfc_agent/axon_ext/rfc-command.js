@@ -348,13 +348,19 @@ export const FAILURE_REPORTS = [
   ["other", "Other (type it)"],
 ];
 
-/** Ticks on an area's checklist (row 0 = Nothing wrong) → {verdict, issues}. A gap beats `Nothing wrong`; no tick
- *  at all is an unanswered question: nothing is passed (and `--rerate` keeps the earlier answer). */
+/** The checklist row for a gap that is not listed. It is Claude's built-in "Other" box: what is typed for it is a gap. */
+export const OTHER_GAP = "Something else (type it)";
+
+/** Ticks on an area's checklist (row 0 = Nothing wrong, then the listed gaps, then `Something else`) →
+ *  {verdict, issues, other}. A gap beats `Nothing wrong`; no tick at all is an unanswered question: nothing is
+ *  passed (and `--rerate` keeps the earlier answer). `other` is the unlisted gap: it has no issue name, because
+ *  the CLI names it `other_see_comment` from the typed text. */
 export function areaAnswer(area, on) {
   const issues = area.gaps.filter((_, i) => on[i + 1]).map(([v]) => v);
-  if (issues.length) return { verdict: "usable_with_gaps", issues, contradicted: !!on[0] };
-  if (on[0]) return { verdict: "usable", issues: [], contradicted: false };
-  return { verdict: null, issues: [], contradicted: false };
+  const other = !!on[area.gaps.length + 1];
+  if (issues.length || other) return { verdict: "usable_with_gaps", issues, other, contradicted: !!on[0] };
+  if (on[0]) return { verdict: "usable", issues: [], other: false, contradicted: false };
+  return { verdict: null, issues: [], other: false, contradicted: false };
 }
 
 /** A typed number of minutes → a whole number ≥ 0, else null (skip). */
@@ -522,7 +528,8 @@ async function askFinished(ui, answers, prev, head, thumb, mark) {
     const was = prev?.verdicts?.[area.dim];
     const wasIssues = prev?.issues?.[area.dim] || [];
     const rows = [{ label: NOTHING, note: was === "usable" ? LAST : "", on: false },
-      ...area.gaps.map(([v, l]) => ({ label: l, note: wasIssues.includes(v) ? LAST : "", on: false }))];
+      ...area.gaps.map(([v, l]) => ({ label: l, note: wasIssues.includes(v) ? LAST : "", on: false })),
+      { label: OTHER_GAP, note: wasIssues.includes("other_see_comment") ? LAST : "", on: false }];
     const on = await checklist(ui, `${area.label}: anything wrong? (pick any)`, rows);
     const r = areaAnswer(area, on);
     if (r.contradicted) ui.notify(`${area.label} had both Nothing wrong and a gap ticked; recorded the gap`, "info");
@@ -531,7 +538,11 @@ async function askFinished(ui, answers, prev, head, thumb, mark) {
       answers.issues = answers.issues.filter(([d]) => d !== area.dim);
       r.issues.forEach((i) => answers.issues.push([area.dim, i]));
     }
-    const note = ((await ui.input(`${area.label}: anything else to say? (optional)`, "")) || "").trim();
+    // A note on an area is a gap to the scorer, so ask for one only where a gap was ticked: for the unlisted gap
+    // (what it is), or as an optional addition to the listed ones. Never after `Nothing wrong`.
+    let note = "";
+    if (r.other) note = ((await ui.input(`${area.label}: describe the gap`, "")) || "").trim();
+    else if (r.issues.length) note = ((await ui.input(`${area.label}: anything to add about it? (optional)`, "")) || "").trim();
     if (note) answers.notes[area.dim] = note;
   }
   if (answers.verdicts.buildability === "usable") answers.startReady = "yes";
