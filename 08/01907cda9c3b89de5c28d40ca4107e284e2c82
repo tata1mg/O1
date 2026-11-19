@@ -1,0 +1,24 @@
+README.md
+  s_9593bf3535dd2a::t_21f5c5f67f2359 68-71
+  s_9593bf3535dd2a::t_49cfdc604c4ef8 218,223-225,227
+src/workflows/testing/README.md
+  s_9593bf3535dd2a::t_49cfdc604c4ef8 173,179,181
+CHANGELOG.md
+  s_9593bf3535dd2a::t_21f5c5f67f2359 6-35
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0801907cda9c3b89de5c28d40ca4107e284e2c82",
+  "prompts": {},
+  "sessions": {
+    "s_9593bf3535dd2a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6644bd3b-6bab-4bfd-aee3-ab5fb8e8f273",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}
