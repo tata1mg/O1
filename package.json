@@ -1,7 +1,7 @@
 {
   "name": "rfc-agent",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "rfc-agent's /rfc command for Axon (Pi). Install with `axon pi install git:github.com/tata1mg/O1@<tag>`; the Python pipeline runs from the same clone through uv. See AXON_INSTALL.md.",
   "keywords": ["pi-package", "pi-extension"],
   "pi": {
