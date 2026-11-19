@@ -505,3 +505,40 @@ def test_a_pending_connector_is_waited_for_on_the_same_connection(tmp_path, monk
         assert s.cloud_id == "cloud-1" and s.connector_status == "connected"
     assert count.read_text() == "1", "one connection: it waited instead of starting over"
     assert cost == 0.004  # two pending checks, the turn that saw it connected, and the call
+
+
+def test_remote_template_prefers_the_configured_clone_address(tmp_path):
+    root, _ = _make_remote(tmp_path)
+    inferred = repos.remote_template(root)
+    assert inferred and "{repo}" in inferred
+    team = "git@bitbucket.org:team/{repo}.git"
+    assert repos.remote_template(root, team) == team                     # configured wins over the checkout
+    assert repos.remote_template(tmp_path / "no-checkouts-yet", team) == team   # and needs no checkout at all
+    assert repos.remote_template(root, "git@bitbucket.org:team/fixed.git") == inferred  # no {repo}: ignored
+    assert repos.remote_template(root, "") == inferred and repos.remote_template(root, None) == inferred
+
+
+def test_configured_remote_reads_git_repos_remote_from_config(monkeypatch):
+    class Cfg:
+        def __init__(self, value):
+            self.value = value
+
+        def get(self, dotted, default=None):
+            return self.value if dotted == "GIT_REPOS_REMOTE" else default
+
+    for value, want in (("git@bitbucket.org:team/{repo}.git", "git@bitbucket.org:team/{repo}.git"),
+                        ("  git@host:team/{repo}.git \n", "git@host:team/{repo}.git"),
+                        ("git@host:team/fixed.git", None), ("", None), (None, None)):
+        monkeypatch.setattr(repos, "get_config", lambda v=value: Cfg(v))
+        assert repos.configured_remote() == want
+
+    def no_config():
+        raise RuntimeError("config.json not found")
+
+    monkeypatch.setattr(repos, "get_config", no_config)
+    assert repos.configured_remote() is None
+
+
+def test_git_repos_remote_is_a_known_config_key():
+    from rfc_agent import config
+    assert "GIT_REPOS_REMOTE" not in config.unknown_sections({"GIT_REPOS_REMOTE": "git@h:t/{repo}.git"})

@@ -13,6 +13,10 @@ run the checks, fix what you can, and ask the user only for what you can't know 
 their folders, keys and tokens. Settings resolve: env var > `CFG` > the plugin's `$PROJ/config.harness.json` (the
 harness's own working values; read-only — never edit it, an update replaces the plugin).
 
+`/test-agent:*` do not run from `$PROJ`: they run the harness from the marketplace's install location, a
+different folder with its own Python environment. Resolve it once as `TP` (for testing or both):
+`python3 -c 'import json,os; print(os.environ.get("TEST_AGENT_PROJECT") or json.load(open(os.path.expanduser("~/.claude/plugins/known_marketplaces.json")))["rfc-agent-marketplace"]["installLocation"])'`.
+
 ## Rules
 
 1. **Check before you change.** Every step starts with a check. If it passes, say so in one line and move on.
@@ -33,7 +37,7 @@ harness's own working values; read-only — never edit it, an update replaces th
 
 ## 0. What is this machine for — ask first
 
-If the user already said (INSTALL.md passes it on: "for testing", "for RFCs", "for both"), use that. Otherwise ask
+If the user already said (the install guide passes it on: "for testing", "for RFCs", "for both"), use that. Otherwise ask
 (AskUserQuestion) **"What will you use it for?"**:
 - `Both (Recommended)` — every step below.
 - `RFCs from PRDs` — steps 1–9; skip 10–11.
@@ -66,6 +70,10 @@ then run the script again.
 testing, sync with the testing extra instead (Kiwi's client, the workbook and screenshot libraries):
 `uv sync --project "$PROJ" --extra testing`. Use it every time on a testing machine: a plain `uv sync` removes the
 extra again.
+
+**For testing or both, also sync the test-agent folder** (`TP`, above), or `/test-agent:test` stops at its first
+check with "tcms-api is not installed": `uv sync --project "$TP" --extra testing`. Check it with
+`uv run --project "$TP" python -c "import tcms_api; print('testing extra: ok')"`.
 
 ## 2. Claude CLI sign-in — CRITICAL
 
@@ -119,24 +127,31 @@ Write both into `CFG` with a Python edit (rule 5).
 
 ## 5. Repo access — CRITICAL
 
-The pipeline clones repos it needs, and it works out the clone URL from **the first git checkout in
-REPOS_ROOT, alphabetically** (all org repos share one Bitbucket workspace).
+The pipeline clones the repos a PRD touches when a run needs them, so nothing has to be cloned now. It only needs
+to know the team's **clone address**: `GIT_REPOS_REMOTE` in `CFG`, a team value with `{repo}` where the repo name
+goes (all org repos share one Bitbucket workspace). If it is not set, the pipeline falls back to the origin of
+**the first git checkout in REPOS_ROOT, alphabetically**.
 
-**Check — clone URL:**
+**Check — clone address** (prints the address the pipeline will use, or `None`):
 
 ```bash
-uv run --project "$PROJ" python -c "from pathlib import Path; from rfc_agent.config import get_config; from rfc_agent.scope.repos import remote_template; r=Path(get_config().get('REPOS_ROOT')).expanduser(); print(remote_template(r))"
+uv run --project "$PROJ" python -c "from pathlib import Path; from rfc_agent.config import get_config; from rfc_agent.scope.repos import configured_remote, remote_template; r=Path(get_config().get('REPOS_ROOT')).expanduser(); print('configured:', configured_remote()); print('used:', remote_template(r, configured_remote()))"
 ```
 
-Must print a clone URL for the team's workspace, like `git@bitbucket.org:<workspace>/{repo}.git`.
-- `None` (no checkout yet): ask which repo they work on most (Other = name), then
-  `git clone git@bitbucket.org:<workspace>/<repo>.git "<REPOS_ROOT>/<repo>"`. Re-check.
-- A non-Bitbucket URL (e.g. `github.com`): the first checkout alphabetically isn't a Bitbucket repo. Tell the
-  user which folder it is and offer: move it out of REPOS_ROOT, or pick a different REPOS_ROOT. Don't move
-  anything without a yes.
+- `configured:` is set → ✅, say the address and move on.
+- `configured: None`, `used:` is an address (taken from a checkout) → offer (AskUserQuestion) "Save this clone
+  address in your config so it no longer depends on that checkout?" with `Save it (Recommended)`, `Not now`. On
+  save, write it to `CFG` as `GIT_REPOS_REMOTE` (rule 5).
+- Both `None` (no checkout, nothing set): ask (AskUserQuestion; a team value, not a secret) for the team's clone
+  address: "Open any repo of the team in Bitbucket, click Clone, copy the SSH address, and replace the repo name
+  with `{repo}` — for example `git@bitbucket.org:<workspace>/{repo}.git`. A teammate can tell you." Check it
+  contains `{repo}`, then write it to `CFG` as `GIT_REPOS_REMOTE` (rule 5). Re-check. Do not clone anything.
+- `used:` is a non-Bitbucket address (e.g. `github.com`) and nothing is configured: the first checkout
+  alphabetically isn't a team repo. Set `GIT_REPOS_REMOTE` as above; it wins over the checkout. Don't move
+  anything.
 
-Also ask (multi-select, optional) which other repos they usually touch, and clone the missing ones. A partial
-set is fine: the pipeline clones what it needs itself.
+Optional: if the user wants a repo checked out locally, `git clone <the address with {repo} filled in>
+"<REPOS_ROOT>/<repo>"`. A partial set is fine: the pipeline clones what it needs itself.
 
 ## 6. Atlassian (Confluence + Jira) — CRITICAL for Confluence/Jira PRDs
 
@@ -247,8 +262,9 @@ Test cases live in the team's Kiwi TCMS; web cases run through Playwright (tools
 drives a browser through Playwright MCP.
 
 **Check** (no feature or RFC run needed; prints no secret):
-`uv run --project "$PROJ" python -m workflows.testing.preflight testing --json`. Each row has `id`, `level`, `msg`,
-`fix`. Go through the rows that aren't `ok`:
+`uv run --project "$TP" python -m workflows.testing.preflight testing --json` (through `TP`, the folder
+`/test-agent:*` really run from, so a missing package shows up now and not on the first test). Each row has `id`,
+`level`, `msg`, `fix`. Go through the rows that aren't `ok`:
 
 - **`kiwi` with "testing.storage is …"** — Kiwi isn't set up here. Ask (AskUserQuestion; team values, not
   secrets) for the Kiwi web URL, the product prefix (e.g. `Sandbox / `) and the Kiwi username the agent records
@@ -266,7 +282,8 @@ drives a browser through Playwright MCP.
   password = <password>
   ```
   Ask "Done?", then re-check. A `warn` that it's readable by others → `chmod 600 ~/.tcms.conf`.
-- **`kiwi_client` "tcms-api is not installed"** — `uv sync --project "$PROJ" --extra testing`.
+- **`kiwi_client` "tcms-api is not installed"** — `uv sync --project "$TP" --extra testing` (and the same for
+  `"$PROJ"` if section 1 was skipped).
 - **`kiwi` unreachable** — VPN off, or the Kiwi server is down. Say which; it stays BLOCKED until it answers.
 - **`playwright` or `agent_browser`** — needs Node 18+ (`node -v`; if missing, ask the user to install Node 22
   from nodejs.org: no Homebrew assumed). Then run `cd "$PROJ/tools/ui-runner" && npm ci && npx playwright install
@@ -293,10 +310,10 @@ runs never need it.
 **Otherwise ask first** (AskUserQuestion): **"Do you want to run test cases on Android too? It needs the
 maestro-automation repo on this machine."**
 - `Yes, clone it (Recommended)` → `… preflight setup-android --clone --json`. It clones into
-  `suggested_path` (next to the user's other repos, from the same Bitbucket workspace) and saves the path in
-  `CFG` (`TESTING.maestro_repo`). A failure names the cause: no SSH access to the repo → ask a teammate for
-  access to `maestro-automation`, then re-run; no workspace to take the URL from → ask for the URL and pass
-  `--url`.
+  `suggested_path` (next to the user's other repos), using the team's clone address (`GIT_REPOS_REMOTE`, step 5),
+  and saves the path in `CFG` (`TESTING.maestro_repo`). A failure names the cause: no SSH access to the repo →
+  ask a teammate for access to `maestro-automation`, then re-run; no clone address → set `GIT_REPOS_REMOTE`
+  (step 5) or pass `--url`.
 - `I already have it` → ask for the folder (Other = path), then `… preflight setup-android --path <folder> --json`.
 - `No, web only` → mark `skipped`: "Android runs are off; run /rfc-agent:setup again to add them".
 
@@ -319,4 +336,4 @@ template, what's skipped and why). End with exactly one of:
 - **BLOCKED: <first failed CRITICAL step>** — with the one action that unblocks it.
 
 Not needed, so don't set them up or check them: Google Sheets, the Figma MCP server or connector (designs come
-only from the snapshot plugin, step 9), Bitbucket SSH keys. The Bitbucket MCP server is an optional fallback (SETUP.md §4).
+only from the snapshot plugin, step 9), Bitbucket SSH keys. The Bitbucket MCP server is an optional fallback (CONFIG.md §5).

@@ -265,7 +265,7 @@ backup, model recommender). The event stream is plain Pi, so `AxonEngine` subcla
 translator, guard, argv validation, budget kill and timeout handling. Source: `src/harness/engines/axon.py`.
 
 The rfc-agent pipeline uses the same pieces through its own agent seam (`rfc_agent/axon_agent.py`, selected with
-`rfc --engine axon`); see [docs/AXON.md](../AXON.md).
+`rfc --engine axon`); see [AXON_INSTALL.md](../../AXON_INSTALL.md#beyond-rfc-and-test).
 
 ### Prerequisites
 

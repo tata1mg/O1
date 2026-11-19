@@ -17,7 +17,7 @@ Today the repo ships **rfc-agent**. The rest of this README covers it.
 
 > **Pipeline (Scope → Summarize, `uv run rfc`)** — architecture and flow diagrams: **[docs/HLD.md](docs/HLD.md)**.
 >
-> **New user?** In Claude Code, say "Set up rfc-agent by following [INSTALL.md](INSTALL.md)". Claude does the rest.
+> **New user?** In Claude Code, say "Set up rfc-agent by following [CLAUDE_INSTALL.md](CLAUDE_INSTALL.md)". Claude does the rest.
 
 RFC-generation pipeline: **PRD → grounded Tech RFC**. Each stage runs headless Claude Code agents with a
 tightly scoped tool set; deterministic Python gates check the output between stages.
@@ -183,7 +183,7 @@ for agents driving the harness, and for contributors adding a workflow or an eng
 
 ## Setup
 
-> Full operator prerequisites (auth, seats, service accounts, failure signatures): **[SETUP.md](SETUP.md)**.
+> Settings and failure signatures: **[CONFIG.md](CONFIG.md)**.
 
 ```bash
 uv sync
@@ -200,7 +200,7 @@ update, and a config inside it once leaked credentials into plugin cache copies.
 team values (Atlassian site, fleetlens URL, service inventory, Langfuse host) and your own
 (`REPOS_ROOT`, `RUNS_ROOT`, Langfuse keys, tokens). The harness's own working values ship read-only in
 `config.harness.json`; any key you set in your config.json wins, and env vars win over both. Nothing org-specific
-ships in the plugin. Details: SETUP.md §3.
+ships in the plugin. Details: CONFIG.md §1–§4.
 
 ## Install as a Claude Code plugin
 

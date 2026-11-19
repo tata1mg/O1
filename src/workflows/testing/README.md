@@ -171,7 +171,7 @@ evaluation does not block review or execution.
 ### Inside Axon (Pi): `/test`
 
 The same three commands exist in Axon as one, `/test`, from the Pi extension
-`src/rfc_agent/axon_ext/test-command.js` (installed with `/rfc`: see [docs/AXON.md](../../../docs/AXON.md) §2):
+`src/rfc_agent/axon_ext/test-command.js` (installed with `/rfc`: see [AXON_INSTALL.md](../../../AXON_INSTALL.md)):
 
 | Claude Code | Axon |
 |---|---|

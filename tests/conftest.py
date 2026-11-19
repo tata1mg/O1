@@ -9,3 +9,6 @@ os.environ.setdefault("RFC_AGENT_NO_REAL_CLAUDE", "1")
 # Langfuse tracing is ON by default and a traced run with no keys refuses to start; the suite never traces
 # (tests/test_observe.py turns it on explicitly, with a fake client).
 os.environ.setdefault("RFC_AGENT_LANGFUSE", "false")
+
+# A developer's own GIT_REPOS_REMOTE must not change what the repo tests infer from their temp checkouts.
+os.environ.setdefault("RFC_AGENT_GIT_REPOS_REMOTE", "")

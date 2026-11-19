@@ -9,20 +9,23 @@ This puts two commands into Axon, the org's managed Pi, on a Mac:
 
 You don't need Claude Code. It takes about 20 minutes.
 
-**To install, do the two commands under [Before Axon can help](#before-axon-can-help), then open Axon and say one
-of:**
+**This guide assumes Axon is already installed and signed in, and that you are running it inside Axon.** Not
+there yet? Your team's pilot guide covers installing Axon and signing in. [INSTALL.md](INSTALL.md) sends an agent
+here once it detects it is running in Axon.
 
-> Set up test-agent by following ~/.axon/pi/git/github.com/tata1mg/O1/docs/AXON_INSTALL.md
+**To install, open Axon and say one of:**
 
-> Set up rfc-agent by following ~/.axon/pi/git/github.com/tata1mg/O1/docs/AXON_INSTALL.md
+> Set up test-agent by following INSTALL.md
 
-> Set up rfc-agent and test-agent by following ~/.axon/pi/git/github.com/tata1mg/O1/docs/AXON_INSTALL.md
+> Set up rfc-agent by following INSTALL.md
 
-Axon does the work. You only sign in to a few things, copy keys from the team vault, type your Kiwi password into
-a file, and (for RFCs) import one plugin into Figma. Prefer to do it by hand? Every step below is a command you
-can run yourself, in order.
+> Set up rfc-agent and test-agent by following INSTALL.md
 
-How the pipeline works, and what differs from Claude Code: [AXON.md](AXON.md).
+(Give the path or the GitHub link to `INSTALL.md`.) Axon does the work. You only sign in to a few things, copy
+keys from the team vault, type your Kiwi password into a file, and (for RFCs) import one plugin into Figma. Prefer
+to do it by hand? Every step below is a command you can run yourself, in order.
+
+What differs from Claude Code, the model mapping and the engine flags: [Beyond `/rfc` and `/test`](#beyond-rfc-and-test).
 
 ## What you need first
 
@@ -31,6 +34,7 @@ Everyone:
 | What | Why | Where to get it |
 |---|---|---|
 | Access to the GitHub repo `tata1mg/O1` | Both commands are installed from it | Your team |
+| **Node 22.19 or newer** | Axon's own Pi runtime needs it (Playwright later needs Node 18+, so one Node covers both) | Already there if Axon runs; otherwise nodejs.org |
 | The **Langfuse keys** | Every run is traced, and a run without them stops before it starts | The team vault |
 
 For RFCs:
@@ -50,37 +54,6 @@ For testing:
 | **Node 18+** (22 recommended) | Web cases run through Playwright | nodejs.org |
 | The VPN, if Kiwi or the test environments are internal | Runs reach them from your Mac | — |
 | For Android only: `adb`, the Maestro CLI, Java, an emulator with the app, and access to the `maestro-automation` repo | Android cases run their Maestro flow, or an agent, on the emulator | Your team |
-
-## Before Axon can help
-
-Axon has to be installed and signed in, and this guide has to be on the machine, before Axon can follow it. These
-two are yours to run, in the Terminal app.
-
-**1. Install Axon and sign in.** Skip this if `axon` already opens a session for you.
-
-```bash
-curl --proto '=https' --tlsv1.2 -fsSL https://deputydev.ai/axon/install.sh | sh
-```
-
-Open a new terminal, then:
-
-```bash
-axon auth login --browser
-```
-
-See the [Axon user guide](https://1mgtech.atlassian.net/wiki/spaces/DD/pages/5666996423) if this fails.
-
-**2. Install the package.**
-
-```bash
-axon pi install git:github.com/tata1mg/O1@feat/axon-engine
-```
-
-Pi clones the repo into `~/.axon/pi/git/github.com/tata1mg/O1`. That folder is also where the pipeline runs from;
-this guide calls it `RFC`. Use the ref your team announces. Until there's a release tag, it's the
-`feat/axon-engine` branch.
-
-Now open Axon (`axon`) and say one of the three sentences at the top.
 
 ---
 
@@ -148,8 +121,13 @@ There are two ways `/rfc` and `/test` get into Axon, and having both gives two c
 move on), and the folder `~/.axon/pi/extensions` holds neither `rfc-agent.js` nor `test-agent.js`. An empty or
 missing folder passes.
 
-- The package is missing → the user skipped "Before Axon can help", and you are reading this from a checkout.
-  Ask them to run `axon pi install git:github.com/tata1mg/O1@feat/axon-engine` and start again.
+- The package is missing → you are reading this guide from a link or a checkout, not from the installed package.
+  Install it yourself, then tell the user to type `/reload` (or restart Axon) and say the install sentence again:
+  ```bash
+  axon pi install git:github.com/tata1mg/O1@main
+  ```
+  Pi clones the repo into `~/.axon/pi/git/github.com/tata1mg/O1`, which is also where the pipeline runs from
+  (`RFC` above). It tracks `main`; use a release tag instead if the team announces one.
 - `rfc-agent.js` or `test-agent.js` is there → that is a development install pointing at a checkout. Ask
   "Remove the development install and use the package? (Recommended)". On yes:
   ```bash
@@ -180,12 +158,16 @@ both, this prints `testing extra: ok`:
 uv run --project ~/.axon/pi/git/github.com/tata1mg/O1 python -c "import tcms_api; print('testing extra: ok')"
 ```
 
-If either fails, build the environment (for testing or both, with the testing extra; use that form on every later
-sync too, because a plain `uv sync` removes the extra again):
+If either fails, build the environment with one of these, not both. Use the second for testing or both, and on
+every later sync too, because a plain `uv sync` removes the testing extra again:
+
+RFCs only:
 
 ```bash
 uv sync --project ~/.axon/pi/git/github.com/tata1mg/O1
 ```
+
+Testing, or both:
 
 ```bash
 uv sync --project ~/.axon/pi/git/github.com/tata1mg/O1 --extra testing
@@ -236,13 +218,22 @@ uv run --project ~/.axon/pi/git/github.com/tata1mg/O1 python -c "from pathlib im
 
 - **`RUNS_ROOT`** is where runs and their results land. Ask, with `~/rfc-runs` (Recommended) first. Create it.
 - **`REPOS_ROOT`** (RFCs, or testing with Android) is the folder holding the user's repo checkouts, e.g. `~/code`.
-  Ask for it. Keep at least one team repo checked out there: the pipeline works out clone URLs from the first one,
-  alphabetically.
+  Ask for it. Nothing needs to be cloned now: the pipeline clones the repos a PRD touches when a run needs them.
+- **`GIT_REPOS_REMOTE`** (RFCs, or testing with Android) is the team's clone address, a team value with `{repo}`
+  where the repo name goes. **Check** what the pipeline will use:
+  ```bash
+  uv run --project ~/.axon/pi/git/github.com/tata1mg/O1 python -c "from pathlib import Path; from rfc_agent.config import get_config; from rfc_agent.scope.repos import configured_remote, remote_template; r=Path(str(get_config().get('REPOS_ROOT') or '.')).expanduser(); print('configured:', configured_remote()); print('used:', remote_template(r, configured_remote()))"
+  ```
+  `configured:` already set → move on. `None`: ask "What is your team's clone address?" (not a secret): in Bitbucket,
+  open any team repo, click Clone, copy the SSH address and replace the repo name with `{repo}`, for example
+  `git@bitbucket.org:<workspace>/{repo}.git`; a teammate can tell them. It must contain `{repo}`. If `used:`
+  already shows the right address (taken from an existing checkout), offer to save it so it no longer depends on
+  that checkout.
 
 Write them with a Python edit (rule 5), for example:
 
 ```bash
-uv run --project ~/.axon/pi/git/github.com/tata1mg/O1 python -c "import json, pathlib; p=pathlib.Path.home()/'.config/rfc-agent/config.json'; d=json.loads(p.read_text()); d['RUNS_ROOT']='~/rfc-runs'; p.write_text(json.dumps(d, indent=2))"
+uv run --project ~/.axon/pi/git/github.com/tata1mg/O1 python -c "import json, pathlib; p=pathlib.Path.home()/'.config/rfc-agent/config.json'; d=json.loads(p.read_text()); d['RUNS_ROOT']='~/rfc-runs'; d['GIT_REPOS_REMOTE']='<the clone address>'; p.write_text(json.dumps(d, indent=2))"
 ```
 
 ### Step 5 — Langfuse — CRITICAL
@@ -272,7 +263,7 @@ without it the user names repos with `--repos`.
 
 The fleetlens token is a secret. **User:** open `CFG` for them and ask them to set
 `MCP.mcpServers.fleetlens.headers` to `{"Authorization": "Bearer <token from the vault>"}`. It is verified in
-Step 11 (`/rfc doctor`, VPN on). Every field is described in [SETUP.md](../SETUP.md).
+Step 11 (`/rfc doctor`, VPN on). Every field is described in [CONFIG.md](CONFIG.md).
 
 ### Step 7 — Atlassian (RFCs) — CRITICAL for Confluence and Jira PRDs
 
@@ -370,8 +361,8 @@ Otherwise ask first: "Do you want to run test cases on Android too? It needs the
 machine."
 
 - "Yes, clone it (Recommended)" → `… preflight setup-android --clone --json`. A failure names the cause: no SSH
-  access to the repo → the user asks a teammate for access, then re-run; no workspace to take the URL from → ask
-  for the URL and pass `--url`.
+  access to the repo → the user asks a teammate for access, then re-run; no clone address → set
+  `GIT_REPOS_REMOTE` (Step 4) or pass `--url`.
 - "I already have it" → ask for the folder, then `… preflight setup-android --path <folder> --json`.
 - "No" → skip. Say that web and backend runs are unaffected.
 
@@ -446,7 +437,86 @@ closing message). Finished stages are kept. `/rfc --prd` again starts a new run 
   Code's `/test-agent:execute`, not by `/test`. `/test help` lists the flags.
 - **Not on Axon:** `/test-agent:convert-flows`, and code lookup for the browser agent (`testing.agent_code_context`).
 
-More detail: [src/workflows/testing/README.md](../src/workflows/testing/README.md).
+More detail: [src/workflows/testing/README.md](src/workflows/testing/README.md).
+
+## Beyond `/rfc` and `/test`
+
+### Choosing the engine from a terminal or Claude Code
+
+Axon is opt-in, per run or per stage. Claude Code stays the default.
+
+```bash
+uv run rfc --prd <confluence url | page id | file.md> --engine axon
+```
+
+```bash
+uv run rfc --run-dir <run> --from review --engine axon
+```
+
+```bash
+uv run rfc --prd <…> --stage-engine review=axon
+```
+
+The first runs everything on Axon. The second redoes one stage onward on Axon. The third keeps everything on
+Claude except Review. From Claude Code, the plugin commands take the same flags, for example
+`/rfc-agent:rfc --prd … --engine axon`. Every stage CLI accepts them too
+(`python -m rfc_agent.review --run-dir … --engine axon`). To make Axon the default, set it in
+`~/.config/rfc-agent/config.json`:
+
+```json
+{"AGENT": {"ENGINE": "axon", "STAGE_ENGINES": {}, "AXON": {"MODELS": {}}}}
+```
+
+Precedence: `--stage-engine` > `--engine` > `AGENT.STAGE_ENGINES` > `AGENT.ENGINE` > `claude-code`.
+`logs/run.json` records which engine each stage used.
+
+For development, install the commands from your own checkout instead of the package
+(`uv run python -m rfc_agent.axon_agent install`, then `/reload` after edits). Use one or the other: both
+register `/rfc` and `/test`. `… axon_agent uninstall` drops the checkout stubs.
+
+### Models
+
+Each stage names a Claude model; on Axon it is mapped to a gateway model by tier. The gateway serves Opus 5.5
+and Sonnet 5.5, so those stages run on Claude. It has no Haiku:
+
+| Stage model | Used by | Gateway model |
+|---|---|---|
+| `claude-opus-5-5[1m]` | Investigate lead, Draft, Review, Revise | `anthropic/claude-opus-5.5` |
+| `claude-opus-5-5` | Investigate UI reader, Scope discovery | `anthropic/claude-opus-5.5` |
+| `claude-sonnet-5-5` | tracers, Summarize | `anthropic/claude-sonnet-5.5` |
+| `claude-haiku-4-5…` | Scope's Atlassian fetch | `gemini-3.8-flash` |
+
+Print the mapping with `uv run python -m rfc_agent.axon_agent models`. Override by tier or exact id in config:
+
+```json
+{"AGENT": {"AXON": {"MODELS": {"opus[1m]": "openai/gpt-6.1-terra", "haiku": "deepseek/deepseek-v4.1-flash"}}}}
+```
+
+Effort maps to Pi's `--thinking` level of the same name.
+
+### What is the same, and what isn't
+
+The same on both engines: one prompt per agent on stdin; built-in tools limited to what the stage allows (no
+shell, no web); fleetlens read-only tools; writes confined to each agent's own files; the write-time citation
+check and the "wrap up" nudge at the call budget; resume across steps; and logs in the Claude stream format
+(`logs/<stage>.<label>.<step>.stream.jsonl`). Axon adds the raw Pi stream (`.pi.jsonl`) and Pi sessions under
+`logs/pi-sessions/`.
+
+Different on Axon:
+
+- **Scope fetches Confluence and Jira through Axon's own Atlassian sign-in** (Step 7). A Scope that runs on
+  Claude (for example `--stage-engine review=axon`) still uses Claude's connector.
+- **A run started on Claude can't resume its Claude sessions on Axon.** The agent starts cold, as when a Claude
+  session has expired.
+- **Early (threshold) compaction is off for pipeline agents**, because it summarises evidence away. Set
+  `AGENT.AXON.THRESHOLD_COMPACTION: true` to allow it.
+- **Axon backs up each agent session to DeputyDev**, as it does for interactive use.
+- **A lost AI Gateway connection doesn't restart the agent.** Pi retries the turn itself up to 3 times. If those
+  run out, the agent is resumed in its own Pi session up to `AGENT.AXON.RECONNECTS` times (default 2; the testing
+  workflow's flag is `axon.reconnects`). Each resume writes its own log, and cost and time include every attempt.
+- **Quality and cost differ.** The prompts were tuned on Claude. Compare a few runs before relying on it.
+
+Design notes and the reasoning behind each choice: [decisions.md](decisions.md).
 
 ## Updating
 

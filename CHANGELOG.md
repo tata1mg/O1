@@ -11,7 +11,7 @@ versions match `.claude-plugin/plugin.json`.
   `rfc --engine axon`, or a single stage with `--stage-engine review=axon` (also config `AGENT.ENGINE` /
   `AGENT.STAGE_ENGINES`). Claude Code stays the default and its path is unchanged. Claude models map to gateway
   models by tier (`AGENT.AXON.MODELS`). `python -m rfc_agent.axon_agent doctor` checks the setup. The harness
-  gains an `axon` adapter. See [docs/AXON.md](docs/AXON.md) and [decisions.md](decisions.md).
+  gains an `axon` adapter. See [AXON_INSTALL.md](AXON_INSTALL.md) and [decisions.md](decisions.md).
 - **`/rfc` inside Axon.** `uv run python -m rfc_agent.axon_agent install` adds an `/rfc` command to Axon.
   It runs the same pipeline, shows progress above the editor and asks each pause as a question in the
   session. `/rfc attach <run>` reconnects to a run, and `/rfc doctor` checks the setup. It also adds a

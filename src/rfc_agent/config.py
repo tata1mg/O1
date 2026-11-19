@@ -23,7 +23,7 @@ _CONFIG_DIR = Path("~/.config/rfc-agent").expanduser()
 # Top-level sections the code reads. Anything else in config.json is reported once — a typo
 # (REPO_ROOT) or a key left over from an older version, which would otherwise be silently ignored.
 KNOWN_SECTIONS = frozenset({
-    "AGENT", "REPOS_ROOT", "RUNS_ROOT", "REPOS_EXCLUDE", "MCP", "ATLASSIAN", "LANGFUSE", "OBS", "SERVICES_MAP",
+    "AGENT", "REPOS_ROOT", "RUNS_ROOT", "GIT_REPOS_REMOTE", "REPOS_EXCLUDE", "MCP", "ATLASSIAN", "LANGFUSE", "OBS", "SERVICES_MAP",
     "STEERING", "SCOPE", "INVESTIGATE", "DRAFT", "REVIEW", "REVISE", "SUMMARIZE",
     "TESTING",  # `testing.*` flags (workflows.testing.config_get)
     "STAGE1", "STAGE2", "STAGE3", "STAGE4", "STAGE5",  # old names, still read (legacy_names.OLD_CONFIG)
@@ -46,6 +46,7 @@ _ENV_MAP = {
     "AGENT.CLAUDE_CODE_OAUTH_TOKEN_FILE": "RFC_AGENT_CLAUDE_OAUTH_TOKEN_FILE",
     "AGENT.DEFAULT_MODEL": "RFC_AGENT_MODEL",
     "REPOS_ROOT": "RFC_AGENT_REPOS_ROOT",
+    "GIT_REPOS_REMOTE": "RFC_AGENT_GIT_REPOS_REMOTE",
     "ATLASSIAN.SITE": "ATLASSIAN_SITE",
     "LANGFUSE.PUBLIC_KEY": "LANGFUSE_PUBLIC_KEY",
     "LANGFUSE.SECRET_KEY": "LANGFUSE_SECRET_KEY",

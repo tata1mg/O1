@@ -24,7 +24,7 @@ from urllib.parse import urlsplit
 
 from .. import observe
 
-# the claude.ai connector, or the user-scope `atlassian` server SETUP.md adds (same tools, same OAuth host)
+# the claude.ai connector, or the user-scope `atlassian` server the install guide adds (CONFIG.md §5) (same tools, same OAuth host)
 PREFIXES = ("mcp__claude_ai_Atlassian__", "mcp__atlassian__")
 TOOLS = ("getAccessibleAtlassianResources", "getConfluencePage", "getConfluencePageDescendants", "getJiraIssue")
 DEFAULT_MODEL = "claude-haiku-4-5"

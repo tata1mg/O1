@@ -2,6 +2,8 @@
   "_comment": "Everything YOU supply, secrets included. Lives at ~/.config/rfc-agent/config.json (chmod 600), never inside the plugin. Values marked 'team' are the same for everyone on your team — ask a teammate for them. Anything here overrides the plugin's config.harness.json, which lists the harness's own settings.",
   "REPOS_ROOT": "~/path/to/your/repo/checkouts",
   "RUNS_ROOT": "~/rfc-runs",
+  "_GIT_REPOS_REMOTE_note": "Team. The clone address of your repos, with {repo} where the repo name goes, e.g. git@bitbucket.org:<workspace>/{repo}.git (copy it from any repo's Clone button). Scope clones the repos a PRD touches from it, and the Android setup clones maestro-automation from it. Leave empty to take it from the first git checkout in REPOS_ROOT. Env RFC_AGENT_GIT_REPOS_REMOTE wins.",
+  "GIT_REPOS_REMOTE": "",
   "ATLASSIAN": {
     "_comment": "Team. Your Atlassian site; Scope opens Confluence/Jira through it. Env ATLASSIAN_SITE wins.",
     "SITE": "https://your-company.atlassian.net"
@@ -66,11 +68,12 @@
     "ENGINE": "claude-code",
     "STAGE_ENGINES": {},
     "AXON": {
-      "_comment": "Only read when a stage runs on axon. MODELS maps the stages' Claude models to gateway models, by tier (opus[1m], opus, sonnet, haiku) or by exact Claude id; `python -m rfc_agent.axon_agent models` prints the mapping. THRESHOLD_COMPACTION: allow Axon's early compaction (default false — it summarises evidence away). ATLASSIAN_SERVER: the Atlassian MCP server's name in Axon's mcp.json, used by Scope to fetch Confluence/Jira (default atlassian).",
+      "_comment": "Only read when a stage runs on axon. MODELS maps the stages' Claude models to gateway models, by tier (opus[1m], opus, sonnet, haiku) or by exact Claude id; `python -m rfc_agent.axon_agent models` prints the mapping. THRESHOLD_COMPACTION: allow Axon's early compaction (default false — it summarises evidence away). ATLASSIAN_SERVER: the Atlassian MCP server's name in Axon's mcp.json, used by Scope to fetch Confluence/Jira (default atlassian). RECONNECTS: how many times an agent is resumed in its own Pi session after a lost AI Gateway connection outlasts Pi's own retries (default 2).",
       "BIN": "axon",
       "ATLASSIAN_SERVER": "atlassian",
       "MODELS": {},
-      "THRESHOLD_COMPACTION": false
+      "THRESHOLD_COMPACTION": false,
+      "RECONNECTS": 2
     }
   },
   "TESTING": {

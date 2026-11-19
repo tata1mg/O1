@@ -30,6 +30,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
+from rfc_agent.config import get_config
+
 GIT_TIMEOUT_S = 120
 LS_REMOTE_TIMEOUT_S = 20
 CACHE_ROOT = Path(os.environ.get("RFC_AGENT_REPO_CACHE", "~/.cache/rfc-agent/repos")).expanduser()
@@ -81,8 +83,21 @@ def classify_remote_error(out: str) -> str:
     return "unknown"
 
 
-def remote_template(repos_root: Path) -> str | None:
-    """'{repo}' URL template from any checkout's origin — all org repos share one Bitbucket workspace."""
+def configured_remote() -> str | None:
+    """GIT_REPOS_REMOTE from config: the team's clone address with `{repo}` where the repo name goes
+    (e.g. `git@bitbucket.org:<workspace>/{repo}.git`). None when unset, malformed (no `{repo}`), or no config."""
+    try:
+        value = str(get_config().get("GIT_REPOS_REMOTE") or "").strip()
+    except Exception:  # no config.json yet, or unreadable: fall back to inferring from a checkout
+        return None
+    return value if "{repo}" in value else None
+
+
+def remote_template(repos_root: Path, configured: str | None = None) -> str | None:
+    """'{repo}' URL template. A configured GIT_REPOS_REMOTE wins; otherwise it is taken from any checkout's
+    origin — all org repos share one Bitbucket workspace."""
+    if configured and "{repo}" in configured:
+        return configured
     if not repos_root.is_dir():
         return None
     for d in sorted(p for p in repos_root.iterdir() if (p / ".git").exists()):
@@ -210,7 +225,7 @@ def snapshot_all(repos: list[str], repos_root: Path, snap_root: Path, *,
                  cache_root: Path | None = None) -> list[dict]:
     """branches: repo -> (branch, how it was decided), from the confirm screen; missing ones are resolved."""
     snap_root.mkdir(parents=True, exist_ok=True)
-    template = remote_template(repos_root)
+    template = remote_template(repos_root, configured_remote())
     known = branches or {}
     with ThreadPoolExecutor(max_workers=max(1, min(8, len(repos)))) as pool:
         futs = [pool.submit(snapshot, r, repos_root, snap_root, template, known.get(r), fresh_clone, cache_root)
@@ -221,7 +236,7 @@ def snapshot_all(repos: list[str], repos_root: Path, snap_root: Path, *,
 def probe_all(repos: list[str], repos_root: Path, cache_root: Path | None = None) -> dict[str, RemoteInfo]:
     """Default branch + remote existence per repo, in parallel — shown on the confirm screen."""
     cache_root = cache_root or CACHE_ROOT
-    template = remote_template(repos_root)
+    template = remote_template(repos_root, configured_remote())
 
     def one(r: str) -> RemoteInfo:
         local, cached = _source_dirs(r, repos_root, cache_root)

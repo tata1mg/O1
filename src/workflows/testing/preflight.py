@@ -554,12 +554,13 @@ def setup_android(path: str = "", clone: bool = False, into: str = "", url: str 
             return out
         else:
             if not url:
-                from rfc_agent.scope.repos import remote_template
+                from rfc_agent.scope.repos import configured_remote, remote_template
 
-                template = remote_template(target.parent)
+                template = remote_template(target.parent, configured_remote())
                 url = template.format(repo=devices.MAESTRO_REPO_NAME) if template else ""
             if not url:
-                out["error"] = ("no clone URL: no git checkout next to it to take the Bitbucket workspace from; "
+                out["error"] = ("no clone URL: GIT_REPOS_REMOTE is not set in config.json and there is no git "
+                                "checkout next to it to take the clone address from; set GIT_REPOS_REMOTE, or "
                                 "pass --url git@bitbucket.org:<workspace>/maestro-automation.git")
                 return out
             target.parent.mkdir(parents=True, exist_ok=True)
