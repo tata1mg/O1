@@ -29,6 +29,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: ripgrep
+        # the citation checks and the gates shell out to `rg` (setup installs it for users too); make sure the runner has it
+        run: command -v rg || (sudo apt-get update -q && sudo apt-get install -y -q ripgrep)
       - name: install
         # the `testing` extra brings openpyxl, so the xlsx render tests run instead of skipping
         run: uv sync --frozen --extra testing

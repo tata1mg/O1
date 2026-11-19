@@ -8,6 +8,7 @@ alternative is guessing env vars. Both are tested here.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -18,12 +19,14 @@ from harness import cli
 from harness.constants import ExitCode
 
 ROOT = Path(__file__).resolve().parents[2]
+# the suite's own config (tests/conftest.py): these subprocesses start with a bare env and would find none
+CONFIG_ENV = {"RFC_AGENT_CONFIG": os.environ.get("RFC_AGENT_CONFIG", "")}
 
 
 def _run(*args: str, env: dict | None = None) -> subprocess.CompletedProcess:
     """Drive the real console entry point in a subprocess — exit codes are the contract."""
     base = {"PYTHONPATH": str(ROOT / "src"), "PATH": "/usr/bin:/bin:/usr/local/bin",
-            "HOME": str(Path.home()), "COLUMNS": "100"}
+            "HOME": str(Path.home()), **CONFIG_ENV, "COLUMNS": "100"}
     return subprocess.run([sys.executable, "-m", "harness.cli", *args], capture_output=True,
                           text=True, cwd=ROOT, env={**base, **(env or {})})
 
