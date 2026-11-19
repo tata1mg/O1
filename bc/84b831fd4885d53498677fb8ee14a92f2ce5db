@@ -1,0 +1,25 @@
+tests/harness/test_harness_cli.py
+  s_9593bf3535dd2a::t_8b40b446caccd3 11,22-23,29
+.github/workflows/tests.yml
+  s_9593bf3535dd2a::t_7692061c844ac2 32-34
+tests/conftest.py
+  s_9593bf3535dd2a::t_a01eccc6a2f3e0 3,5-17
+tests/harness/test_harness_review_fixes.py
+  s_9593bf3535dd2a::t_8b40b446caccd3 11,25-26,111,166,366,379,407,415
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bc84b831fd4885d53498677fb8ee14a92f2ce5db",
+  "prompts": {},
+  "sessions": {
+    "s_9593bf3535dd2a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6644bd3b-6bab-4bfd-aee3-ab5fb8e8f273",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}
