@@ -8,7 +8,7 @@ Trace shape (one trace per CLI invocation; a resumed run lands in the same Langf
 
     rfc-run                                  root; session = the run folder's identity.json
     ├─ stage:scope                            one `chain` per stage main()
-    │   ├─ llm:prd-summary                   one-shot model calls (generation)
+    │   ├─ llm:repo-discovery                the discovery agent (generation)
     │   ├─ agent:atlassian → llm:atlassian
     │   └─ operator:confirm                  the user's selection
     ├─ stage:investigate
@@ -395,7 +395,7 @@ def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
         )
         prop.__enter__()
     with contextlib.suppress(Exception):
-        _root.set_trace_io(input={"entry": entry, "argv": argv})
+        _root.update(input={"entry": entry, "argv": argv})  # the trace's Input is the root observation's
     if run_dir is not None:  # feedback (rfc_agent.feedback) scores the trace this run produced
         _facts_src = (run_dir, _arg(argv, "--prd"))
         _entry_name = entry
@@ -444,7 +444,9 @@ def _outcome(status: str | None) -> str | None:
 
 
 def _score_outcome(root, client, facts: dict, run_dir: Path) -> None:
-    """Two scores per whole-run attempt. `rfc_run_outcome` sits on this attempt's trace and never changes, so it counts
+    """Scores per whole-run attempt. `rfc_run_stop_kind` (user_stop, failure, killed) and, for a failure,
+    `rfc_run_failure_cause` (with the scrubbed last lines as its comment) say how a stopped attempt ended.
+    `rfc_run_outcome` sits on this attempt's trace and never changes, so it counts
     every stop. `rfc_run_outcome_final` sits on the run's session with a fixed id, so each attempt replaces the last:
     a run that stopped at draft and was then resumed ends as `completed`."""
     import json
@@ -454,6 +456,15 @@ def _score_outcome(root, client, facts: dict, run_dir: Path) -> None:
         return
     with contextlib.suppress(Exception):
         root.score(name="rfc_run_outcome", value=outcome, data_type="CATEGORICAL")
+    with contextlib.suppress(Exception):  # how this attempt stopped, measured: a person is never asked
+        from . import run_end
+
+        last = (run_end.read_attempts(run_dir) or [{}])[-1]
+        if last.get("stop_kind"):
+            root.score(name="rfc_run_stop_kind", value=last["stop_kind"], data_type="CATEGORICAL")
+        if last.get("failure_cause"):
+            root.score(name="rfc_run_failure_cause", value=last["failure_cause"], data_type="CATEGORICAL",
+                       comment=last.get("failure_excerpt") or None)  # fmt: skip
     with contextlib.suppress(Exception):
         session = json.loads((run_dir / "identity.json").read_text(encoding="utf-8")).get("session_id") or run_dir.name
         client.create_score(
@@ -469,8 +480,7 @@ def _close_root(cm, prop, code) -> None:
     global _client, _root, _root_otel_ctx, _tool_spans_left, _warned, _facts_src, _entry_name
     with contextlib.suppress(Exception):
         out = {"exit": code}
-        _root.update(output=out, level="ERROR" if code else "DEFAULT")
-        _root.set_trace_io(output=out)
+        _root.update(output=out, level="ERROR" if code else "DEFAULT")  # the trace's Output too
     if _facts_src is not None:  # which PRD / repos / how big the RFC / how the review ended — filterable later
         with contextlib.suppress(Exception):
             _client.flush()  # send the spans first, so a failed upload is in the activity log before it is counted
@@ -487,7 +497,6 @@ def _close_root(cm, prop, code) -> None:
 
                     text = feedback.run_summary(_facts_src[0], facts)
                     _root.update(output=text)
-                    _root.set_trace_io(output=text)
         _facts_src = None
     _entry_name = None
     if prop is not None:

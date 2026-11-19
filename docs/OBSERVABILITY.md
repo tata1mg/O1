@@ -52,8 +52,7 @@ trace from one run folder shares one Langfuse **session** (from the run folder's
 rfc-run                                   chain   input: argv · output: {exit}
 ├─ stage:scope                             chain   output: {exit}; ERROR + status message when it stopped
 │   ├─ agent:atlassian → llm:atlassian    one per connector turn (cost; connector calls as tools if verbose)
-│   ├─ agent:repo-discovery               the context-layer discovery agent
-│   ├─ agent:prd-summary → llm:prd-summary
+│   ├─ agent:repo-discovery → llm:repo-discovery   the context-layer discovery agent (cost; services as output)
 │   └─ operator:confirm                   your Scope selection: selected / not_selected
 ├─ stage:investigate
 │   ├─ agent:lead:1a → llm:lead:1a        agent = identity + outcome; generation = model, tokens, cost
@@ -90,6 +89,8 @@ whole-run rating uses the latest `rfc` trace, `--stage S` that stage's trace.
 | `rfc_<area>`, `rfc_<area>_issue` | CATEGORICAL | a verdict for each area, and one score per gap picked (coverage, buildability, approach, context layer use; readable summary and rollout and risk when asked) |
 | `rfc_suspect_stage` | CATEGORICAL | the stages the picked gaps point at |
 | `rfc_run_speed`, `rfc_run_cost`, `rfc_start_ready` | CATEGORICAL | asked only on request; `not_rated` otherwise |
+| `rfc_minutes_status` | CATEGORICAL | `given`, `partial`, `skipped`, `not_rated`; written on every rating, read before the minutes; `--minutes-skipped` cannot be combined with typed minutes |
+| `rfc_minutes_saved`, `rfc_minutes_spent` | NUMERIC | minutes saved versus writing it yourself; minutes reviewing and correcting after generation. Written only when typed |
 | `rfc_feedback_stage` | CATEGORICAL | only with `--stage` |
 | `rfc_feedback_reason` | CATEGORICAL | legacy: the removed 👎 reason list. Old ratings keep it as history; nothing writes it now |
 
@@ -139,7 +140,7 @@ SDK drop the export batch.
 |---|---|
 | trace + stage spans, the flags, the no-keys stop | `@observe.entry(...)` on `run.main` and every stage `main` |
 | every `claude -p` agent from Investigate to Summarize | `investigate/agent.py` `run()` |
-| Scope model calls | `scope/context.py` `discover` (the discovery agent, `agent:repo-discovery`) and `summarise`; `scope/atlassian.py` `_turn` |
+| Scope model calls | `scope/context.py` `discover` (the discovery agent: `agent:repo-discovery` with its generation `llm:repo-discovery`); `scope/atlassian.py` `_turn` |
 | gates | `investigate/cli.py` (agent checks, understanding), `draft/cli.py` |
 | pauses | `investigate/pauses.py` `ask` (Investigate and Review), `scope/cli.py` (confirm) |
 

@@ -7,7 +7,7 @@ Set up rfc-agent on this machine for the pipeline (`/rfc-agent:rfc`, Scope → S
 new. YOU run the checks, fix what you can, and ask the user only for what you can't know or do.
 
 `PROJ="${CLAUDE_PLUGIN_ROOT}"` · `CFG=~/.config/rfc-agent/config.json` — everything the user supplies: team values
-(Atlassian site, fleetlens URL, Bitbucket workspace, product surfaces, service inventory, Langfuse host),
+(Atlassian site, fleetlens URL, Bitbucket workspace, service inventory, Langfuse host),
 their folders, keys and tokens. Settings resolve: env var > `CFG` > the plugin's `$PROJ/config.harness.json` (the
 harness's own working values; read-only — never edit it, an update replaces the plugin).
 
@@ -164,11 +164,11 @@ yet". Done → re-check. No access → mark `skipped`: "get vault access, then c
 
 **Reachability:** `curl -s -m 5 -o /dev/null -w "%{http_code}" "<url>"` is not `000`. `000` → VPN off.
 
-**Repo-discovery team values — OPTIONAL.** Check (prints counts only):
-`uv run --project "$PROJ" python -c "from rfc_agent.config import get_config as g; c=g(); print('surfaces:', len(c.get('SCOPE.SURFACES') or {}), '| inventory repo:', (c.get('SERVICES_MAP') or {}).get('REPO') or 'none')"`.
-`SCOPE.SURFACES` (product surfaces → the repos that build them) and `SERVICES_MAP` (where the repo → service
-inventory lives) are team values that help Scope propose repos. If either is missing or still the example's
-placeholder, ask whether a teammate can share them; if so, open `CFG` and have the user paste them in, else mark
+**Repo-discovery team value — OPTIONAL.** Check:
+`uv run --project "$PROJ" python -c "from rfc_agent.config import get_config as g; c=g(); print('inventory repo:', (c.get('SERVICES_MAP') or {}).get('REPO') or 'none')"`.
+`SERVICES_MAP` (where the repo → service inventory lives) is a team value that helps Scope map fleetlens's
+services to repos. If it is missing or still the example's placeholder, ask whether a teammate can share it; if
+so, open `CFG` and have the user paste it in, else mark
 `skipped`: "Scope proposes fewer repos; add them with --repos".
 
 ## 8. Langfuse tracing — CRITICAL

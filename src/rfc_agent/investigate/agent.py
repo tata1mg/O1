@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -324,6 +325,8 @@ def _consume(line: str, res: AgentResult, on_event, trace=None, run_dir: Path | 
         ev = json.loads(line)
     except ValueError:
         return
+    if not isinstance(ev, dict):
+        return
     if trace is not None:
         trace.event(ev)
     t = ev.get("type")
@@ -352,8 +355,24 @@ def _consume(line: str, res: AgentResult, on_event, trace=None, run_dir: Path | 
         res.extra["result_subtype"] = ev.get("subtype")
         res.extra["result_is_error"] = bool(ev.get("is_error"))
         res.extra["usage"] = ev.get("usage") or {}
-    if "rate_limit" in line or '"overloaded' in line:
+    if t == "rate_limit_event":
+        status = (ev.get("rate_limit_info") or {}).get("status") or "allowed"
+        limited = status not in ("allowed", "allowed_warning")
+    else:
+        # Read protocol error codes, never assistant/tool text that merely discusses rate limiting.
+        error = ev.get("error")
+        code = error.get("type") if isinstance(error, dict) else error
+        limited = code in ("rate_limit", "rate_limit_error", "overloaded", "overloaded_error")
+        limited |= t in ("rate_limit_error", "overloaded_error")
+        # A failed run's result text is the error itself, not prose: Claude's "API Error: 429 ..." and the
+        # Pi shim's "provider retries exhausted: ... rate_limit_error" carry the throttle only there.
+        if t == "result" and ev.get("is_error"):
+            limited |= bool(_THROTTLE_RE.search(str(ev.get("result") or "")))
+    if limited:
         res.rate_limited += 1
+
+
+_THROTTLE_RE = re.compile(r"rate[_ ]limit|\b429\b|overloaded", re.IGNORECASE)
 
 
 def target(inp, run_dir: Path | None = None, width: int = 90) -> str:

@@ -46,19 +46,8 @@
     "PATH": "group_vars/services_k8s"
   },
   "SCOPE": {
-    "_SURFACES_note": "Team. Your product surfaces -> the repos that build them. Scope matches the PRD against `what` and proposes those repos. A surface with no repos is still reported.",
-    "SURFACES": {
-      "customer_web": {
-        "what": "customer website and mobile web: storefront, product pages, cart, checkout",
-        "repos": [
-          "your-web-repo"
-        ]
-      },
-      "customer_app": {
-        "what": "customer Android / iOS app",
-        "repos": []
-      }
-    }
+    "_DISCOVERY_MODEL_note": "Optional. The model of the agent that explores fleetlens to find the repos a PRD touches (default claude-opus-5-5).",
+    "DISCOVERY_MODEL": "claude-opus-5-5"
   },
   "_REPOS_EXCLUDE_note": "Team. Repos Scope never offers, comma list (e.g. an evals repo that holds model answers).",
   "REPOS_EXCLUDE": "rfc_agent,rfc-agent",

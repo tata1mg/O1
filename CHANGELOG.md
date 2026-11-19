@@ -22,6 +22,71 @@ versions match `.claude-plugin/plugin.json`.
   sign-in (`axon pi mcp login atlassian`), so `--engine axon` no longer needs `claude`. The Axon doctor checks
   the sign-in.
 
+### Changed
+
+- **Scope finds repos with one Opus agent, in two tiers.** The Haiku PRD summary and the surface table
+  (`SCOPE.SURFACES`, `SCOPE.SUMMARY_MODEL`) are gone. One agent (`claude-opus-5-5`, `SCOPE.DISCOVERY_MODEL`)
+  explores fleetlens and returns "changes" repos (proposed ticked) and "maybe" repos (proposed unticked, with a
+  reason), backend and frontend, up to 15. Same on Claude Code and Axon.
+- **Langfuse Python SDK v5, ready for the Langfuse v4 platform.** `langfuse>=5,<6` (5.2.0 locked). A trace's
+  input and output are now its root observation's own (`set_trace_io` / `set_current_trace_io` are gone in v5).
+  The secret scrubber decodes v5's JSON-encoded metadata and input/output before scrubbing, so redacting a key
+  no longer corrupts the JSON. `scripts/mine_reasons.py` reads the Observations API v2
+  (`/api/public/v2/observations`, cursor pages, `--days`) instead of the v1 endpoint Langfuse Cloud retires on
+  2026-11-16. `tests/infra/test_langfuse_v5.py` fails on any call v5 removed or any retired endpoint.
+
+### Fixed
+
+- **Axon: a recovered retry no longer fails the agent.** A failed model attempt that Pi retried successfully
+  kept its error; now only exhausted retries and aborts fail.
+- **Scope: the fleetlens token is no longer left on disk.** Without a run folder, the discovery agent's MCP
+  config went to `$TMPDIR` and stayed there; it now goes in a scratch folder that is deleted.
+- **Scope: a failing progress callback kills the discovery agent** instead of leaving it running.
+- **Scope: an error Claude reports with exit 0 (e.g. a usage limit) keeps its reason** on the agent card
+  instead of "exit 0".
+- **Rate limits are counted from protocol fields** and failed-result text (`API Error: 429`, Pi's
+  `rate_limit_error`), not from any message that mentions rate limits.
+
+## 0.1.2 (pilot)
+
+### Changed
+
+- **Approach gaps: one "poor approach" gap.** `ignores_existing_infra` is replaced by `poor_approach` ("poor approach
+  for our systems, e.g. the wrong service or place to build it"). `ignores_engineering_standards` stays separate.
+- **Plainer gap labels.** Coverage: "RFC says it's covered, but the software design in the RFC doesn't address it."
+  Buildability: "Too vague to start coding", "Ambiguous interface or API contract", "Doesn't say what to build first or
+  what depends on what", "A source is cited but doesn't say that".
+- **Time questions after the thumb** (after 👍 with notes or 👎, skippable; a plain 👍 stays one tap): minutes this RFC saved you versus writing it yourself,
+  and minutes you spent reviewing and correcting the RFC after it was generated. Stored as numeric scores
+  (`rfc_minutes_saved`, `rfc_minutes_spent`), written only when typed.
+- **`rfc_minutes_status`** (`given`, `partial`, `skipped`, `not_rated`) is written on every rating, so a re-rate always
+  replaces it. `--minutes-skipped` records a skip. Read the status before the minutes: numbers left by an earlier
+  rating are stale when the status is not `given` or `partial`.
+  `--minutes-skipped` together with typed minutes is refused.
+
+### Added
+
+- A stopped run (a stage failure, Ctrl-C or a stop) prints the feedback command for that run folder:
+  `/rfc-agent:feedback --run-dir <folder>`. The folder is quoted, so a path with spaces can be copied.
+- **Feedback for a stopped or failed run.** The run records how each attempt ended (`logs/attempts.jsonl`: user stop,
+  failure with a cause category and a scrubbed excerpt, or killed) and scores it on the trace (`rfc_run_stop_kind`,
+  `rfc_run_failure_cause`). `/rfc-agent:feedback` reads that and opens on the matching path, so nobody is asked how the
+  run ended: a stopped run asks the main reason (one choice, typed Other) and whether to run it again; a failed run asks
+  whether the recorded cause is right and whether to run it again. Scores: `rfc_run_stop_reason`,
+  `rfc_failure_cause_confirmed`, `rfc_failure_cause_reported`, `rfc_rerun`, and `rfc_run_end` only when the run has no
+  end record. Only answered questions are written.
+- **Feedback is kept per attempt.** A run that was stopped, rated, resumed and finished keeps the stopped attempt's
+  feedback; the finished attempt gets its own rating. Each score's metadata has `attempt`, `attempts` and `run_state`.
+  See [docs/FEEDBACK.md](docs/FEEDBACK.md#a-run-that-stopped-or-failed).
+- A process that is killed without a chance to write anything is recorded as `killed` on the next start
+  (`logs/attempt_open.json`).
+- **Re-rating shows the earlier answers.** `feedback --context` returns `previous`, the earlier rating of the same
+  attempt (from the run folder, or from Langfuse when the run folder has none), and the form shows it. A question left
+  unanswered keeps its earlier answer (`--rerate`), and a re-rating is confirmed on a summary table
+  (`--rerate --preview`, which sends nothing) before it is submitted. A different attempt starts blank.
+- **A table of what was sent after every submission,** for finished, stopped and failed attempts, with a "Compared
+  with last time" column on a re-rating. See [docs/FEEDBACK.md](docs/FEEDBACK.md#re-rating-an-attempt).
+
 ## 0.1.1 (pilot)
 
 ### Changed
