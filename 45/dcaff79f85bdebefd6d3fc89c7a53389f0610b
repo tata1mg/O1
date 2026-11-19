@@ -1,0 +1,27 @@
+src/rfc_agent/axon_ext/rfc-command.js
+  s_9593bf3535dd2a::t_bd4678b913d345 531-532,541-545
+  s_9593bf3535dd2a::t_505f75c0173529 351-357,360-363
+tests/fixtures/axon/feedback_command_cases.mjs
+  s_9593bf3535dd2a::t_744d3729fd9dc0 192-193
+  s_9593bf3535dd2a::t_be348bc734c362 17,19-22,119
+  s_9593bf3535dd2a::t_3ac3dc2a225edc 99-102,105
+  s_9593bf3535dd2a::t_8c3b70801a48c8 112-118,120-128
+docs/FEEDBACK.md
+  s_9593bf3535dd2a::t_b0983b7830934e 13,28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "45dcaff79f85bdebefd6d3fc89c7a53389f0610b",
+  "prompts": {},
+  "sessions": {
+    "s_9593bf3535dd2a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6644bd3b-6bab-4bfd-aee3-ab5fb8e8f273",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}
