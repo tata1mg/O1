@@ -128,14 +128,27 @@ const ex = calls().filter((c) => c.argv[2] === "workflows.testing.execute" && !c
 check("execute ran --only-existing on axon", ex && ex.argv.includes("--only-existing") && ex.argv.join(" ").includes("--engine axon"), ex);
 check("execute asked pending first", asked.some((a) => /newly confirmed web case/.test(a.title)));
 
-// ---- /test execute ui-agent | android: Claude Code only, said before anything runs
-for (const kind of ["ui-agent", "android"]) {
-  messages.length = 0;
-  const before = calls().length;
-  await commands.test.handler(`execute ${kind} --feature cart-sanity`, ctx);
-  check(`execute ${kind} points to Claude Code`, messages.some((x) => x.includes(`/test-agent:execute ${kind}`)), messages);
-  check(`execute ${kind} runs nothing`, calls().length === before, calls().slice(before));
-}
+// ---- /test execute ui-agent: what will run, the questions, then the agents on axon
+const ps = m.pendingSummary({ will_run: ["a", "b"], no_expected_result: ["c"], android: { by_flow: [{}], by_agent: [], not_run: [{ extid: "d", why: "gated" }] } });
+check("pendingSummary", ps.web === 2 && ps.flow === 1 && ps.lines[0] === "web: 2 by agent" && ps.lines[1] === "android: 1 by flow, 0 by agent, 1 not run" &&
+  ps.lines.some((l) => l.includes("d not run: gated")), ps);
+check("agentLines", m.agentLines("web, by agent", { tally: { PASS: 1 }, parts_met: 2, parts: 3, table: "T", drafts: ["x"] }).join("|") ===
+  "web, by agent: 1 PASS · 2 of 3 parts met||T||  draft flows ready for convert-flows: x");
+messages.length = 0;
+asked.length = 0;
+await commands.test.handler("execute ui-agent --production", ctx);
+const agReport = await waitFor(/^Results —/);
+check("agent run reported with its table and screenshot", agReport && agReport.includes("web, by agent: 1 PASS · 1 FAIL · 3 of 4 parts met — https://kiwi/runs/4/") &&
+  agReport.includes("| TC-1 | PASS |") && agReport.includes("TC-2 FAIL screenshot: /shots/tc2.png"), agReport);
+const ag = calls().filter((c) => c.argv[2] === "workflows.testing.execute" && c.argv.includes("ui-agent") && !c.argv.includes("--print") && !c.argv.includes("--pending")).pop();
+const agv = ag ? ag.argv.slice(3).join(" ") : "";
+check("agent run launched with the answers, on axon",
+  agv === "ui-agent --production --platform auto --include-manual --untagged web --allow coupons --test-account --engine axon", agv);
+check("agent asked: manual, untagged, coupons, test account", ["manual case", "no platform tag", "apply coupons", "PRODUCTION"]
+  .every((t) => asked.some((a) => a.title.includes(t))), asked.map((a) => a.title));
+check("agent said what will run and what it costs", messages.some((x) => x.includes("web: 2 by agent") && x.includes("android: 1 by flow, 1 by agent, 1 not run")) &&
+  messages.some((x) => x.includes("model session on every run")), messages);
+check("the Claude-only refusal is gone", !messages.some((x) => x.includes("Claude Code only")), messages);
 
 // ---- /test evaluate
 messages.length = 0;

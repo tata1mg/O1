@@ -236,7 +236,7 @@ not work, and writes `qa/agent/<extid>/verdict.json` with a screenshot for every
   be a named test environment (`testing.agent_hosts`, or `testing.base_url_template` with an environment
   from `testing.environments`; `execute ui-agent --hosts <host>` passes it); and the agent is never given a
   credential — login is a recorded session (`--ui-auth`), `testing.ui_login` is ignored, and without a
-  session the cases run logged out. Claude Code engine only: the guard is a Claude Code hook. The guard cannot see where a click leads, so none of this
+  session the cases run logged out. Runs on claude-code and on axon (not plain `pi`, which has no MCP): the guard is one script, a Claude Code hook there and run by `rfc-tools.js` on Axon, where the verdict check also runs on each write of the verdict instead of through a shell. The guard cannot see where a click leads, so none of this
   makes the stage safe to point at production.
 - **Needs.** `npm ci` in `tools/ui-runner` (pins `@playwright/mcp`), and either that package's own Chromium
   build (`node tools/ui-runner/node_modules/@playwright/mcp/node_modules/playwright/cli.js install chromium`

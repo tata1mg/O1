@@ -69,6 +69,10 @@ def status_json(kiwi: bool) -> dict:
         out["next"] = {"step": "done"}
         out["results_web"] = {"tally": {"PASS": 2, "FAIL": 1}, "run_url": "https://kiwi/runs/3/", "html_report": str(RUN / "qa/ui/html-report"),
                               "not_passing": [{"extid": "TC-3", "status": "FAIL", "detail": "Error: locator not found\nmore"}]}
+    if "agent" in done:
+        out["results_agent"] = {"tally": {"PASS": 1, "FAIL": 1}, "parts_met": 3, "parts": 4, "run_url": "https://kiwi/runs/4/",
+                                "table": "| Case | Verdict |\n|---|---|\n| TC-1 | PASS |", "not_executed": ["TC-7"],
+                                "screenshots": [{"extid": "TC-2", "path": "/shots/tc2.png"}]}
     if "derive_ui" in state().get("stages", []):
         out["ui_plan"] = {"skipped": [{"extid": "TC-9", "reason": "feature not in the snapshot"}]}
     if "evaluate" in done:
@@ -135,6 +139,26 @@ def main() -> int:
                 time.sleep(0.1)
             return 0
         if mod == "execute":
+            agent_kind = next((k for k in ("ui-agent", "android") if k in rest), "")
+            if agent_kind and "--pending" in rest:
+                out = {"run_dir": str(RUN), "kind": agent_kind, "error": ""}
+                if agent_kind == "ui-agent":
+                    out |= {"will_run": ["TC-1", "TC-2"], "no_expected_result": ["TC-7"], "needs_allow": {"coupons": ["TC-2"]},
+                            "needs_session": [], "manual_left": [] if "--include-manual" in rest else ["TC-8"]}
+                if agent_kind == "android" or "web" not in rest[rest.index("--platform") + 1:][:1]:
+                    out["android"] = {"by_flow": [{"extid": "TC-4", "flow": "cart"}], "by_agent": [{"extid": "TC-5", "why": "no flow"}],
+                                      "not_run": [{"extid": "TC-6", "why": "gated flow"}], "manual_left": [], "error": "",
+                                      "untagged": [] if "--untagged" in rest else ["KIWI-9"], "both": []}
+                print(json.dumps(out))
+                return 0
+            if agent_kind:
+                print(f"uv run --project P harness run testing --feature HDPO --run-dir {RUN} --env jupiter --build b1 "
+                      f"--no-interactive --stages execute_ui_agent --force --enable testing.execute_ui_agent")
+                if "--print" in rest:
+                    return 0
+                play(["execute_ui_agent"])
+                record("agent")
+                return 0
             if "--pending" in rest:
                 print(json.dumps({"run_dir": str(RUN), "tests": ["TC-1", "TC-2"], "skipped": [], "new": ["TC-3"], "error": ""}))
                 return 0

@@ -220,7 +220,11 @@ def build_prompt(case, rel: str, settings: dict, serial: str, notes: str, check_
         f"{settings['case_timeout_s'] // 60} minutes. A session that runs out is cut off without warning — "
         f"write the verdict file BEFORE your first `run` and rewrite it after each part. The device refuses to "
         f"act until the file exists, and again after {verdict_every} commands without a rewrite.",
-        f"Check your verdict whenever you rewrite it, and always before you stop: run `{check_cmd} {rel}`.",
+        (f"Check your verdict whenever you rewrite it, and always before you stop: run `{check_cmd} {rel}`."
+         if check_cmd else
+         "Your verdict is checked every time you write it: the result of the write ends with OK, or with exactly "
+         "what will be rejected. Fix what it names and write the file again until it says OK. You have no shell "
+         "and need none."),
         "",
         f"Your case folder is {rel}/, and it is the device server's working directory. Prove every clause you "
         f"mark met or not met by sending, through `run`, an `assertVisible` (or `assertNotVisible`) for what "

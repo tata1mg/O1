@@ -102,6 +102,46 @@ def python_stage(fn):
     return _engine
 
 
+#: The built-in tools a case's agent needs beside its MCP tools (Claude spellings; each adapter maps them).
+#: No shell: the one command a case's agent runs on claude-code, its verdict check, is a write check here.
+AGENT_BUILTINS = ("Read", "Write", "Edit", "Grep", "Glob", "LS")
+
+
+def engine_name(ctx: RunContext) -> str:
+    return str(getattr(ctx.engine, "name", "") or "")
+
+
+def agent_grants(servers: tuple[str, ...]) -> tuple[str, ...]:
+    """Every tool a per-case agent may call, by name. The claude-code adapter derives its own grants from the
+    stage; an engine whose tool list is an allow-list (Pi's `--tools`) needs the built-ins named too."""
+    from rfc_agent.mcp_tools import allowed_tools
+
+    return (*AGENT_BUILTINS, *allowed_tools(tuple(servers)))
+
+
+def checks_on_write(ctx: RunContext) -> bool:
+    """Does this run's engine run `Containment.write_checks` (so the agent needs no shell for its check)?"""
+    return engine_name(ctx) == "axon"
+
+
+def recovered_summary(ctx: RunContext, label: str, trace_path: Path):
+    """The trace summary of a session that raised (cut off at its time limit), or None when there is none.
+
+    claude-code raises before its trace is written: the raw stream is translated here. Pi and Axon write the
+    canonical trace before they raise, so it is read as it is."""
+    try:
+        from harness.events import summarize
+
+        raw = ctx.run_dir / "logs" / f"{label}.stream.jsonl"
+        writer = getattr(ctx.engine, "write_trace", None)
+        if writer is not None and raw.is_file():
+            written = writer(raw, trace_path)
+            return summarize(written) if written else None
+        return summarize(trace_path) if Path(trace_path).is_file() else None
+    except Exception:  # accounting must never be what fails a case
+        return None
+
+
 def run_engine_stage(stage: Stage, ctx: RunContext, skill_path: Path,
                      extra_roots: tuple[Path, ...] = ()) -> StageResult:
     """Invoke the resolved engine adapter for a persona stage.

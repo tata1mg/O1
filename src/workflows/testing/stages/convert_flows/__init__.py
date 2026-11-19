@@ -25,6 +25,7 @@ from __future__ import annotations
 import dataclasses
 import re
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -37,7 +38,7 @@ from harness.contracts import EngineFailure, RunContext, Stage, StageResult
 from ... import app_agent, devices, maestro
 from ...devices import Android, DeviceLock
 from ...store import get_store
-from .. import feature_of, forbid_of, only_cases, read_json, read_json_gated, write_json
+from .. import agent_grants, feature_of, forbid_of, only_cases, read_json, read_json_gated, write_json
 from ..execute_app import LINK_HOSTS, LINK_SCHEMES, LOCKS_DIR
 from ..execute_app import RESULTS_OUT as APP_RESULTS
 
@@ -106,6 +107,10 @@ def _fix_round(stage: Stage, ctx: RunContext, folder: Path, extid: str, failure:
              gd.LINK_HOSTS_ENV: LINK_HOSTS, gd.MAX_ACTIONS_ENV: "40", gd.COUNT_FILE_ENV: str(count_file),
              gd.FORBID_ENV: settings.get("forbid", "")},
         containment=Containment(writable_roots=(folder,),
+                                allowed_tools=agent_grants((app_agent.SERVER,)),
+                                tool_guards=((f"mcp__{app_agent.SERVER}__",
+                                              (sys.executable, str(Path(gd.__file__)))),),
+                                hooks_enabled=bool(ctx.flag("hooks", True)),
                                 mcp_servers={app_agent.SERVER: app_agent.maestro_server(folder)}),
         native_ctx={"stage": dataclasses.replace(stage, mcp_servers=(app_agent.SERVER,)), "ctx": ctx},
     )

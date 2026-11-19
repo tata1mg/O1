@@ -42,11 +42,25 @@ from harness.contracts import EngineFailure, RunContext, Stage, StageResult
 
 from ... import ui_agent, ui_record
 from ...store import get_store
-from .. import _stage_persona, feature_of, forbid_of, keep_dated, only_cases, read_json, read_json_gated, write_json
+from .. import (
+    _stage_persona,
+    agent_grants,
+    checks_on_write,
+    engine_name,
+    feature_of,
+    forbid_of,
+    keep_dated,
+    only_cases,
+    read_json,
+    read_json_gated,
+    recovered_summary,
+    write_json,
+)
 
 SKILL_PATH = Path(__file__).resolve().parents[2] / "skills" / "qa-ui-agent" / "SKILL.md"
 #: The one command a case's agent may run: the stage's own verdict check, on its own verdict.
-CHECK_VERDICT = f"{sys.executable} {Path(__file__).resolve().parents[2] / 'check_verdict.py'}"
+CHECK_SCRIPT = Path(__file__).resolve().parents[2] / "check_verdict.py"
+CHECK_VERDICT = f"{sys.executable} {CHECK_SCRIPT}"
 #: Browser actions an agent may take between two writes of its verdict file (enforced by the browser guard).
 VERDICT_EVERY = 12
 RESULTS_OUT = f"{ui_agent.AGENT_DIR}/{ui_agent.RESULTS}"
@@ -60,7 +74,9 @@ GRACE_S = 60
 
 def _servers(ctx: RunContext) -> tuple[str, ...]:
     """The MCP servers a case's agent gets: the browser, and — only when asked — read-only code lookup."""
-    extra = ("fleetlens",) if bool(ctx.flag("testing.agent_code_context", False)) else ()
+    # fleetlens is a config-file server, which only the claude-code adapter materialises
+    extra = ("fleetlens",) if bool(ctx.flag("testing.agent_code_context", False)) and \
+        engine_name(ctx) != "axon" else ()
     return (ui_agent.SERVER, *extra)
 
 
@@ -106,13 +122,11 @@ def _settings(ctx: RunContext) -> dict:
     problem = ui_agent.browser_problem(browser)
     if problem:
         raise EngineFailure(f"execute_ui_agent: {problem}")
-    engine_name = str(getattr(ctx.engine, "name", "") or "")
-    if engine_name in ("pi", "axon"):
-        # The browser tools are granted, held to the run's address and counted by Claude Code's hook
-        # transport. On Pi none of that exists yet: every browser call would be denied.
-        raise EngineFailure(f"execute_ui_agent runs on the claude-code engine only (this run's is "
-                            f"{engine_name!r}): its browser guard is a Claude Code hook. Re-run without "
-                            f"--engine.")
+    if engine_name(ctx) == "pi":
+        # The browser is an MCP server, and plain pi has no MCP. claude-code holds the browser tools with a
+        # PreToolUse hook and axon with the same script through its extension (Containment.tool_guards).
+        raise EngineFailure("execute_ui_agent needs an engine with MCP: the browser is an MCP server and the "
+                            "`pi` engine has none. Re-run without --engine, or with --engine axon.")
     return {"environment": env_name, "build": build, "base_url": base_url.rstrip("/"), "auth": auth,
             "device": str(ctx.flag("testing.ui_device", "") or ""),
             "headed": bool(ctx.flag("testing.ui_headed", False)),
@@ -136,7 +150,8 @@ def login_of(settings: dict) -> str:
     return "recorded session" if settings.get("auth") else "none"
 
 
-def build_prompt(case, folder: Path, settings: dict, notes: str, code_context: bool, route: str = "") -> str:
+def build_prompt(case, folder: Path, settings: dict, notes: str, code_context: bool, route: str = "",
+                 checked_on_write: bool = False) -> str:
     rel = f"{ui_agent.AGENT_DIR}/{folder.name}"
     settings = case_settings(case, settings)
     lines = [
@@ -159,9 +174,13 @@ def build_prompt(case, folder: Path, settings: dict, notes: str, code_context: b
         "You do not have to count actions and you cannot run out without being told: the browser refuses an "
         "action with a message that says so. Until you have seen that message, 'ran out of actions' is not a "
         "blocker you may write.",
-        f"Check your verdict whenever you rewrite it, and always before you stop: run "
-        f"`{CHECK_VERDICT} {rel}` — it prints exactly what will be rejected. A rejected verdict records "
-        f"nothing, so fix what it names and run it again until it prints OK.",
+        ("Your verdict is checked every time you write it: the result of the write ends with OK, or with "
+         "exactly what will be rejected. A rejected verdict records nothing, so fix what it names and write "
+         "the file again until it says OK. You have no shell and need none."
+         if checked_on_write else
+         f"Check your verdict whenever you rewrite it, and always before you stop: run "
+         f"`{CHECK_VERDICT} {rel}` — it prints exactly what will be rejected. A rejected verdict records "
+         f"nothing, so fix what it names and run it again until it prints OK."),
         "To see the page, call `browser_snapshot`: it returns the page inline. The snapshot an ACTION returns is "
         "only a link to a .yml file — do not open those files with Read or Bash, it doubles your calls and "
         "your time. `browser_find` locates an element by text without a full snapshot.",
@@ -215,8 +234,10 @@ def _run_case(stage: Stage, ctx: RunContext, case, folder: Path, label: str, set
     count_file = Path(tempfile.gettempdir()) / f"rfc-agent-actions-{uuid.uuid4().hex}"
     servers = _servers(ctx)
     settings = case_settings(case, settings)
+    rel = str(folder.relative_to(ctx.run_dir))
     req = EngineRequest(
-        prompt=build_prompt(case, folder, settings, notes, "fleetlens" in servers, route),
+        prompt=build_prompt(case, folder, settings, notes, "fleetlens" in servers, route,
+                            checked_on_write=checks_on_write(ctx)),
         cwd=ctx.run_dir, label=label, trace_path=events_path(ctx.run_dir, label),
         timeout_s=settings["case_timeout_s"] + GRACE_S, skill_path=SKILL_PATH,
         model=(ctx.flag("model", "") or None), live=False,
@@ -228,6 +249,13 @@ def _run_case(stage: Stage, ctx: RunContext, case, folder: Path, label: str, set
              guard_browser.FORBID_ENV: settings.get("forbid", "")},
         containment=Containment(
             writable_roots=(ctx.run_dir,),
+            # For an engine that is not claude-code (which grants from the stage and holds the browser with
+            # its own hook): the tools by name, the same guard script on every browser call, and the
+            # verdict check run on each write of the verdict instead of through a shell.
+            allowed_tools=agent_grants(servers),
+            tool_guards=((f"mcp__{ui_agent.SERVER}__", (sys.executable, str(Path(guard_browser.__file__)))),),
+            write_checks=((str(folder / ui_agent.VERDICT), (sys.executable, str(CHECK_SCRIPT), rel)),),
+            hooks_enabled=bool(ctx.flag("hooks", True)),
             mcp_servers={ui_agent.SERVER: ui_agent.browser_server(
                 folder, storage_state=settings["auth"], device=settings["device"],
                 headed=settings["headed"], browser=settings["browser"])}),
@@ -245,7 +273,7 @@ def _run_case(stage: Stage, ctx: RunContext, case, folder: Path, label: str, set
         # A session cut off at its time limit raises before its trace is written, so its calls and cost
         # vanished from the run's accounting (second pilot: a 119-call case counted as 0). The raw stream
         # is still on disk: translate it.
-        summary = _recovered_summary(ctx, label, req.trace_path)
+        summary = recovered_summary(ctx, label, req.trace_path)
     if summary is not None:
         tool_calls = list(getattr(summary, "tool_calls", None) or [])
         calls, acted = ui_agent.browser_calls(tool_calls), ui_agent.browser_actions(tool_calls)
@@ -312,21 +340,6 @@ def _needs_session(case, folder: Path) -> dict:
     return {**verdict, "duration_s": 0.0, "browser_calls": 0, "browser_actions": 0, "cost_usd": 0.0,
             "cost_known": True, "_trace": [], "finished_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "folder": str(folder)}
-
-
-def _recovered_summary(ctx: RunContext, label: str, trace_path: Path):
-    """The trace summary of a session that raised, rebuilt from its raw stream — or None when it cannot be."""
-    raw = ctx.run_dir / "logs" / f"{label}.stream.jsonl"
-    writer = getattr(ctx.engine, "write_trace", None)
-    if writer is None or not raw.is_file():
-        return None
-    try:
-        from harness.events import summarize
-
-        written = writer(raw, trace_path)
-        return summarize(written) if written else None
-    except Exception:  # accounting must never be what fails a case
-        return None
 
 
 def _confirm(stage: Stage, ctx: RunContext, case, first: dict, settings: dict, notes: str) -> dict:

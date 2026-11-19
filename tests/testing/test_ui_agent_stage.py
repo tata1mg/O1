@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -537,14 +538,59 @@ def test_every_runs_summary_is_kept_beside_the_live_one(agent_ctx, monkeypatch):
     assert {"FAIL": 1} in tallies and {"PASS": 1} in tallies and res["tally"] == {"PASS": 1}
 
 
-def test_the_stage_refuses_an_engine_without_the_browser_guard(agent_ctx, monkeypatch):
+def test_the_stage_refuses_an_engine_without_mcp(agent_ctx, monkeypatch):
+    given(monkeypatch, case(WEB))
+    engine = AgentEngine({WEB: passing(WEB)})
+    engine.name = "pi"
+    agent_ctx.engine = engine
+    with pytest.raises(EngineFailure, match="needs an engine with MCP"):
+        STAGE.engine(STAGE, agent_ctx)
+    assert engine.requests == []
+
+
+def test_on_axon_the_request_carries_the_grants_the_guard_and_the_check(agent_ctx, monkeypatch):
+    """claude-code grants from the stage and guards with its own hook; axon is told all three in the request."""
+    from rfc_agent.hooks import guard_browser
+
     given(monkeypatch, case(WEB))
     engine = AgentEngine({WEB: passing(WEB)})
     engine.name = "axon"
     agent_ctx.engine = engine
-    with pytest.raises(EngineFailure, match="claude-code engine only"):
-        STAGE.engine(STAGE, agent_ctx)
-    assert engine.requests == []
+    assert run(agent_ctx, engine)["tally"] == {"PASS": 1}
+    req = engine.requests[0]
+    c = req.containment
+    assert {"Read", "Write", "Edit", "mcp__playwright__browser_snapshot", "mcp__playwright__browser_click"} \
+        <= set(c.allowed_tools) and "Bash" not in c.allowed_tools
+    assert c.tool_guards == (("mcp__playwright__", (sys.executable, guard_browser.__file__)),)
+    folder = agent_ctx.run_dir / ui_agent.AGENT_DIR / WEB
+    assert c.write_checks == ((str(folder / ui_agent.VERDICT),
+                               (sys.executable, str(stage_mod.CHECK_SCRIPT), f"{ui_agent.AGENT_DIR}/{WEB}")),)
+    assert "checked every time you write it" in req.prompt and stage_mod.CHECK_VERDICT not in req.prompt
+    assert req.env[guard_browser.ORIGIN_ENV] == "https://web.test"   # the guard's limits ride in the env
+
+
+def test_a_cut_off_session_is_costed_from_the_trace_the_engine_left(agent_ctx, monkeypatch):
+    """Pi and Axon write the canonical trace before they raise on a timeout; there is no Claude raw stream."""
+    from harness.events import TraceSummary
+
+    given(monkeypatch, case(WEB))
+
+    class CutOff(AgentEngine):
+        name = "axon"
+
+        def run(self, req):
+            self.requests.append(req)
+            Path(req.trace_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(req.trace_path).write_text("")
+            raise EngineFailure("timed out after 960s")
+
+    monkeypatch.setattr("harness.events.summarize", lambda path: TraceSummary(
+        final_text="", got_result=False, cost_usd=0.7, tool_calls=[BROWSER_CALL] * 4))
+    agent_ctx.engine = CutOff()
+    res = run(agent_ctx, agent_ctx.engine)
+    row = res["results"][0]
+    assert row["status"] == "ERROR" and row["browser_calls"] == 4 and row["cost_usd"] == 0.7
+    assert res["cost_unknown_for"] == []
 
 
 def test_a_missing_browser_build_is_named_before_any_session(agent_ctx, monkeypatch):

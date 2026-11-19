@@ -12,7 +12,10 @@ Pi 1.4.0 on 2026-10-27 (decisions.md):
 4. NO PI_OFFLINE: model discovery through the gateway is a startup network operation.
 5. MCP exists (Pi 1.4 has it built in). Stage servers are registered for the one session by rfc-tools.js
    (`pi.registerMcpServer`), never written to the operator's ~/.axon/pi/mcp.json, and the granted tool
-   names are allowed through the guard.
+   names are allowed through the guard. Both url and stdio (`command` + `args`) servers register headless
+   (stdio measured on Axon 1.0.4, 2026-11-19, with Playwright MCP and `maestro mcp`).
+6. A stage's own tool guards and write checks (Containment.tool_guards / write_checks) are run by
+   rfc-tools.js: the same scripts the claude-code adapter runs as PreToolUse hooks.
 
 Model names: stages are authored with Claude ids. `map_model` turns them into gateway ids by tier (opus /
 sonnet / haiku, and a 1M-context variant), so a stage needs no edit to run here; a non-Claude id passes
@@ -114,12 +117,18 @@ def thinking_for(effort: str | None) -> str | None:
 
 
 def write_tools_config(path: Path, *, mcp: dict | None = None, hook_cmd: list[str] | None = None,
-                       threshold_compaction: bool = False) -> Path:
-    """The one file rfc-tools.js reads (RFC_TOOLS_CONFIG). 0600: an MCP spec may carry a bearer token."""
+                       threshold_compaction: bool = False, guards=(), write_checks=()) -> Path:
+    """The one file rfc-tools.js reads (RFC_TOOLS_CONFIG). 0600: an MCP spec may carry a bearer token.
+
+    `guards` is Containment.tool_guards and `write_checks` Containment.write_checks, as given."""
     servers = {name: {k: v for k, v in (spec or {}).items() if k != "type"} for name, spec in (mcp or {}).items()}
     body = {"mcp": servers, "threshold_compaction": bool(threshold_compaction)}
     if hook_cmd:
         body["hook"] = {"cmd": list(hook_cmd)}
+    if guards:
+        body["guards"] = [{"prefix": str(prefix), "cmd": [str(c) for c in cmd]} for prefix, cmd in guards]
+    if write_checks:
+        body["write_checks"] = [{"path": str(file), "cmd": [str(c) for c in cmd]} for file, cmd in write_checks]
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -176,6 +185,9 @@ class AxonEngine(PiEngine):
             cwd / "logs" / f"{req.label}.rfc-tools.json",
             mcp=dict(containment.mcp_servers or {}),
             threshold_compaction=bool(self._flag("axon.threshold_compaction")),
+            # the run-level `hooks` switch turns these off with the guard, as it does on claude-code
+            guards=containment.tool_guards if containment.hooks_enabled else (),
+            write_checks=containment.write_checks,
         )
         env = {**(req.env or {}), "RFC_TOOLS_CONFIG": str(cfg_path)}
         # A stage that names no model (the testing stages) still needs one: Axon always passes --provider, and

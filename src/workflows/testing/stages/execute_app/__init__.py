@@ -42,10 +42,24 @@ from harness.contracts import EngineFailure, RunContext, Stage, StageResult
 from ... import app_agent, devices, maestro, maestro_index, ui_agent, ui_record
 from ...devices import SKIPPED_EXIT, Android, DeviceLock
 from ...store import get_store
-from .. import _stage_persona, feature_of, forbid_of, keep_dated, only_cases, read_json, read_json_gated, write_json
+from .. import (
+    _stage_persona,
+    agent_grants,
+    checks_on_write,
+    engine_name,
+    feature_of,
+    forbid_of,
+    keep_dated,
+    only_cases,
+    read_json,
+    read_json_gated,
+    recovered_summary,
+    write_json,
+)
 
 SKILL_PATH = Path(__file__).resolve().parents[2] / "skills" / "qa-app-agent" / "SKILL.md"
-CHECK_VERDICT = f"{sys.executable} {Path(__file__).resolve().parents[2] / 'check_verdict.py'}"
+CHECK_SCRIPT = Path(__file__).resolve().parents[2] / "check_verdict.py"
+CHECK_VERDICT = f"{sys.executable} {CHECK_SCRIPT}"
 VERDICT_EVERY = 12
 GRACE_S = 60
 ERROR = "ERROR"
@@ -81,10 +95,10 @@ def settings_of(ctx: RunContext, android: Android) -> dict:
     if "neucoins" in allowed and not bool(ctx.flag("testing.agent_test_account", False)):
         raise EngineFailure("execute_app: --allow neucoins lets the agent redeem or toggle the device account's "
                             "NeuCoins. Only on a TEST account: pass --test-account, or drop neucoins from --allow.")
-    engine_name = str(getattr(ctx.engine, "name", "") or "")
-    if engine_name in ("pi", "axon"):
-        raise EngineFailure(f"execute_app runs on the claude-code engine only (this run's is {engine_name!r}): "
-                            f"its device guard is a Claude Code hook. Re-run without --engine.")
+    if engine_name(ctx) == "pi":
+        # as execute_ui_agent: the device is an MCP server; axon holds it with the same guard script
+        raise EngineFailure("execute_app needs an engine with MCP: the device is an MCP server and the `pi` "
+                            "engine has none. Re-run without --engine, or with --engine axon.")
     return {"environment": env_name, "run_env": f"android-{env_name}",
             "build": "",  # the app version on the device (`dumpsys package`), not the web --build
             "variant": android.variant, "app_id": android.app_id, "production": production,
@@ -160,7 +174,8 @@ def run_agent_case(stage: Stage, ctx: RunContext, case, folder: Path, label: str
     count_file = Path(tempfile.gettempdir()) / f"rfc-agent-device-{uuid.uuid4().hex}"
     rel = str(folder.relative_to(ctx.run_dir))
     req = EngineRequest(
-        prompt=app_agent.build_prompt(case, rel, settings, serial, notes, CHECK_VERDICT, VERDICT_EVERY),
+        prompt=app_agent.build_prompt(case, rel, settings, serial, notes,
+                                      "" if checks_on_write(ctx) else CHECK_VERDICT, VERDICT_EVERY),
         cwd=ctx.run_dir, label=label, trace_path=events_path(ctx.run_dir, label),
         timeout_s=settings["case_timeout_s"] + GRACE_S, skill_path=SKILL_PATH,
         model=(ctx.flag("model", "") or None), live=False,
@@ -169,8 +184,14 @@ def run_agent_case(stage: Stage, ctx: RunContext, case, folder: Path, label: str
              gd.LINK_HOSTS_ENV: LINK_HOSTS, gd.MAX_ACTIONS_ENV: str(settings["max_actions"]),
              gd.COUNT_FILE_ENV: str(count_file), gd.VERDICT_FILE_ENV: str(folder / ui_agent.VERDICT),
              gd.VERDICT_EVERY_ENV: str(VERDICT_EVERY), gd.FORBID_ENV: settings.get("forbid", "")},
-        containment=Containment(writable_roots=(ctx.run_dir,),
-                                mcp_servers={app_agent.SERVER: app_agent.maestro_server(folder)}),
+        containment=Containment(
+            writable_roots=(ctx.run_dir,),
+            # as execute_ui_agent: what an engine other than claude-code needs to grant, guard and check
+            allowed_tools=agent_grants((app_agent.SERVER,)),
+            tool_guards=((f"mcp__{app_agent.SERVER}__", (sys.executable, str(Path(gd.__file__)))),),
+            write_checks=((str(folder / ui_agent.VERDICT), (sys.executable, str(CHECK_SCRIPT), rel)),),
+            hooks_enabled=bool(ctx.flag("hooks", True)),
+            mcp_servers={app_agent.SERVER: app_agent.maestro_server(folder)}),
         native_ctx={"stage": dataclasses.replace(stage, mcp_servers=(app_agent.SERVER,)), "ctx": ctx},
     )
     t0 = time.monotonic()
@@ -181,7 +202,7 @@ def run_agent_case(stage: Stage, ctx: RunContext, case, folder: Path, label: str
             failure = f"the session ended with an error ({getattr(summary, 'error_reason', None) or 'unknown'})"
     except Exception as exc:  # one case's session must not take the others with it
         failure = f"the session did not finish ({type(exc).__name__}: {str(exc)[:300]})"
-        summary = None
+        summary = recovered_summary(ctx, label, req.trace_path)  # a cut-off session still made calls and cost
     if summary is not None:
         tool_calls = list(getattr(summary, "tool_calls", None) or [])
         calls, acted = app_agent.device_calls(tool_calls), app_agent.device_actions(tool_calls)

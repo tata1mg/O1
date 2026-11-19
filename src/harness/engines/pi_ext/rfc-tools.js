@@ -6,6 +6,8 @@
  *
  *   {"mcp":  {"<server>": {"url": "...", "headers": {...}}},          // registered for THIS session only
  *    "hook": {"cmd": ["/abs/python", "/abs/hook.py"]},                 // the Claude hook script, reused
+ *    "guards": [{"prefix": "mcp__playwright__", "cmd": [...]}],        // a PreToolUse script per tool prefix
+ *    "write_checks": [{"path": "/abs/verdict.json", "cmd": [...]}],    // run after a write to that file
  *    "threshold_compaction": false}                                    // cancel Axon's early compaction
  *
  * 1. MCP. `pi.registerMcpServer()` adds the server for this session without touching the operator's
@@ -19,12 +21,22 @@
  *    implementation; this file only translates Pi's event shape into the Claude hook payload. Its INVESTIGATE_*
  *    environment is inherited from the Pi process, which the Python side sets exactly as it does for Claude.
  *
+ * 3. Tool guards. A stage that grants tools which ACT (the browser of execute_ui_agent, the device of
+ *    execute_app) holds every call with a script: on Claude a PreToolUse command hook (rfc_agent/hooks/
+ *    guard_browser.py, guard_device.py). Here the same script runs from `tool_call` for every tool whose name
+ *    starts with the guard's prefix, with the Claude payload on stdin: exit 0 allows, exit 2 blocks with the
+ *    script's stderr, and anything else blocks too. Its limits live in environment variables and a count file,
+ *    both inherited from the Pi process.
+ *
+ * 4. Write checks. After a write to a named file, a command runs and what it prints is appended to the result
+ *    the model reads — the verdict check an agent runs through Bash on Claude, with no shell here.
+ *
  * Failure policy mirrors the guard: a pre check that cannot run BLOCKS the write; a post check that cannot run
  * adds nothing (the Claude hook never blocks on post either).
  */
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 /** Pi built-in tool -> the Claude tool name hook.py routes on. */
@@ -43,11 +55,15 @@ const WRITE_TOOLS = new Set(["write", "edit", "multiedit"]);
 
 export function loadConfig(env = process.env) {
   const p = env.RFC_TOOLS_CONFIG;
-  if (!p) return { mcp: {}, hook: null, threshold_compaction: true };
+  if (!p) return { mcp: {}, hook: null, guards: [], write_checks: [], threshold_compaction: true };
   const raw = JSON.parse(readFileSync(p, "utf8"));
+  const cmds = (list, key) => (Array.isArray(list) ? list : []).filter(
+    (x) => x && typeof x[key] === "string" && x[key] && Array.isArray(x.cmd) && x.cmd.length);
   return {
     mcp: raw.mcp || {},
     hook: raw.hook && Array.isArray(raw.hook.cmd) && raw.hook.cmd.length ? raw.hook : null,
+    guards: cmds(raw.guards, "prefix"),
+    write_checks: cmds(raw.write_checks, "path"),
     threshold_compaction: raw.threshold_compaction !== false,
   };
 }
@@ -113,6 +129,73 @@ export function postFeedback(hook, toolName, input, isError, cwd, run = runHook)
   }
 }
 
+function runCmd(cmd, payload, cwd) {
+  return spawnSync(cmd[0], cmd.slice(1), {
+    input: payload === undefined ? "" : JSON.stringify(payload),
+    encoding: "utf8",
+    timeout: 60000,
+    maxBuffer: 4 * 1024 * 1024,
+    cwd,
+  });
+}
+
+/**
+ * The stage's tool guards: {block:false} or {block:true, reason}. Every guard whose prefix the tool name
+ * starts with is asked, with the tool's own name and input (an MCP tool's are already the Claude ones).
+ * FAILS CLOSED: a guard that cannot run, or exits with anything but 0, blocks the call.
+ */
+export function guardDecision(guards, toolName, input, cwd, run = runCmd) {
+  const name = String(toolName || "");
+  for (const g of guards || []) {
+    if (!name.startsWith(g.prefix)) continue;
+    const payload = { hook_event_name: "PreToolUse", tool_name: name, tool_input: input || {} };
+    let res;
+    try {
+      res = run(g.cmd, payload, cwd);
+    } catch (err) {
+      return { block: true, reason: `tool guard failed (blocking): ${err && err.message ? err.message : err}` };
+    }
+    if (res.error) return { block: true, reason: `tool guard failed (blocking): ${res.error.message || res.error}` };
+    if (res.status === 0) continue;
+    const why = (res.stderr || "").trim();
+    return { block: true, reason: res.status === 2 && why ? why : `tool guard exited ${res.status} (blocking): ${why}` };
+  }
+  return { block: false };
+}
+
+/** The text to append to a write's result: what the file's check printed ("" = no check, or it said nothing). */
+export function writeCheck(checks, toolName, input, isError, cwd, run = runCmd) {
+  if (isError || !WRITE_TOOLS.has(toolName)) return "";
+  const p = (input || {}).path ?? (input || {}).file_path;
+  if (p === undefined || p === null || p === "") return "";
+  const abs = path.resolve(cwd, String(p));
+  const out = [];
+  for (const c of checks || []) {
+    if (path.resolve(c.path) !== abs) continue;
+    try {
+      const res = run(c.cmd, undefined, cwd);
+      if (res.error) continue;
+      const text = `${res.stdout || ""}${res.stderr || ""}`.trim();
+      if (text) out.push(text);
+    } catch {
+      /* a check that cannot run adds nothing: the stage checks the file again itself */
+    }
+  }
+  return out.join("\n");
+}
+
+/** One denial into the harness's side file, in the guard's own shape, so the trace shows it. Never throws. */
+function recordDenial(event, reason) {
+  const dest = process.env.HARNESS_DENIALS_PATH;
+  if (!dest) return;
+  try {
+    appendFileSync(dest, JSON.stringify({ type: "harness_denial", ts: Date.now() / 1000,
+      toolCallId: event.toolCallId, tool: event.toolName, reason }) + "\n", "utf8");
+  } catch {
+    /* evidence, not control flow */
+  }
+}
+
 export default function (pi) {
   let cfg = null;
   let loadError = null;
@@ -142,17 +225,27 @@ export default function (pi) {
       if (WRITE_TOOLS.has(event.toolName)) {
         return { block: true, reason: `rfc-tools could not load its config (blocking writes): ${loadError}` };
       }
+      // the config also names the guards an MCP tool is held by; without it none of them may run
+      if (String(event.toolName || "").startsWith("mcp__")) {
+        return { block: true, reason: `rfc-tools could not load its config (blocking MCP tools): ${loadError}` };
+      }
       return undefined;
     }
     const cwd = (ctx && ctx.cwd) || process.cwd();
     const verdict = preDecision(cfg.hook, event.toolName, event.input, cwd);
-    return verdict.block ? { block: true, reason: verdict.reason } : undefined;
+    if (verdict.block) return { block: true, reason: verdict.reason };
+    const guarded = guardDecision(cfg.guards, event.toolName, event.input, cwd);
+    if (!guarded.block) return undefined;
+    recordDenial(event, guarded.reason);
+    return { block: true, reason: guarded.reason };
   });
 
   pi.on("tool_result", async (event, ctx) => {
-    if (!cfg || !cfg.hook) return undefined;
+    if (!cfg) return undefined;
     const cwd = (ctx && ctx.cwd) || process.cwd();
-    const extra = postFeedback(cfg.hook, event.toolName, event.input, event.isError, cwd);
+    const extra = [postFeedback(cfg.hook, event.toolName, event.input, event.isError, cwd),
+                   writeCheck(cfg.write_checks, event.toolName, event.input, event.isError, cwd)]
+      .filter(Boolean).join("\n\n");
     if (!extra) return undefined;
     return { content: [...(event.content || []), { type: "text", text: `\n\n${extra}` }] };
   });

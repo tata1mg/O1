@@ -35,6 +35,13 @@ class Containment:
     readonly_shell: bool = True  # allow only provably read-only shell segments without asking
     hooks_enabled: bool = True  # master switch for adapter-side hook transport (flag `hooks`)
     disabled_hooks: tuple[str, ...] = ()  # names of individual hooks turned off (flag `hooks_off`)
+    # (tool-name prefix, argv): a command run before every tool call whose name starts with the prefix. It
+    # gets the Claude PreToolUse payload on stdin; exit 0 allows, exit 2 denies with its stderr, anything
+    # else denies. The claude-code adapter carries the same scripts as its own hooks and ignores this.
+    tool_guards: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    # (absolute file, argv): a command run after a write to that file; what it prints is appended to the
+    # write's result. For a check an agent would otherwise have to run through a shell.
+    write_checks: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass

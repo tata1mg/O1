@@ -5,7 +5,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const [, , toolsJs, guardJs, python, hookPy, runDir] = process.argv;
+const [, , toolsJs, guardJs, python, hookPy, runDir, browserGuardPy] = process.argv;
 const t = await import(pathToFileURL(toolsJs).href);
 const g = await import(pathToFileURL(guardJs).href);
 const failures = [];
@@ -57,5 +57,48 @@ const inside = t.preDecision(real, "write", { path: "out/ok.md" }, runDir);
 check("real hook allows a write inside the allow-list", !inside.block, inside);
 const outside = t.preDecision(real, "write", { path: "secret.md" }, runDir);
 check("real hook denies a write outside it", outside.block && /DENIED: you may only write out\/\*/.test(outside.reason), outside);
+
+// tool guards: a PreToolUse script per tool-name prefix, failing closed
+const guards = [{ prefix: "mcp__playwright__", cmd: ["py", "guard.py"] }];
+let seen = null;
+const gAllow = t.guardDecision(guards, "mcp__playwright__browser_click", { element: "Add" }, "/run",
+  (cmd, payload) => { seen = { cmd, payload }; return { status: 0 }; });
+check("guard exit 0 allows", !gAllow.block, gAllow);
+check("the guard gets the Claude PreToolUse payload", seen && seen.cmd[1] === "guard.py" &&
+  seen.payload.hook_event_name === "PreToolUse" && seen.payload.tool_name === "mcp__playwright__browser_click" &&
+  seen.payload.tool_input.element === "Add", seen);
+const gDeny = t.guardDecision(guards, "mcp__playwright__browser_navigate", { url: "x" }, "/run",
+  () => ({ status: 2, stderr: "DENIED by rfc_agent browser-guard: off origin\n" }));
+check("guard exit 2 blocks with its message", gDeny.block && gDeny.reason === "DENIED by rfc_agent browser-guard: off origin", gDeny);
+const gCrash = t.guardDecision(guards, "mcp__playwright__browser_click", {}, "/run", () => ({ status: 1, stderr: "Traceback" }));
+check("a guard that crashes blocks", gCrash.block && /blocking/.test(gCrash.reason), gCrash);
+const gGone = t.guardDecision(guards, "mcp__playwright__browser_click", {}, "/run", () => ({ error: new Error("ENOENT") }));
+check("a guard that cannot run blocks", gGone.block && /blocking/.test(gGone.reason), gGone);
+let asked = false;
+const gOther = t.guardDecision(guards, "mcp__fleetlens__find_symbol", {}, "/run", () => { asked = true; return { status: 2 }; });
+check("a tool outside the prefix is not the guard's", !gOther.block && !asked, gOther);
+
+// write checks: the check's output rides on the write's result
+const checks = [{ path: "/run/qa/agent/TC-1/verdict.json", cmd: ["py", "check.py", "qa/agent/TC-1"] }];
+const said = (out) => () => ({ status: 1, stdout: out, stderr: "" });
+check("a write to the checked file returns what the check printed",
+  t.writeCheck(checks, "write", { path: "qa/agent/TC-1/verdict.json" }, false, "/run", said("REJECTED — 1 problem\n")) === "REJECTED — 1 problem", null);
+check("an edit of it is checked too",
+  t.writeCheck(checks, "edit", { path: "/run/qa/agent/TC-1/verdict.json" }, false, "/run", said("OK")) === "OK", null);
+check("another file is not checked", t.writeCheck(checks, "write", { path: "qa/agent/TC-1/notes.md" }, false, "/run", said("OK")) === "", null);
+check("a failed write is not checked", t.writeCheck(checks, "write", { path: "qa/agent/TC-1/verdict.json" }, true, "/run", said("OK")) === "", null);
+check("a read is not checked", t.writeCheck(checks, "read", { path: "qa/agent/TC-1/verdict.json" }, false, "/run", said("OK")) === "", null);
+
+// the real guard_browser.py, end to end: the same origin lock as on Claude
+if (browserGuardPy) {
+  process.env.RFC_AGENT_BROWSER_ORIGIN = "https://web.test";
+  const realGuards = [{ prefix: "mcp__playwright__", cmd: [python, browserGuardPy] }];
+  const on = t.guardDecision(realGuards, "mcp__playwright__browser_snapshot", {}, runDir);
+  check("real browser guard allows a look at the page", !on.block, on);
+  const off = t.guardDecision(realGuards, "mcp__playwright__browser_navigate", { url: "https://evil.example/" }, runDir);
+  check("real browser guard denies a navigation off the run's origin", off.block && /outside this run's test environment/.test(off.reason), off);
+  const evalJs = t.guardDecision(realGuards, "mcp__playwright__browser_evaluate", { function: "() => 1" }, runDir);
+  check("real browser guard denies a tool the stage does not grant", evalJs.block && /not one of the browser tools/.test(evalJs.reason), evalJs);
+}
 
 console.log(JSON.stringify({ ok: failures.length === 0, failures }));

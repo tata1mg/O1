@@ -71,6 +71,25 @@ def test_run_keeps_axons_extensions_and_registers_mcp(tmp_path, fake):
     assert not (tmp_path / "run" / ".pi-home").exists()
 
 
+def test_tool_guards_and_write_checks_reach_the_extension(tmp_path, fake):
+    eng = AxonEngine(bin=str(fake))
+    guards = (("mcp__playwright__", ("/py", "/guard_browser.py")),)
+    checks = (("/run/qa/agent/TC-1/verdict.json", ("/py", "/check_verdict.py", "qa/agent/TC-1")),)
+    eng.run(_req(tmp_path, mcp_servers={"playwright": {"type": "stdio", "command": "node", "args": ["cli.js"]}},
+                 allowed_tools=("Read", "Write", "mcp__playwright__browser_click"),
+                 tool_guards=guards, write_checks=checks))
+    dumped = json.loads((tmp_path / "argv.json").read_text())
+    assert dumped["argv"][dumped["argv"].index("--tools") + 1] == "read,write,mcp__playwright__browser_click"
+    cfg = json.loads(Path(dumped["env"]["RFC_TOOLS_CONFIG"]).read_text())
+    assert cfg["mcp"] == {"playwright": {"command": "node", "args": ["cli.js"]}}       # a stdio server, as given
+    assert cfg["guards"] == [{"prefix": "mcp__playwright__", "cmd": ["/py", "/guard_browser.py"]}]
+    assert cfg["write_checks"] == [{"path": checks[0][0], "cmd": ["/py", "/check_verdict.py", "qa/agent/TC-1"]}]
+    # the run-level `hooks` switch takes the guards with it, as it does the Claude hooks
+    eng.run(_req(tmp_path, tool_guards=guards, hooks_enabled=False))
+    dumped = json.loads((tmp_path / "argv.json").read_text())
+    assert "guards" not in json.loads(Path(dumped["env"]["RFC_TOOLS_CONFIG"]).read_text())
+
+
 def test_a_stage_with_no_model_still_gets_one(tmp_path, fake):
     # Pi rejects `--provider litellm` without `--model`; the testing stages name no model.
     import dataclasses
@@ -119,8 +138,10 @@ def test_rfc_tools_extension_decisions_and_the_real_hook(tmp_path):
         r = subprocess.run([NODE, "--check", str(f)], capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
     run = tmp_path / "run"
+    from rfc_agent.hooks import guard_browser
+
     r = subprocess.run([NODE, str(FIX / "rfc_tools_cases.mjs"), str(RFC_TOOLS_JS), str(GUARD_JS), sys.executable,
-                        str(HOOK), str(run)], capture_output=True, text=True, timeout=120)
+                        str(HOOK), str(run), guard_browser.__file__], capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stderr
     out = json.loads(r.stdout.strip().splitlines()[-1])
     assert out["ok"], out["failures"]

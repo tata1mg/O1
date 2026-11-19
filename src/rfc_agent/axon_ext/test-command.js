@@ -95,6 +95,7 @@ const STAGE_WHAT = {
   render_xlsx: "workbook", store_cases: "uploading to Kiwi", prerequisites: "what prestag needs",
   evaluate: "scoring the suite, ~15 min", derive_spec: "deriving the request spec", execute_be: "sending the requests",
   derive_ui: "writing the Playwright tests", execute_web: "running the browser tests",
+  execute_ui_agent: "an agent drives a browser through each case", execute_app: "flows and agents on the emulator",
   publish_app: "recording the Maestro run",
 };
 
@@ -225,6 +226,35 @@ export function resultLines(name, r) {
   return out;
 }
 
+/** The agent kinds' results block (`results_agent`, `results_android`) → report lines: tally, the table as it is. */
+export function agentLines(name, r) {
+  if (!r) return [];
+  const parts = r.parts ? ` · ${r.parts_met} of ${r.parts} parts met` : "";
+  const out = [`${name}: ${counts(r.tally) || "no results"}${parts}${r.run_url ? ` — ${r.run_url}` : ""}`];
+  if (r.table) out.push("", r.table, "");
+  if (r.not_executed?.length) out.push(`  not executed (no expected result): ${r.not_executed.join(", ")}`);
+  if (r.drafts?.length) out.push(`  draft flows ready for convert-flows: ${r.drafts.join(", ")}`);
+  for (const s of r.screenshots || []) out.push(`  ${s.extid} FAIL screenshot: ${s.path}`);
+  return out;
+}
+
+/** What `execute ui-agent|android --pending` found → {web, flow, agent, notRun, lines}: the counts and one line per platform. */
+export function pendingSummary(p) {
+  const a = p.android;
+  const web = (p.will_run || []).length;
+  const flow = a ? (a.by_flow || []).length : 0;
+  const agent = a ? (a.by_agent || []).length : 0;
+  const notRun = a ? (a.not_run || []).length : 0;
+  const lines = [];
+  if (p.will_run) lines.push(`web: ${web} by agent${web > 5 ? ", in batches of 5" : ""}`);
+  if (a) lines.push(`android: ${flow} by flow, ${agent} by agent, ${notRun} not run`);
+  if (p.no_expected_result?.length) {
+    lines.push(`not executed (no expected result; they stay IDLE in the Kiwi run): ${p.no_expected_result.join(", ")}`);
+  }
+  for (const n of (a && a.not_run) || []) lines.push(`  ${n.extid} not run: ${n.why}`);
+  return { web, flow, agent, notRun, lines };
+}
+
 /** Hints for the usual phase B failures (test.md §6.4). */
 export function failureHints(st) {
   const hints = [];
@@ -273,6 +303,10 @@ export const HELP = [
   "      generate the QA suite from an RFC run → Kiwi (PROPOSED) → prerequisites; after your review, execute",
   "/test execute [web|backend|all] [--only-existing] [--run-dir R] [--env E] [--build B] [--headed] [--cases TC-…] [--curl F]",
   "      run the CONFIRMED cases again (web: the written tests at once, or write tests for new cases first)",
+  "/test execute ui-agent|android [--run-dir R | --feature F [--kiwi-plan ID]] [--platform auto|web|android|both] [--env E] [--build B]",
+  "      [--base-url U] [--ui-auth F] [--hosts H] [--cases …] [--headed] [--read-only] [--production] [--devices S,S] [--android-mode M]",
+  "      an agent executes each CONFIRMED UI case: in a browser, and on an emulator (a validated Maestro flow when one covers it).",
+  "      Flags only here; plain words (\"cart-sanity on prod, cases 173\") are understood in Claude Code's /test-agent:execute.",
   "/test evaluate [--run-dir R]      score the suite: the 8-dimension rubric and 14 compliance checks (~15 min)",
   "/test status [run dir]            where a run stands · /test attach <run dir>  follow a run started elsewhere",
   "/test doctor                      check Axon (sign-in, Pi, gateway models)",
@@ -820,7 +854,8 @@ export default function make(pi, { project, uv = "uv" } = {}) {
     if (st._error) return post(`test: could not read the run's status — ${st._error}`);
     if (st.next?.step === "fix") post(st.next.why?.message || `${st.next.stage} stopped.`);
     const lines = [`Results — ${dir}`, ...resultLines("backend", st.results), ...resultLines("web UI", st.results_web),
-      ...resultLines("app UI", st.results_app)].map((l) => l.replace("<project>", project));
+      ...resultLines("app UI", st.results_app), ...agentLines("web, by agent", st.results_agent),
+      ...agentLines("Android", st.results_android)].map((l) => l.replace("<project>", project));
     if (lines.length === 1) lines.push("No execution results yet.");
     lines.push(...failureHints(st));
     lines.push("FAIL is a defect, BLOCKED is missing data or environment (see qa/prerequisites.md), ERROR is the harness. " +
@@ -834,12 +869,7 @@ export default function make(pi, { project, uv = "uv" } = {}) {
   async function execute(argv) {
     const eng = engineFor(argv);
     let args = withoutEngine(argv);
-    if (["ui-agent", "android"].includes(args[0])) {
-      // their browser and device guards are Claude Code hooks: the stages refuse every engine but claude-code
-      return post(`test execute ${args[0]} runs from Claude Code only for now (/test-agent:execute ${args[0]} …): ` +
-        "its safety guards are Claude Code hooks. It uses this same install, config and Kiwi login. " +
-        "Here: /test execute web|backend|all.");
-    }
+    if (["ui-agent", "android"].includes(args[0])) return executeAgent(args, eng);
     const kind = ["web", "backend", "all"].includes(args[0]) ? args[0] : "web";
     const rd = argValue(args, "--run-dir");
     if (rd) args = args.map((a, i) => (args[i - 1] === "--run-dir" ? path.resolve(latest.cwd, expand(a)) : a));
@@ -891,6 +921,136 @@ export default function make(pi, { project, uv = "uv" } = {}) {
     post(`execute ${kind}: ${dir} · env ${shown[0]} · build ${shown[1]}`);
     if ((kind === "web" || kind === "all") && !args.includes("--headed")) {
       const WATCH = "Watch the browser";
+      if ((await pick("Watch it run?", [WATCH, "Run in the background"])) === WATCH) args.push("--headed");
+    }
+    const job = launch({
+      dir, kind: `execute-${kind}`, label: `${path.basename(dir)} · execute ${kind}`,
+      argv: helper("execute", [...args, ...engFlag]), logName: "run.execute.out",
+      onDone: () => report(dir),
+    });
+    if (job) post(`Running in the background; progress shows above the editor. /test attach ${dir} follows it from another session.`);
+  }
+
+  // ---- /test execute ui-agent | android (execute.md §2a, §3) ----
+
+  let saidAgentCost = false;
+
+  /** An agent executes each CONFIRMED UI case. Every question execute.md has Claude ask is a dialog here. */
+  async function executeAgent(args, eng) {
+    const kind = args[0];
+    const has = (f) => args.includes(f);
+    const rd = argValue(args, "--run-dir");
+    if (rd) args = args.map((a, i) => (args[i - 1] === "--run-dir" ? path.resolve(latest.cwd, expand(a)) : a));
+    if (kind === "ui-agent" && !has("--platform")) args.push("--platform", "auto"); // each case where its tags say
+    // what --pending reads: where the cases are, and what decides how each one runs
+    const sel = () => ["--run-dir", "--feature", "--kiwi-plan", "--platform", "--android-mode", "--maestro-repo", "--untagged"]
+      .flatMap((f) => (argValue(args, f) ? [f, argValue(args, f)] : [])).concat(has("--include-manual") ? ["--include-manual"] : []);
+    let p;
+    let askedManual = false;
+    for (;;) {
+      p = await ctl.json(helper("execute", [kind, "--pending", ...sel()]));
+      if (p._error) return post(`test execute ${kind}: ${p._error}`);
+      if (p.error) return post(`Kiwi is unreachable, or the plan does not exist: ${p.error}`);
+      const a = p.android;
+      if (a?.error && /not set up/i.test(a.error)) {
+        post(a.error);
+        if (kind === "android" || !(p.will_run || []).length) return;
+        const WEB = "Run the web cases only";
+        if ((await pick("Android isn't set up on this machine.", [WEB, "Stop"])) !== WEB) return;
+        args[args.indexOf("--platform") + 1] = "web";
+        continue;
+      }
+      if (a?.error) post(`android: ${a.error}`);
+      const manual = [...(p.manual_left || []), ...(a?.manual_left || [])];
+      if (manual.length && !has("--include-manual") && !askedManual) {
+        askedManual = true;
+        const INC = "Include them";
+        const c = await pick(`${manual.length} CONFIRMED manual case(s) have a surface tag and an agent could run them (${manual.slice(0, 8).join(", ")}).`,
+          [INC, "Leave them for a person"]);
+        if (c === undefined) return;
+        if (c === INC) {
+          args.push("--include-manual");
+          continue;
+        }
+      }
+      if (a?.untagged?.length && !has("--untagged")) {
+        const where = { Web: "web", Android: "android", Both: "both", "Skip them": "skip" };
+        const c = await pick(`${a.untagged.length} case(s) have no platform tag — where should they run? (Tag them surface:web / surface:android in Kiwi and this question goes away.)`,
+          Object.keys(where));
+        if (c === undefined) return;
+        args.push("--untagged", where[c]);
+        continue;
+      }
+      break;
+    }
+    const sum = pendingSummary(p);
+    if (!sum.web && !sum.flow && !sum.agent) {
+      return post([`test execute ${kind}: no CONFIRMED UI case with an expected result to run.`, ...sum.lines].join("\n"));
+    }
+    post(sum.lines.join("\n"));
+
+    const TEST = "Yes, a test account";
+    if ((p.needs_session || []).length && !has("--ui-auth")) {
+      const ADD = "Add a recorded session file";
+      const c = await pick(`${p.needs_session.length} case(s) need a logged-in user. Without a recorded session (--ui-auth, or testing.ui_auth in config) they come back BLOCKED; the agent never logs in with a number and OTP.`,
+        [ADD, "Run with what config has"]);
+      if (c === undefined) return;
+      if (c === ADD) {
+        const f = expand(await ask("Path of the Playwright storage-state file (its contents are never read here)"));
+        if (!f || !nonEmptyFile(f)) return post("No session file at that path.");
+        args.push("--ui-auth", f);
+      }
+    }
+    const groups = Object.keys(p.needs_allow || {});
+    if (groups.length && !has("--allow")) {
+      const what = groups.map((g) => (g === "coupons" ? "apply coupons" : "redeem or toggle NeuCoins")).join(" and ");
+      const YES = "Yes, allow";
+      const c = await pick(`Some cases ${what}, which the guard refuses by default (they come back BLOCKED). Allow it for this run? The agent is told to undo what it applied.`,
+        [YES, "No"]);
+      if (c === undefined) return;
+      if (c === YES) args.push("--allow", groups.join(","));
+    }
+    const allowed = (argValue(args, "--allow") || "").split(",");
+    const androidRuns = sum.flow + sum.agent > 0;
+    if ((has("--production") || allowed.includes("neucoins")) && !has("--test-account")) {
+      const GUEST = "It runs as a guest (no session)";
+      const options = androidRuns || allowed.includes("neucoins") ? [TEST, "Stop"] : [TEST, GUEST, "Stop"];
+      const c = await pick(`${has("--production") ? "This run is on PRODUCTION. " : ""}The agent adds to the cart and changes what the account sees. ` +
+        `Is the account (${androidRuns ? "the device's, and any recorded browser session" : "the recorded browser session"}) a TEST account, not a customer's?`, options);
+      if (c === TEST) args.push("--test-account");
+      else if (c !== GUEST) return post("Not confirmed as a test account — nothing was run.");
+    }
+    if (!saidAgentCost) {
+      saidAgentCost = true;
+      post("Each case an agent runs is a model session on every run (cost and time are per case), and it acts on the environment as a real user. " +
+        "An Android case with a validated flow costs nothing and runs the same every time. Axon keeps a backup of every agent session, page contents included.");
+    }
+
+    const engFlag = eng ? ["--engine", eng] : [];
+    let printed;
+    for (let tries = 0; ; tries++) {
+      const r = await ctl.uvRun(helper("execute", [...args, ...engFlag, "--print"]));
+      printed = parsePrint(r.out + "\n" + r.err);
+      if (!printed.missing.length && !printed.cmds.length) return post(`test execute ${kind}: ${(r.err || r.out).trim().split("\n").pop()}`);
+      if (!printed.missing.length) break;
+      if (tries >= 3) return post(`test execute ${kind}: still missing ${printed.missing.join(", ")}`);
+      for (const m of printed.missing) {
+        if (m.startsWith("--env")) {
+          const envs = await ctl.json(helper("preflight", ["envs", "--json"]));
+          const e = Array.isArray(envs) && envs.length
+            ? await pickOrType("Which environment?", envs.map((x) => ({ label: `${x.env} — ${x.base_url}`, value: x.env })), "Environment name")
+            : await ask("Environment name");
+          if (!e) return;
+          args.push("--env", e);
+        } else if (m.startsWith("--build")) {
+          args.push("--build", (await ask("Build (a version or git sha)", "unknown")) || "unknown");
+        } else return post(`test execute ${kind}: missing ${m}`);
+      }
+    }
+    const dir = printed.runDir;
+    post(`execute ${kind}: ${dir} · ${printed.cmds.length} launch(es) · agents on ${eng || "the harness's engine"}`);
+    if (sum.web && !has("--headed")) {
+      const WATCH = "Watch the browser (one case at a time)";
       if ((await pick("Watch it run?", [WATCH, "Run in the background"])) === WATCH) args.push("--headed");
     }
     const job = launch({
