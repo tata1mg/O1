@@ -1,0 +1,81 @@
+src/rfc_agent/run.py
+  s_461c157c616dc4::t_47e90d25877351 20-23,157,207,209-211
+src/rfc_agent/run_metrics.py
+  s_461c157c616dc4::t_435a9e65487fb0 282-283
+tests/rfc/test_run_metrics.py
+  s_461c157c616dc4::t_8962fa0133833a 248-257
+docs/FEEDBACK.md
+  s_461c157c616dc4::t_1bc3322c060f66 193-195,228-229
+tests/rfc/test_feedback.py
+  s_461c157c616dc4::t_8962fa0133833a 601-611
+commands/setup.md
+  s_461c157c616dc4::t_fc6c9bfb45a522 174,176-177,179,186-187
+commands/scope.md
+  s_461c157c616dc4::t_fc6c9bfb45a522 35
+tests/rfc/test_investigate.py
+  s_461c157c616dc4::t_8962fa0133833a 407-409,412-437,439-442
+  s_461c157c616dc4::t_ba9f65d77c9742 410-411,438
+tests/rfc/test_observe.py
+  s_461c157c616dc4::t_12c3402195dc98 632-633,639,644
+  s_461c157c616dc4::t_b608bac5148f20 630-631
+  s_461c157c616dc4::t_8962fa0133833a 619-629,634-638,640-643,645-652
+  s_461c157c616dc4::t_872ee8e13e4e8d 109,111-114,120-128,138,140,143,146-147,150-157,172,177,195-196,199-200,210,235
+SETUP.md
+  s_461c157c616dc4::t_fc6c9bfb45a522 14,122-123,145
+src/rfc_agent/run_facts.py
+  s_461c157c616dc4::t_4809b8f844d761 31-32,53
+tests/rfc/test_run.py
+  s_461c157c616dc4::t_ba9f65d77c9742 261,263,267
+  s_461c157c616dc4::t_872ee8e13e4e8d 79-80,82-83
+  s_461c157c616dc4::t_8962fa0133833a 256-260,262,264-266
+  s_461c157c616dc4::t_373fa6b72919e1 81
+commands/review.md
+  s_461c157c616dc4::t_fc6c9bfb45a522 19
+commands/investigate.md
+  s_461c157c616dc4::t_fc6c9bfb45a522 21
+commands/summarize.md
+  s_461c157c616dc4::t_fc6c9bfb45a522 19
+Makefile
+  s_461c157c616dc4::t_4809b8f844d761 18
+commands/doctor.md
+  s_461c157c616dc4::t_fc6c9bfb45a522 26,28,30
+INSTALL.md
+  s_461c157c616dc4::t_fc6c9bfb45a522 141
+docs/OBSERVABILITY.md
+  s_461c157c616dc4::t_fc6c9bfb45a522 12-15,20-22,33-34,90-92,94-97,106,172
+  s_461c157c616dc4::t_1bc3322c060f66 173-176
+CHANGELOG.md
+  s_461c157c616dc4::t_1bc3322c060f66 47-51,59-66
+src/rfc_agent/feedback.py
+  s_461c157c616dc4::t_b9c71229b36bf5 229,297-298,311-312,316,330-331,358,387
+src/rfc_agent/observe.py
+  s_461c157c616dc4::t_fed027bd5b2b86 314-316,318-320,328-329,367,472-473
+  s_461c157c616dc4::t_47e90d25877351 21-25,30,46,55,99-106,108-111,114,118-119,124-126,154-156
+src/rfc_agent/investigate/agent.py
+  s_461c157c616dc4::t_326a79df13db42 252-259,283-286,289-290
+  s_461c157c616dc4::t_4809b8f844d761 18,295
+commands/revise.md
+  s_461c157c616dc4::t_fc6c9bfb45a522 16
+commands/rfc.md
+  s_461c157c616dc4::t_fc6c9bfb45a522 3,32-34,98
+commands/draft.md
+  s_461c157c616dc4::t_fc6c9bfb45a522 18
+docs/SCOPE.md
+  s_461c157c616dc4::t_1bc3322c060f66 343-345
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ab50e4aba18ea07ec09255e835f8397ce5da1296",
+  "prompts": {},
+  "sessions": {
+    "s_461c157c616dc4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "faed9c0f-737d-4a1e-9864-b080199796c8",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}

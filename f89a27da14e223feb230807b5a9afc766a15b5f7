@@ -1,0 +1,19 @@
+uv.lock
+  s_5beb35ed61f5ac::t_c48f37e70e700b 38,40,42,194,199,201-230,235,240,242,247,252-253,260,262,267,272,274,279,286,288,293,299,301
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f89a27da14e223feb230807b5a9afc766a15b5f7",
+  "prompts": {},
+  "sessions": {
+    "s_5beb35ed61f5ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fcebd562-94aa-4095-abfb-31502086db5a",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}

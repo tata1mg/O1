@@ -1,0 +1,30 @@
+docs/HLD.md
+  s_5beb35ed61f5ac::t_0ce65c23aca034 126-127
+tests/rfc/test_investigate.py
+  s_5beb35ed61f5ac::t_8f3db84c4480d1 362-389,393-406
+  s_5beb35ed61f5ac::t_0ce65c23aca034 390-392
+tests/rfc/test_run.py
+  s_5beb35ed61f5ac::t_8f3db84c4480d1 202-251
+CHANGELOG.md
+  s_5beb35ed61f5ac::t_0ce65c23aca034 30-32
+src/rfc_agent/run.py
+  s_5beb35ed61f5ac::t_90a5746ef408c3 29,159-171,200,254-259
+src/rfc_agent/investigate/agent.py
+  s_5beb35ed61f5ac::t_90a5746ef408c3 23,67-88,249-250,258-260,262-267,269-287
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "932365a98dd4d7857e347dc5d36dd916cb3476d8",
+  "prompts": {},
+  "sessions": {
+    "s_5beb35ed61f5ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fcebd562-94aa-4095-abfb-31502086db5a",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}

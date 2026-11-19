@@ -1,0 +1,62 @@
+src/rfc_agent/mcp_tools.py
+  s_931385d12682d7::t_7bbd3a002d1065 51
+  s_5beb35ed61f5ac::t_498d25f4ce0688 52-53
+commands/feedback.md
+  s_931385d12682d7::t_cdca1c5b0dc464 42-43,45,52-53
+src/rfc_agent/run.py
+  s_5beb35ed61f5ac::t_16fa8b58b8e635 28,36,295-298
+src/rfc_agent/feedback.py
+  s_5beb35ed61f5ac::t_16fa8b58b8e635 417,425-426,442-444,482,499-503
+  s_5beb35ed61f5ac::t_b566d361b8e5ea 227-228,234-236,246,253,264,270-272,285,289-292,306-308,311-312,324-326,353,380-381
+  s_5beb35ed61f5ac::t_e30fa0ad22b42b 451
+  s_5beb35ed61f5ac::t_21fc2b31596ffb 504-505
+tests/rfc/test_observe.py
+  s_5beb35ed61f5ac::t_2ee0f90f430357 576-586,589-602
+  s_5beb35ed61f5ac::t_dbeb848847b915 587-588
+tests/rfc/test_feedback.py
+  s_5beb35ed61f5ac::t_986bb50a00795a 591-600
+  s_5beb35ed61f5ac::t_f8e5122d19333a 560-590
+  s_5beb35ed61f5ac::t_e30fa0ad22b42b 535-541
+src/rfc_agent/observe.py
+  s_5beb35ed61f5ac::t_16fa8b58b8e635 464-469
+  s_5beb35ed61f5ac::t_325104ce38f76b 304-335,345,394-396,407,479
+  s_5beb35ed61f5ac::t_de6bf734c01ed1 573-574
+  s_5beb35ed61f5ac::t_ab7802eeb61fc6 36,40
+tests/rfc/test_draft.py
+  s_5beb35ed61f5ac::t_eabd11db6dbf10 124-125
+  s_5beb35ed61f5ac::t_f92f26c206c355 113,122-123,126
+docs/OBSERVABILITY.md
+  s_5beb35ed61f5ac::t_209481e701c3e0 157-161
+  s_5beb35ed61f5ac::t_e395d75498bca4 162-163
+src/rfc_agent/run_metrics.py
+  s_5beb35ed61f5ac::t_325104ce38f76b 267-276,291
+tests/rfc/test_agent_trace_string_event.py
+  s_931385d12682d7::t_48e4da45998b18 1-10,13-21
+  s_5beb35ed61f5ac::t_de6bf734c01ed1 11-12
+src/rfc_agent/draft/cli.py
+  s_5beb35ed61f5ac::t_9c87cec6983369 235-238,244-246
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "74d29db11b18c6d166944674943dcc3f5c1f24e8",
+  "prompts": {},
+  "sessions": {
+    "s_5beb35ed61f5ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fcebd562-94aa-4095-abfb-31502086db5a",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    },
+    "s_931385d12682d7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8fd2d62b-db79-4526-b4f6-2878be35374c",
+        "model": "claude-haiku-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}

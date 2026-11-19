@@ -1,0 +1,60 @@
+tests/rfc/test_feedback.py
+  s_461c157c616dc4::t_f9213d280a6075 661-685,688-691,694-728,731-749
+  s_461c157c616dc4::t_3b9687932aeafe 686-687,692-693,729-730
+tests/rfc/test_run_end.py
+  s_461c157c616dc4::t_f9213d280a6075 1-18,25-70,74-88,90-163
+  s_461c157c616dc4::t_af56437322085d 71-73,89
+  s_29051cc121f677::t_e4e30a7a3584c8 19-24
+docs/FEEDBACK.md
+  s_461c157c616dc4::t_7a17166ca07139 78
+  s_461c157c616dc4::t_601c6c23368f21 22-24,26-28,75-76,132-171,271-275
+CHANGELOG.md
+  s_461c157c616dc4::t_7a17166ca07139 26-37
+src/rfc_agent/observe.py
+  s_461c157c616dc4::t_92730eebc9500b 444-446,456-464
+src/rfc_agent/run_end.py
+  s_461c157c616dc4::t_034d1886c2e2ea 46-47,79-80
+  s_461c157c616dc4::t_af56437322085d 43-45,48-54,58-70,73-78,81-84,87-89,169-171
+  s_29051cc121f677::t_af5c9b82c5500e 57
+  s_29051cc121f677::t_e4e30a7a3584c8 71-72
+  s_461c157c616dc4::t_ce9c0ad6d47ddc 1-42,85-86,90-168,172-226,236-240,242-246,249-253,256-263
+  s_29051cc121f677::t_055fca159b4958 55-56
+  s_461c157c616dc4::t_3b9687932aeafe 227-235,241,247-248,254-255,264-265
+tests/rfc/test_observe.py
+  s_461c157c616dc4::t_db1050019e7f0e 568-584
+commands/feedback.md
+  s_461c157c616dc4::t_267ccebf4ad8ae 2,29,31-49,121-151,154-163
+  s_461c157c616dc4::t_69784a4e7b906e 164
+src/rfc_agent/run.py
+  s_461c157c616dc4::t_e11e7cbd7c3499 36,250-283,287-290
+commands/rfc.md
+  s_461c157c616dc4::t_267ccebf4ad8ae 115,117-120
+src/rfc_agent/feedback.py
+  s_461c157c616dc4::t_02b95624a79564 7-8,36-41,43-50,81,136-140,274,289,367-384,386-421,424-426,461,473-477,481-483,493-497,499-500,512,536-543,547-554
+  s_461c157c616dc4::t_df3bce2a748285 42,128-129,385,422-423,720-722,770-771
+  s_461c157c616dc4::t_86c1f26c4a0ac5 699-716,718-719,724-726,772-776,805-808,815,826-830
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d4466103a4e7e215be0e8ce22aaa0246e4ea0996",
+  "prompts": {},
+  "sessions": {
+    "s_29051cc121f677": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "554f1e67-1d6a-4f7e-abb7-a23d32376a50",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    },
+    "s_461c157c616dc4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "faed9c0f-737d-4a1e-9864-b080199796c8",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,37 @@
+tests/rfc/test_feedback.py
+  s_461c157c616dc4::t_c07cd5bf1b42c9 881
+  s_461c157c616dc4::t_ba2b59d0878179 764-880,882-908,910,912-919,921-922
+  s_461c157c616dc4::t_6f8c69d370225e 23-28,909,911,920
+  s_461c157c616dc4::t_f5e2bbfe05c4cc 756-763
+src/rfc_agent/run.py
+  s_461c157c616dc4::t_f5e2bbfe05c4cc 31,276,281
+commands/feedback.md
+  s_461c157c616dc4::t_0b501c89bf6b53 35-38,50-67,197-198
+tests/rfc/test_run_end.py
+  s_461c157c616dc4::t_f5e2bbfe05c4cc 164-171
+src/rfc_agent/feedback.py
+  s_461c157c616dc4::t_f5e2bbfe05c4cc 634-635,952-953
+  s_461c157c616dc4::t_101d54cee9ca0f 433-436,445-539,542-571,575-600,649,863,868-869,873
+  s_461c157c616dc4::t_60461a91736f98 540-541
+  s_461c157c616dc4::t_aa4c3aae2370e4 601-602
+docs/FEEDBACK.md
+  s_461c157c616dc4::t_451dc666576cb1 172-189,287-289
+CHANGELOG.md
+  s_461c157c616dc4::t_451dc666576cb1 38-41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "194ec01499b9ce9626c2e60e9f86e110e9daa69a",
+  "prompts": {},
+  "sessions": {
+    "s_461c157c616dc4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "faed9c0f-737d-4a1e-9864-b080199796c8",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}

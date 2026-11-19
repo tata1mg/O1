@@ -1,0 +1,25 @@
+commands/feedback.md
+  s_461c157c616dc4::t_92b1276f718611 139
+docs/FEEDBACK.md
+  s_461c157c616dc4::t_92b1276f718611 29,37,54,97-99
+docs/OBSERVABILITY.md
+  s_461c157c616dc4::t_92b1276f718611 93
+CHANGELOG.md
+  s_461c157c616dc4::t_5b6c1cfe615bca 21,26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "44edfd44e7df52e16b9975375670b6d2c0b7f895",
+  "prompts": {},
+  "sessions": {
+    "s_461c157c616dc4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "faed9c0f-737d-4a1e-9864-b080199796c8",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+src/rfc_agent/engine.py
+  s_461c157c616dc4::t_f3c953e71c7081 1441
+src/workflows/testing/be_spec.py
+  s_461c157c616dc4::t_f3c953e71c7081 54
+tests/infra/test_resume_policy.py
+  s_461c157c616dc4::t_f72fd4f38e25eb 109-115
+tests/infra/test_think_tap.py
+  s_461c157c616dc4::t_f72fd4f38e25eb 157-200
+src/rfc_agent/think_tap.py
+  s_461c157c616dc4::t_f3c953e71c7081 32,39,46-72,173-178,182-184,186,193,198-200,224-226,230,236-238,270
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d4f70661859cb16e24835e15527a1a8e3ad34ee4",
+  "prompts": {},
+  "sessions": {
+    "s_461c157c616dc4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "faed9c0f-737d-4a1e-9864-b080199796c8",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,23 @@
+CHANGELOG.md
+  s_79e3df96a73545::t_b9e35b370d033b 40-42
+src/rfc_agent/figma_snapshot.py
+  s_79e3df96a73545::t_c33b05fbfa2e97 554-556,558-559
+tests/rfc/test_figma_snapshot.py
+  s_79e3df96a73545::t_0bbf910f055c3a 275-296
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dd65f27657961c7cfe1ccefeba21c7759562939e",
+  "prompts": {},
+  "sessions": {
+    "s_79e3df96a73545": {
+      "agent_id": {
+        "tool": "pi",
+        "id": "01a1f453-c822-7395-b2ba-7884c626bdb6",
+        "model": "claude-opus-5.5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}
