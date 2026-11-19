@@ -5,6 +5,10 @@ exactly once" (run_chain.sh:174). Nothing verified the tool had been called, not
 returned, and a model that skipped it left a chain that reported success (survey §1: "a soft failure is
 invisible"). Here the upsert is Python, the summary is `qa/store.json`, and the gate checks the arithmetic
 the store itself reports.
+
+Cases are stored PROPOSED. A case a human has already reviewed or edited is never overwritten: the store
+reports it as protected, and each one is recorded as a `case_kept_for_human` decision so the trace shows
+which of the agent's changes a reviewer's work outranked.
 """
 
 from __future__ import annotations
@@ -24,8 +28,9 @@ def _run(stage: Stage, ctx: RunContext) -> str:
     feature = feature_of(ctx)
     cases = read_json(ctx.path("qa/cases.json"), []) or []
     if ctx.flag("testing.dry_run", False):
-        write_json(ctx.path(STORE_OUT), {"created": 0, "updated": 0, "total": len(cases),
-                                         "backend": "none", "feature": feature, "dry_run": True})
+        write_json(ctx.path(STORE_OUT), {"created": 0, "updated": 0, "unchanged": 0, "protected": 0,
+                                         "total": len(cases), "backend": "none", "feature": feature,
+                                         "dry_run": True})
         return f"dry run — {len(cases)} cases NOT written"
     store = get_store(ctx)
     summary = store.upsert_cases(feature, cases)
@@ -34,9 +39,18 @@ def _run(stage: Stage, ctx: RunContext) -> str:
                      why="the suite was upserted into the case store; the summary is the record the "
                          "chain never kept",
                      backend=summary.get("backend"), created=summary.get("created"),
-                     updated=summary.get("updated"), total=summary.get("total"))
+                     updated=summary.get("updated"), unchanged=summary.get("unchanged"),
+                     protected=summary.get("protected"), total=summary.get("total"),
+                     status=summary.get("status"))
+    for extid in summary.get("protected_ids") or []:
+        decisions.record(ctx, stage.name, "case_kept_for_human",
+                         why="a human has reviewed or edited this case, so the regenerated version was "
+                             "offered as a suggestion instead of overwriting it",
+                         extid=extid)
     return (f"{summary.get('backend')}: created {summary.get('created')}, "
-            f"updated {summary.get('updated')} of {summary.get('total')}")
+            f"updated {summary.get('updated')}, unchanged {summary.get('unchanged', 0)}, "
+            f"kept for human {summary.get('protected', 0)} of {summary.get('total')} "
+            f"(stored {summary.get('status', 'PROPOSED')})")
 
 
 def _gate(ctx: RunContext) -> list[str]:
@@ -49,13 +63,14 @@ def _gate(ctx: RunContext) -> list[str]:
     out = []
     if summary.get("error"):
         out.append(f"the store refused the upsert: {summary['error']}")
-    created, updated, total = (summary.get("created"), summary.get("updated"), summary.get("total"))
-    if not all(isinstance(v, int) for v in (created, updated, total)):
-        out.append(f"{STORE_OUT} must report integer created/updated/total, got "
-                   f"{created!r}/{updated!r}/{total!r}")
-    elif created + updated != total:
-        out.append(f"created({created}) + updated({updated}) != total({total}) — some cases were "
-                   f"neither created nor updated, so the suite in the store is incomplete")
+    counts = {k: summary.get(k, 0) for k in ("created", "updated", "unchanged", "protected")}
+    total = summary.get("total")
+    if not all(isinstance(v, int) for v in (*counts.values(), total)):
+        out.append(f"{STORE_OUT} must report integer created/updated/unchanged/protected/total, got "
+                   f"{counts} / total={total!r}")
+    elif sum(counts.values()) != total:
+        out.append(f"created + updated + unchanged + protected ({sum(counts.values())}) != total({total}) "
+                   f"— some cases were accounted for nowhere, so the suite in the store is incomplete")
     if isinstance(total, int) and total != len(cases):
         out.append(f"the store reports {total} cases but cases.json has {len(cases)}")
     return out

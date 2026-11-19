@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -136,7 +137,16 @@ def run(
 ) -> AgentResult:
     """Run (or resume) one agent to completion.
     `on_event(label, kind, data)` gets "start", "tool", "text" and "end" ticks.
-    `trace_step` names the step on the Langfuse trace only (default: the log file's step)."""
+    `trace_step` names the step on the Langfuse trace only (default: the log file's step).
+    The stage's engine (`--engine` / AGENT.ENGINE, default claude-code) picks the backend: `axon` runs the
+    same spec on the org's managed Pi (rfc_agent.axon_agent) and returns the same AgentResult."""
+    from ..axon_agent import engine_for
+
+    if engine_for(stage, cfg) == "axon":
+        from .. import axon_agent
+
+        return axon_agent.run(spec, prompt, run_dir, cfg, resume=resume, on_event=on_event, stage=stage,
+                              step=step, trace_step=trace_step)
     run_dir = run_dir.resolve()
     binary = cfg.get("AGENT.CLAUDE_BIN", "claude") if cfg else "claude"
     if os.environ.get("RFC_AGENT_NO_REAL_CLAUDE") and Path(binary).name == "claude" and not Path(binary).is_file():
@@ -207,6 +217,11 @@ def run(
     try:
         _run_proc(cmd, prompt, run_dir, env, spec, stream_path, res, on_event, trace)
     finally:
+        if res.cost_usd:
+            # `--resume` reports the whole session's cost so far: book only what this call added
+            from harness.session_cost import charge
+
+            res.cost_usd = charge(run_dir, res.session_id, res.cost_usd, resumed=resume) or 0.0
         if on_event:
             on_event(spec.label, "end", {"ok": res.ok, "error": res.error, "session_id": res.session_id,
                                          "tool_calls": res.tool_calls, "seconds": res.seconds,
@@ -310,6 +325,8 @@ def _consume(line: str, res: AgentResult, on_event, trace=None, run_dir: Path | 
         ev = json.loads(line)
     except ValueError:
         return
+    if not isinstance(ev, dict):
+        return
     if trace is not None:
         trace.event(ev)
     t = ev.get("type")
@@ -331,14 +348,31 @@ def _consume(line: str, res: AgentResult, on_event, trace=None, run_dir: Path | 
                                                  "target": target(b.get("input"), run_dir)})
     elif t == "result":
         res.session_id = ev.get("session_id") or res.session_id
-        res.cost_usd += float(ev.get("total_cost_usd") or 0)
+        # the session's running total (last one wins); run() turns it into this call's own cost
+        res.cost_usd = float(ev.get("total_cost_usd") or 0)
         res.turns = int(ev.get("num_turns") or 0)
         res.final_text = str(ev.get("result") or "")[:2000]
         res.extra["result_subtype"] = ev.get("subtype")
         res.extra["result_is_error"] = bool(ev.get("is_error"))
         res.extra["usage"] = ev.get("usage") or {}
-    if "rate_limit" in line or '"overloaded' in line:
+    if t == "rate_limit_event":
+        status = (ev.get("rate_limit_info") or {}).get("status") or "allowed"
+        limited = status not in ("allowed", "allowed_warning")
+    else:
+        # Read protocol error codes, never assistant/tool text that merely discusses rate limiting.
+        error = ev.get("error")
+        code = error.get("type") if isinstance(error, dict) else error
+        limited = code in ("rate_limit", "rate_limit_error", "overloaded", "overloaded_error")
+        limited |= t in ("rate_limit_error", "overloaded_error")
+        # A failed run's result text is the error itself, not prose: Claude's "API Error: 429 ..." and the
+        # Pi shim's "provider retries exhausted: ... rate_limit_error" carry the throttle only there.
+        if t == "result" and ev.get("is_error"):
+            limited |= bool(_THROTTLE_RE.search(str(ev.get("result") or "")))
+    if limited:
         res.rate_limited += 1
+
+
+_THROTTLE_RE = re.compile(r"rate[_ ]limit|\b429\b|overloaded", re.IGNORECASE)
 
 
 def target(inp, run_dir: Path | None = None, width: int = 90) -> str:

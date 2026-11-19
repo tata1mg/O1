@@ -72,8 +72,9 @@ def test_langfuse_api_surface():
     from langfuse._client.span import LangfuseGeneration, LangfuseSpan
 
     assert {"session_id", "metadata", "trace_name"} <= set(inspect.signature(propagate_attributes).parameters)
-    assert {"input", "output"} <= set(inspect.signature(LangfuseSpan.set_trace_io).parameters)
-    assert {"input", "output"} <= set(inspect.signature(Langfuse.set_current_trace_io).parameters)
+    # SDK v5: the trace's input/output is the root observation's own io
+    assert {"input", "output", "metadata"} <= set(inspect.signature(LangfuseSpan.update).parameters)
+    assert {"input", "output"} <= set(inspect.signature(Langfuse.update_current_span).parameters)
     assert {"name", "input", "output", "level", "trace_context"} <= set(
         inspect.signature(Langfuse.create_event).parameters)
     assert {"name", "value", "comment"} <= set(inspect.signature(Langfuse.score_current_trace).parameters)
@@ -434,7 +435,7 @@ def test_session_id_comes_from_identity_not_dir_name(tmp_path, monkeypatch):
     class _Handle:
         def __enter__(self): return self
         def __exit__(self, *a): return False
-        def set_trace_io(self, **kw): pass
+        def update(self, **kw): pass
         def end(self): pass
 
     class _FakeClient:
@@ -613,7 +614,7 @@ def test_finish_run_scores_rework_only_for_stages_this_invocation_ran(tmp_path, 
     scores = []
 
     class _FakeClient:
-        def set_current_trace_io(self, **kw): pass
+        def update_current_span(self, **kw): pass
         def score_current_trace(self, **kw): scores.append(kw["name"])
 
     monkeypatch.setattr(obs, "_get_client", lambda ctx: _FakeClient())
@@ -1180,8 +1181,7 @@ def test_finish_run_marks_invocation_truth_and_denominators(tmp_path, monkeypatc
     scores, io = [], {}
 
     class _FakeClient:
-        def set_current_trace_io(self, **kw): io.update(kw)
-        def update_current_span(self, **kw): pass
+        def update_current_span(self, **kw): io.update(kw)  # the root span's io IS the trace's
         def score_current_trace(self, **kw): scores.append(kw)
 
     monkeypatch.setattr(obs, "_get_client", lambda ctx: _FakeClient())
@@ -1365,7 +1365,6 @@ def test_finish_run_persists_trace_id_and_flushes_operator_actions(tmp_path, mon
         def start_observation(self, **kw):
             opened.append(kw)
             return _Obs()
-        def set_current_trace_io(self, **kw): pass
         def update_current_span(self, **kw): pass
         def score_current_trace(self, **kw): pass
 

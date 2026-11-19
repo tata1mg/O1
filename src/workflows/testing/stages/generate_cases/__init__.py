@@ -14,6 +14,7 @@ fails generation instead of silently dropping out of the executable set weeks la
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from harness.contracts import RunContext, Stage, StageResult
@@ -22,6 +23,9 @@ from ... import be_spec, schema
 from .. import feature_of, guidance_note, read_json, read_json_gated, run_engine_stage, write_json
 
 SKILL_PATH = Path(__file__).resolve().parents[2] / "skills" / "qa-test-case-generator" / "SKILL.md"
+#: The gate, runnable by the model: `python check_suite.py` from the run dir prints exactly what this stage's
+#: gate will say. Allowlisted for this stage only (Stage.allow_commands).
+CHECK_SUITE = f"{sys.executable} {Path(__file__).resolve().parents[2] / 'check_suite.py'}"
 
 
 def _build_prompt(ctx: RunContext) -> str:
@@ -37,7 +41,7 @@ def _build_prompt(ctx: RunContext) -> str:
         "Sources (read each file before generating):",
         "",
     ]
-    lines += [f"{r['label']}: {r['path']}" for r in present]
+    lines += [f"{r['label']}: {r.get('local') or r['path']}" for r in present]
     if missing:
         lines += [
             "",
@@ -98,6 +102,17 @@ def _build_prompt(ctx: RunContext) -> str:
         "contract is checked mechanically, including that each `execution: http` case's steps parse under",
         "the http step grammar.",
         "",
+        "To check your files, run this ONE command from the run dir after writing them (and again after",
+        "any fix). It is the gate itself: ids and their patterns, scenario<->case links, duplicates,",
+        "Negative + Edge coverage per module, required fields, http step grammar. It also lists the",
+        "requirement refs the cases cite and the counts by execution and module:",
+        "",
+        f"  {CHECK_SUITE}" + ("" if ctx.flag("testing.require_case_per_scenario", True)
+                              else " --allow-unrealised"),
+        "",
+        "Do not hand-roll jq/grep checks for any of that: they repeat the gate, each costs a full turn,",
+        "and compound shell forms are denied in this sandbox.",
+        "",
         "In your final message, report the Step 0 resource inventory table, the scenario/case counts by",
         "module, and how many cases you tagged `execution: http`.",
     ]
@@ -134,10 +149,14 @@ def _gate(ctx: RunContext) -> list[str]:
     scenarios, bad = read_json_gated(ctx.path("qa/scenarios.json"), expect=list)
     if bad:
         return bad
-    failures = schema.validate_suite(
-        cases, scenarios,
-        require_case_per_scenario=bool(ctx.flag("testing.require_case_per_scenario", True)),
-    )
+    return suite_failures(cases, scenarios,
+                          require_case_per_scenario=bool(ctx.flag("testing.require_case_per_scenario", True)))
+
+
+def suite_failures(cases: list, scenarios: list, *, require_case_per_scenario: bool = True) -> list[str]:
+    """The gate's checks on an already-parsed suite — shared with `check_suite.py`, so the model's check
+    and the gate cannot disagree."""
+    failures = schema.validate_suite(cases, scenarios, require_case_per_scenario=require_case_per_scenario)
     # The http grammar check: the same parser the deriver runs, so "executable" is decided once.
     for c in schema.http_cases(cases):
         entry, why = be_spec.parse_case(str(c.get("id") or "<no id>"), schema.render_text(c))
@@ -161,4 +180,5 @@ STAGE = Stage(
     engine=_engine,
     retry_on_gate_failure=1,
     revise_on_retry=True,
+    allow_commands=(CHECK_SUITE,),
 )

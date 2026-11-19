@@ -11,3 +11,6 @@ dist/
 # Claude OAuth token (lives outside the repo; referenced by config.json path)
 claude_oauth_token
 
+
+# Playwright runner for the testing workflow (tools/ui-runner): installed per machine
+tools/ui-runner/node_modules/

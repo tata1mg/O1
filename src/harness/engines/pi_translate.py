@@ -274,6 +274,11 @@ class Translator:
         # terminal state, all derived from the stream (never from the exit code)
         self.settled = False
         self.errors: list[str] = []
+        # the last assistant turn's error. Pi keeps a failed attempt in the stream before it retries or recovers,
+        # so this is held, not failed at once: a later successful assistant message clears it, and finish()
+        # fails the run with whatever is still held. A retry-success notice alone never clears it (Pi sends one
+        # after length/aborted replies too). Exhausted retries and an aborted settle are failed outright.
+        self._assistant_error = ""
         self.num_turns = 0
         self.stream_cost = 0.0
         # None until some message actually reported a cost. `--mode json` emits no terminal totals record,
@@ -333,6 +338,8 @@ class Translator:
         elif t == "auto_retry_end":
             if raw.get("success") is False:
                 self._fail(f"provider retries exhausted: {_clip(raw.get('finalError') or '', 300)}")
+            elif raw.get("success") is True:
+                self._log("provider retry succeeded — waiting for a successful assistant message")
         elif t == "summarization_retry_scheduled":
             self._log(f"summarization retry scheduled (attempt {raw.get('attempt')})")
         elif t == "agent_end":
@@ -340,6 +347,8 @@ class Translator:
                 self._log("agent_end with willRetry=true — not terminal, waiting for agent_settled")
         elif t == "agent_settled":
             self.settled = True
+            if raw.get("aborted"):
+                self._fail("the agent was aborted")
         elif t == "harness_denial":
             # Kept for completeness, not because the guard can reach it: measured against 0.85.1, an
             # extension's console.log in --mode json goes to STDERR, so a denial never arrives in the
@@ -392,6 +401,8 @@ class Translator:
         a free one. The per-category breakdown rides in `extra.cost` for whoever wants the cache split.
         """
         self.drain_denials()
+        if self._assistant_error:
+            self._fail(self._assistant_error)
         if extra_error:
             self._fail(extra_error)
         if timed_out:
@@ -455,7 +466,12 @@ class Translator:
         stop = str(message.get("stopReason") or "")
         if stop in BAD_STOP_REASONS:
             detail = _clip(message.get("errorMessage"), 300) if message.get("errorMessage") else ""
-            self._fail(f"assistant stopReason={stop}" + (f": {detail}" if detail else ""))
+            self._assistant_error = f"assistant stopReason={stop}" + (f": {detail}" if detail else "")
+        elif stop in {"stop", "toolUse"}:
+            # a successful turn after a failed attempt: Pi recovered (axon-1 lost ~20 min treating it as failed)
+            if self._assistant_error:
+                self._log(f"recovered after: {self._assistant_error}")
+            self._assistant_error = ""
         for block in message.get("content") or []:
             if not isinstance(block, dict):
                 continue

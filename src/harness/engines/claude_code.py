@@ -111,6 +111,8 @@ class ClaudeCodeEngine:
             extra_env=dict(req.env) or None,
             steer_epoch=req.steer_epoch,
             effort=req.effort,
+            # a server the request DEFINES ({name: spec}); a bare {name: {}} only names a configured one
+            mcp_overrides={n: s for n, s in req.containment.mcp_servers.items() if s} or None,
         )
         duration = time.monotonic() - t0
         # `run_claude` already wrote the trace at its default location, so this is usually the second
@@ -120,8 +122,12 @@ class ClaudeCodeEngine:
         # write itself can never raise (see write_trace).
         want = req.trace_path or events_path(ctx.run_dir, req.label)
         trace = self.write_trace(raw, want) or want
+        summary = summarize(trace)
+        if req.resume_session and getattr(stream, "cost_usd", None) is not None:
+            # the trace keeps Claude's session running total; run_claude already booked this call's share
+            summary.cost_usd = stream.cost_usd
         return EngineResult(
-            summary=summarize(trace),
+            summary=summary,
             duration_s=duration,
             engine_desc=self.describe(stream, ctx),
             prompt_sent=stream.prompt_sent or req.prompt,

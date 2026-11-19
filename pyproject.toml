@@ -1,18 +1,23 @@
 [project]
 name = "rfc-agent"
-version = "0.1.2"
-description = "Staged RFC-generation agent: PRD -> grounded RFC via headless Claude stages"
+version = "0.2.1"
+description = "O1 agent toolkit: rfc-agent (PRD -> grounded tech RFC), with the shared harness and testing agent"
 requires-python = "==3.12.*"
 dependencies = [
     "defusedxml>=0.7.1",
-    "langfuse>=4,<5",  # v4 API (start_as_current_observation)
+    "langfuse>=5,<6",  # Python SDK v5: trace io from the root observation; Observations API v2
 ]
 
 [project.optional-dependencies]
-# The `testing` workflow's xlsx render only. Everything else in that workflow — generation, gates,
-# evaluation, the JSON case store, spec derivation, BE execution — is stdlib, so a run without this
-# extra records a decision and skips the workbook instead of failing (D8/D10).
-testing = ["openpyxl>=3.1,<4"]
+# The `testing` workflow's optional deps: openpyxl for the xlsx render, tcms-api for the Kiwi case store
+# (`testing.storage=kiwi`), pillow to shrink failure screenshots to JPEG before they are uploaded. Everything else in that workflow — generation, gates, evaluation, the JSON
+# case store, spec derivation, BE execution — is stdlib, so a run without this extra records a decision
+# and skips the workbook instead of failing (D8/D10), and the JSON store needs neither.
+testing = [
+    "openpyxl>=3.1,<4",
+    "pillow>=10,<13",
+    "tcms-api>=15",
+]
 
 [project.scripts]
 rfc = "rfc_agent.run:main"
@@ -33,6 +38,7 @@ packages = ["src/rfc_agent", "src/harness", "src/workflows"]
 
 [tool.ruff]
 line-length = 120
+src = ["src"]
 target-version = "py312"
 extend-exclude = ["tests/fixtures", "deprecated"]
 

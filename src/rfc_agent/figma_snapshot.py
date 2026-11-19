@@ -551,7 +551,12 @@ def prototype_edges(snapshot: Path) -> list[tuple[str, str, str, str]]:
 
         def visit(n: dict, src: str) -> None:
             for it in n.get("interactions") or []:
+                if not isinstance(it, dict):
+                    continue
+                # an interaction with no action set exports as `"actions": [null]`
                 for a in it.get("actions") or []:
+                    if not isinstance(a, dict):
+                        continue
                     dest = a.get("destinationId")
                     if dest and dest in ids and dest != src:
                         edges.append((src, n.get("name") or "?", a.get("navigation") or a.get("type"), dest))

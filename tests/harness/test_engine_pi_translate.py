@@ -427,3 +427,64 @@ def test_the_stream_sum_accumulates_every_category(tmp_path):
     assert b["total"] == pytest.approx(0.041385)
     assert b["input"] == pytest.approx(0.0276)
     assert b["cacheWrite"] == pytest.approx(0.003)
+
+
+# ---- recovery after a failed attempt (the same rule as rfc_agent.axon_agent) ----------------------------
+
+
+def _assistant(stop, text="", error=""):
+    return {"type": "message_end", "message": {"role": "assistant", "stopReason": stop, "errorMessage": error,
+                                               "content": [{"type": "text", "text": text}] if text else []}}
+
+
+def _run(tmp_path, events) -> Translator:
+    writer = EventWriter(tmp_path / "logs" / "r.events.jsonl")
+    tr = Translator(writer)
+    tr.feed({"type": "session", "id": "s"})
+    for e in events:
+        tr.feed(e)
+    tr.finish(exit_code=0)
+    writer.close()
+    return tr
+
+
+def _recovered(*, retry_end_first=False, stop="stop"):
+    events = [_assistant("error", error="502 Connection error."), {"type": "agent_end", "willRetry": True},
+              {"type": "auto_retry_start", "attempt": 1}]
+    done, ok = {"type": "auto_retry_end", "success": True, "attempt": 1}, _assistant(stop, "done")
+    return events + ([done, ok] if retry_end_first else [ok, done])
+
+
+@pytest.mark.parametrize("retry_end_first", [False, True])
+@pytest.mark.parametrize("stop", ["stop", "toolUse"])
+def test_a_recovered_provider_error_is_not_a_failure(tmp_path, retry_end_first, stop):
+    tr = _run(tmp_path, [*_recovered(retry_end_first=retry_end_first, stop=stop), {"type": "agent_settled"}])
+    assert tr.errors == []
+
+
+@pytest.mark.parametrize("ending", ["retry_only", "truncated", "later_error", "aborted", "length", "pending",
+                                    "assistant_aborted"])
+def test_recovery_does_not_hide_an_unfinished_or_failed_run(tmp_path, ending):
+    if ending == "retry_only":
+        events = [_assistant("error", error="502"), {"type": "auto_retry_end", "success": True}]
+    else:
+        events = _recovered()
+    if ending == "later_error":
+        events.append(_assistant("error", error="401 unauthorized"))
+    elif ending in {"length", "pending", "assistant_aborted"}:
+        # Pi sends a retry success after any non-error stop, length and aborted included
+        stop = "aborted" if ending == "assistant_aborted" else ending
+        events += [_assistant(stop, "partial"), {"type": "auto_retry_end", "success": True}]
+    if ending != "truncated":
+        events.append({"type": "agent_settled", "aborted": ending == "aborted"})
+    assert _run(tmp_path, events).errors
+
+
+@pytest.mark.parametrize("terminal", [
+    {"type": "auto_retry_end", "success": False, "finalError": "502 retries exhausted"},
+    {"type": "agent_settled", "aborted": True},
+])
+def test_a_later_assistant_message_cannot_clear_a_terminal_failure(tmp_path, terminal):
+    events = [_assistant("error", error="502"), terminal, _assistant("stop", "done"),
+              {"type": "auto_retry_end", "success": True}, {"type": "agent_settled"}]
+    assert _run(tmp_path, events).errors

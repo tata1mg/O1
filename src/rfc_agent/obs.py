@@ -5,10 +5,12 @@ engine's stream tail (real timestamps, input AND output), and the online gate as
 Posture (cribbed from animus/integrations/langfuse.py): observability must NEVER fail a run — unconfigured
 keys, a missing package, or any SDK/network error degrade to a no-op with a single stderr warning.
 
-SDK note: langfuse 4.14 removed `span.update_trace()`; trace attributes go through
-`propagate_attributes(session_id=...)` (must wrap the root span's lifetime) and `span.set_trace_io()`.
-The old call raised AttributeError on every run and the suppress() ate it — session/input were silently
-null on all traces. Anything suppressed here must first be proven present in a real trace (tests can't).
+SDK note (Python SDK v5, Langfuse v4 data model): trace attributes go through
+`propagate_attributes(session_id=...)` (must wrap the root span's lifetime), and the trace's input/output
+is the ROOT observation's own io (`span.update(input=..., output=...)`). `span.update_trace()` (gone in
+4.14) and `set_trace_io()` / `set_current_trace_io()` (gone in v5) must not come back: a removed call
+raises AttributeError, the suppress() eats it, and the field is silently null on every trace. Anything
+suppressed here must first be proven present in a real trace (tests can't).
 
 EMBEDDING PRECONDITION: this module assumes one run per process — the ambient stage/attempt, step
 counter, tool budget and client cache are module globals, and the SDK adopts any pre-registered
@@ -20,6 +22,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import re
 import sys
 from typing import TYPE_CHECKING
@@ -160,6 +163,35 @@ def _warn_once(msg: str) -> None:
         _warned = True
 
 
+class _ExportNoise(logging.Handler):
+    """The trace exporters' log handler: ONE stderr line on the first export problem, then silence.
+
+    With Langfuse unreachable (VPN off, DNS down) the OTLP exporter and the Langfuse SDK log every retry of
+    every span batch to stderr — "Transient error … retrying", "Failed to export span batch", a support-link
+    banner — and in a run's `logs/run.out` that drowned the one `GATE FAILURE:` / `ENGINE FAILURE:` line
+    the user needed (2026-11-03, hdpo). Telemetry never fails a run, so it gets one line, not a scroll.
+    """
+
+    LOGGERS = ("langfuse", "opentelemetry")
+    said = False
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.levelno < logging.WARNING or _ExportNoise.said:
+            return
+        _ExportNoise.said = True
+        with contextlib.suppress(Exception):
+            print(f"[obs] Langfuse trace export is failing ({record.getMessage()[:160]}) — the run is "
+                  f"unaffected; further telemetry errors are not shown", file=sys.stderr)
+
+    @classmethod
+    def install(cls) -> None:
+        for name in cls.LOGGERS:
+            log = logging.getLogger(name)
+            if not any(isinstance(h, cls) for h in log.handlers):
+                log.addHandler(cls())
+            log.propagate = False
+
+
 def _release() -> str | None:
     """The installed plugin version — Langfuse `release` segments every metric (gate pass-rate, cost,
     latency) by the code that produced it, which is the whole cross-version benchmark story."""
@@ -255,6 +287,7 @@ def _get_client(ctx: RunContext):
             kwargs["mask_otel_spans"] = privacy.mask_otel_spans
         # base_url, not the deprecated host= (SDK docstring): base_url is what the SDK derives the
         # OTLP span-export endpoint from — cribbed from animus, which switched for exactly that
+        _ExportNoise.install()
         _client = Langfuse(public_key=public, secret_key=secret, base_url=cfg.get("LANGFUSE.HOST") or None,
                            release=_release(), **kwargs)
     except Exception as exc:  # noqa: BLE001 — observability never fails a run
@@ -312,6 +345,11 @@ def _run_tags(ctx: RunContext, ident: dict) -> list[str]:
     sources tagged a 200K `--model` run as 1M whenever the ignored default carried `[1m]`
     (found in the 2026-08-16 audit)."""
     tags: list[str] = []
+    # `workflow:<name>` for every workflow but the RFC pipeline, whose traces predate the tag: a testing
+    # run was otherwise only tellable from an RFC run by opening it (2026-11-02)
+    wf = getattr(ctx, "workflow", "") or ""
+    if wf and wf != "rfc":
+        tags.append(f"workflow:{wf}")
     if ident.get("workstream_source") == "jira" and ident.get("workstream_id"):
         tags.append(f"ticket:{ident['workstream_id']}")
     cli = (ctx.inputs or {}).get("model")
@@ -414,7 +452,8 @@ def _observed_span(ctx: RunContext, name: str, *, as_type: str = "span", is_run_
                     # two same-named dirs under different roots used to merge into one.
                     ident = identity.load(ctx)
                     prop_cm = propagate_attributes(
-                        session_id=ident["session_id"], user_id=_user_id(ctx), trace_name="rfc-run",
+                        session_id=ident["session_id"], user_id=_user_id(ctx),
+                        trace_name=identity.trace_name(ctx),
                         tags=_run_tags(ctx, ident) or None,
                         metadata={"run_dir": str(ctx.run_dir), "claude_account": _claude_account(ctx),
                                   **identity.trace_metadata(ident), **_provenance(ctx)},
@@ -430,7 +469,8 @@ def _observed_span(ctx: RunContext, name: str, *, as_type: str = "span", is_run_
                     if snap:
                         span.update(metadata={"config_snapshot": snap})
                 with contextlib.suppress(Exception):
-                    span.set_trace_io(input=_clip(json.loads(json.dumps(ctx.inputs, default=str))))
+                    # trace input = the root observation's input (Langfuse v4 / SDK v5)
+                    span.update(input=_clip(json.loads(json.dumps(ctx.inputs, default=str))))
         except Exception as exc:  # noqa: BLE001 — observability never fails a run
             _warn_once(str(exc))
             cm = span = None
@@ -456,7 +496,9 @@ def run_trace(ctx: RunContext):
     # backend (observed live, 0.22.64: `stage: "run"` appeared as a trace-level key on every run) —
     # the same promotion hazard subprocess decisions dodge. Root/operator are run-scoped by
     # definition; only operator events (children, never promoted) carry the explicit `stage: "run"`.
-    return _observed_span(ctx, "rfc-run", as_type="chain", is_run_root=True)
+    from . import identity
+
+    return _observed_span(ctx, identity.trace_name(ctx), as_type="chain", is_run_root=True)
 
 
 @contextlib.contextmanager
@@ -1269,15 +1311,10 @@ def finish_run(ctx: RunContext, manifest: dict, ran: set | None = None) -> None:
                 (ctx.run_dir / "findings" / "evidence.json").read_text(encoding="utf-8")).get("heads")
             if heads:
                 summary["repo_heads"] = heads
-        # re-assert INPUT alongside output: a trace_context observation from a subprocess is stamped
-        # as_root by the SDK and its present fields get promoted to trace level mid-run — the final
-        # write here makes the completed run's trace io authoritative regardless
-        client.set_current_trace_io(  # root span is current here (stage spans closed)
-            input=_clip(json.loads(json.dumps(ctx.inputs, default=str))), output=summary)
-        # mirror the same io onto the ROOT SPAN observation: trace io lives on the trace header, but
-        # clicking the rfc-run node in the graph opens the root OBSERVATION, which showed
-        # Input/Output: undefined (operator confusion, 2026-08-17). Own suppress: a failure here
-        # must never eat the scores below.
+        # The run's io goes on the ROOT observation: since Langfuse v4 the trace's Input/Output IS the
+        # root observation's (SDK v5 removed set_current_trace_io). Input is re-asserted alongside
+        # output so the completed run's io is authoritative. The root span is current here (stage
+        # spans closed). Own suppress: a failure here must never eat the scores below.
         with contextlib.suppress(Exception):
             client.update_current_span(
                 input=_clip(json.loads(json.dumps(ctx.inputs, default=str))), output=summary)
@@ -1320,6 +1357,15 @@ def finish_run(ctx: RunContext, manifest: dict, ran: set | None = None) -> None:
             p = ctx.run_dir / rel
             if p.exists():
                 client.score_current_trace(name=f"{p.stem}_bytes", value=float(p.stat().st_size))
+        # the workflow's own outcome scores (Workflow.run_scores): a testing run's gates all pass on any
+        # well-formed suite, so without these its trace held nothing that tells a 4/5 suite from a 2/5 one
+        with contextlib.suppress(Exception):
+            from harness import workflows as _workflows
+
+            wf = _workflows.get(ctx.workflow) if getattr(ctx, "workflow", "") else None
+            for sname, sc in ((wf.run_scores(ctx, ran) or {}) if wf and wf.run_scores else {}).items():
+                with contextlib.suppress(Exception):
+                    client.score_current_trace(name=sname, **sc)
         # the coverage DENOMINATOR (2026-08-19 audit): every "did the RFC cover the requirements"
         # question needs the REQ count, which previously never left extract/requirements.json
         with contextlib.suppress(Exception):

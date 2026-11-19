@@ -23,8 +23,10 @@ _CONFIG_DIR = Path("~/.config/rfc-agent").expanduser()
 # Top-level sections the code reads. Anything else in config.json is reported once — a typo
 # (REPO_ROOT) or a key left over from an older version, which would otherwise be silently ignored.
 KNOWN_SECTIONS = frozenset({
-    "AGENT", "REPOS_ROOT", "RUNS_ROOT", "REPOS_EXCLUDE", "MCP", "ATLASSIAN", "LANGFUSE", "OBS", "SERVICES_MAP",
+    "AGENT", "REPOS_ROOT", "RUNS_ROOT", "GIT_REPOS_REMOTE", "REPOS_EXCLUDE", "MCP", "ATLASSIAN", "LANGFUSE", "OBS",
+    "SERVICES_MAP",
     "STEERING", "SCOPE", "INVESTIGATE", "DRAFT", "REVIEW", "REVISE", "SUMMARIZE",
+    "TESTING",  # `testing.*` flags (workflows.testing.config_get)
     "STAGE1", "STAGE2", "STAGE3", "STAGE4", "STAGE5",  # old names, still read (legacy_names.OLD_CONFIG)
 })
 
@@ -45,6 +47,7 @@ _ENV_MAP = {
     "AGENT.CLAUDE_CODE_OAUTH_TOKEN_FILE": "RFC_AGENT_CLAUDE_OAUTH_TOKEN_FILE",
     "AGENT.DEFAULT_MODEL": "RFC_AGENT_MODEL",
     "REPOS_ROOT": "RFC_AGENT_REPOS_ROOT",
+    "GIT_REPOS_REMOTE": "RFC_AGENT_GIT_REPOS_REMOTE",
     "ATLASSIAN.SITE": "ATLASSIAN_SITE",
     "LANGFUSE.PUBLIC_KEY": "LANGFUSE_PUBLIC_KEY",
     "LANGFUSE.SECRET_KEY": "LANGFUSE_SECRET_KEY",
@@ -158,13 +161,20 @@ class Config:
         val = _dig(self.config, dotted)
         return default if val is None else val
 
-    def materialize_mcp(self, names: tuple[str, ...], dest: Path) -> Path:
+    def materialize_mcp(self, names: tuple[str, ...], dest: Path, overrides: dict | None = None) -> Path:
         """Write the SUBSET of configured MCP servers named in `names` to `dest` in the claude
         {"mcpServers": {...}} schema and return dest. Always writes — an empty subset writes
         {"mcpServers": {}}, which with --strict-mcp-config guarantees a no-MCP stage.
-        Unknown names fail loudly. `~` in stdio arg paths is expanded."""
+        Unknown names fail loudly. `~` in stdio arg paths is expanded.
+
+        `overrides` ({name: spec}) supplies a server's definition for THIS invocation, in place of (or
+        in the absence of) the configured one — for a server whose arguments belong to the call rather
+        than to the machine (the testing workflow's browser: one profile and output folder per case).
+        It only defines servers; which are exposed is still `names`, and which tools are callable is
+        still the per-tool allowlist."""
         servers = (self.config.get("MCP") or {}).get("mcpServers") or {}
         servers = {k: v for k, v in servers.items() if not k.startswith("_")}
+        servers = {**servers, **(overrides or {})}
         unknown = [n for n in names if n not in servers]
         if unknown:
             raise RuntimeError(f"stage references MCP server(s) not in MCP.mcpServers "

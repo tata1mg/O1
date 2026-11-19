@@ -8,6 +8,7 @@ have caught it.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +22,8 @@ from harness.events import Event as Ev
 from harness.events import EventType, EventWriter, ToolKind, summarize
 
 ROOT = Path(__file__).resolve().parents[2]
+# the suite's own config (tests/conftest.py): these subprocesses start with a bare env and would find none
+CONFIG_ENV = {"RFC_AGENT_CONFIG": os.environ.get("RFC_AGENT_CONFIG", "")}
 
 # The registry is populated by IMPORTS (each workflow package registers its flags, each engine module
 # its construction flags), so a test that reasons about the registry must load it the same way the CLI
@@ -105,7 +108,7 @@ def test_describe_and_explain_redact_a_secret_default():
     res = subprocess.run([sys.executable, "-m", "harness.cli", "flags", "--explain",
                           "testing.kiwi_password", "--json"], capture_output=True, text=True,
                          cwd=ROOT, env={"PYTHONPATH": str(ROOT / "src"), "PATH": "/usr/bin:/bin",
-                                        "HOME": str(Path.home()), "TCMS_PASSWORD": SECRET})
+                                        "HOME": str(Path.home()), **CONFIG_ENV, "TCMS_PASSWORD": SECRET})
     assert res.returncode == 0 and SECRET not in res.stdout
     assert json.loads(res.stdout)["value"] == flagmod.REDACTED
 
@@ -160,7 +163,7 @@ def test_engine_flags_are_registered_for_the_cli_to_list_and_validate():
     res = subprocess.run([sys.executable, "-m", "harness.cli", "flags", "--json"],
                          capture_output=True, text=True, cwd=ROOT,
                          env={"PYTHONPATH": str(ROOT / "src"), "PATH": "/usr/bin:/bin",
-                              "HOME": str(Path.home())})
+                              "HOME": str(Path.home()), **CONFIG_ENV})
     names = {r["name"] for r in json.loads(res.stdout)}
     assert any(n.startswith("pi.") for n in names), "engine flags must be listed"
     assert "replay.recording" in names
@@ -360,7 +363,7 @@ def test_a_bad_boolean_from_the_cli_is_a_readable_exit_1():
     res = subprocess.run([sys.executable, "-m", "harness.cli", "run", "testing", "--set", "hooks=fasle",
                           "--feature", "x", "--no-interactive"], capture_output=True, text=True,
                          cwd=ROOT, env={"PYTHONPATH": str(ROOT / "src"), "PATH": "/usr/bin:/bin",
-                                        "HOME": str(Path.home())})
+                                        "HOME": str(Path.home()), **CONFIG_ENV})
     assert res.returncode == 1
     assert "is not a boolean" in res.stderr and "--disable hooks" in res.stderr
 
@@ -373,7 +376,7 @@ def _explain(name: str, env: dict | None = None, workflow: str | None = None) ->
         args += ["--workflow", workflow]
     res = subprocess.run(args, capture_output=True, text=True, cwd=ROOT,
                          env={"PYTHONPATH": str(ROOT / "src"), "PATH": "/usr/bin:/bin",
-                              "HOME": str(Path.home()), **(env or {})})
+                              "HOME": str(Path.home()), **CONFIG_ENV, **(env or {})})
     assert res.returncode == 0, res.stderr
     return json.loads(res.stdout)
 
@@ -401,7 +404,7 @@ def _cli(module_main: str, argv: list[str]) -> int:
     return subprocess.run(
         [sys.executable, "-c", f"import sys; from {module_main} import main; main(sys.argv[1:])", *argv],
         capture_output=True, text=True, cwd=ROOT,
-        env={"PYTHONPATH": str(ROOT / "src"), "PATH": "/usr/bin:/bin", "HOME": str(Path.home())},
+        env={"PYTHONPATH": str(ROOT / "src"), "PATH": "/usr/bin:/bin", "HOME": str(Path.home()), **CONFIG_ENV},
     ).returncode
 
 
@@ -409,7 +412,7 @@ def test_harness_uses_exit_1_for_the_same_usage_error():
     res = subprocess.run([sys.executable, "-m", "harness.cli", "run", "testing", "--stages", "evaluate",
                           "--feature", "x"], capture_output=True, text=True, cwd=ROOT,
                          env={"PYTHONPATH": str(ROOT / "src"), "PATH": "/usr/bin:/bin",
-                              "HOME": str(Path.home())})
+                              "HOME": str(Path.home()), **CONFIG_ENV})
     assert res.returncode == 1, "harness has no such history and uses the correct code"
     assert "--run-dir" in res.stderr
 

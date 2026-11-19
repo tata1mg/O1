@@ -18,6 +18,8 @@ identity. Opt in with `--enable testing.execute` or `--stages execute_be`.
 
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from harness.contracts import EngineFailure, GateFailure, RunContext, Stage
@@ -40,6 +42,7 @@ def _run(stage: Stage, ctx: RunContext) -> str:
     timeout = int(ctx.flag("testing.timeout_s", be_execute.DEFAULT_TIMEOUT_S))
     curl_path = str(ctx.flag("testing.curl_path", be_execute.DEFAULT_CURL))
     cohort_path = str(ctx.flag("testing.cohort_path", "") or "")
+    attach_responses = bool(ctx.flag("testing.attach_responses", False))
 
     spec = read_json(ctx.path("qa/spec.json"), []) or []
     if not spec:
@@ -123,6 +126,7 @@ def _run(stage: Stage, ctx: RunContext) -> str:
     results, tally = [], {}
     for c in to_run:
         r = be_execute.run_case(c, env, timeout=timeout, curl_path=curl_path)
+        finished_at = datetime.now(UTC)  # when the request ended, not when its row reaches the store
         tally[r["status"]] = tally.get(r["status"], 0) + 1
         row = {"extid": c["extid"], "path": c["path"], "status": r["status"], "detail": r["detail"],
                "http_status": r.get("http", ""), "duration_s": r.get("elapsed")}
@@ -133,8 +137,18 @@ def _run(stage: Stage, ctx: RunContext) -> str:
             if cohort_path:
                 props["cohort_observed"] = (be_execute.dig(r.get("payload") or {}, cohort_path)
                                             if r.get("payload") else "")
-            store.record_execution(run.run_id, c["extid"], r["status"], actual=r["detail"],
-                                   duration_s=r.get("duration_s", r.get("elapsed")), props=props)
+            execution_id = store.record_execution(
+                run.run_id, c["extid"], r["status"], actual=r["detail"],
+                duration_s=r.get("duration_s", r.get("elapsed")), props=props, finished_at=finished_at)
+            if attach_responses and r.get("payload") is not None:
+                # The `actual` property is cut at 900 characters; the attachment is the whole body. One
+                # name per case, replaced on a re-run, so the execution holds this run's evidence only.
+                name = f"response-{c['extid']}.json"
+                body = json.dumps(r["payload"], indent=2, sort_keys=True).encode()
+                if store.attach("execution", execution_id, name, body, replace=True):
+                    decisions.record(ctx, stage.name, "response_attached",
+                                     why="full response body kept as evidence beside the execution",
+                                     extid=c["extid"], name=name, bytes=len(body))
     write_json(ctx.path(RESULTS_OUT), {**header, "results": results, "tally": tally})
     return "  ".join(f"{k}={v}" for k, v in sorted(tally.items()))
 

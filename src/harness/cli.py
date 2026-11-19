@@ -234,6 +234,7 @@ def run_workflow(name: str, args: argparse.Namespace, hooks: RunHooks | None = N
 
     run_dir = resolve_run_dir(args, cfg, hooks)
     run_dir.mkdir(parents=True, exist_ok=True)
+    o1 = _record_code_version(run_dir)
     args.run_dir = str(run_dir)
     if hooks.before_run is not None:
         hooks.before_run(args, run_dir)
@@ -252,8 +253,15 @@ def run_workflow(name: str, args: argparse.Namespace, hooks: RunHooks | None = N
             ask.log_skipped(run_dir, f"run is non-interactive ({why}): all asks disabled")
 
     pipeline_arg = getattr(args, "pipeline", None)
-    names = ([s.strip() for s in pipeline_arg.split(",") if s.strip()] if pipeline_arg
-             else list(wf.default_pipeline))
+    if pipeline_arg:
+        names = [s.strip() for s in pipeline_arg.split(",") if s.strip()]
+    else:
+        names = list(wf.compose_pipeline(flags) if wf.compose_pipeline else wf.default_pipeline)
+        # `--stages` naming a REGISTERED stage the composed pipeline left out (an opt-in stage such as
+        # testing's execute_be) adds it, in registry order, rather than failing as an unknown stage.
+        extra = {n for n in (selected or ()) if n not in names and n in {s.name for s in wf.stages}}
+        if extra:
+            names = [s.name for s in wf.stages if s.name in set(names) | extra]
     print(f"pipeline: {' -> '.join(names)}", file=sys.stderr)
 
     disabled = list(flags.get("disabled_stages") or [])
@@ -305,11 +313,27 @@ def run_workflow(name: str, args: argparse.Namespace, hooks: RunHooks | None = N
         print(json.dumps({
             "workflow": wf.name, "outcome": outcome, "exit_code": code, "run_dir": str(run_dir),
             "engine": engine_name, "pipeline": [s.name for s in stages],
-            "cost_usd": cost, "duration_s": secs, "stage_attempts": tries,
+            "cost_usd": cost, "duration_s": secs, "stage_attempts": tries, "o1": o1,
             "stages": {k: v.get("status") for k, v in manifest.items()
                        if isinstance(v, dict) and "status" in v},
         }, indent=2))
     return code
+
+
+def _record_code_version(run_dir: Path) -> dict:
+    """Append which O1 commit this attempt runs on to logs/o1_code.jsonl (one line per attempt, so a run resumed
+    on newer code shows both) and return it."""
+    from datetime import UTC, datetime
+
+    from .provenance import code_version, label
+
+    v = dict(code_version())
+    with contextlib.suppress(OSError):
+        (run_dir / "logs").mkdir(parents=True, exist_ok=True)
+        with open(run_dir / "logs" / "o1_code.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": datetime.now(UTC).isoformat(timespec="seconds"), **v}) + "\n")
+    print(f"  [harness] code: {label(v)}", file=sys.stderr)
+    return v
 
 
 def resolve_run_dir(args: argparse.Namespace, cfg, hooks: RunHooks) -> Path:

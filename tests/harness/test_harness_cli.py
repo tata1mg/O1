@@ -8,6 +8,7 @@ alternative is guessing env vars. Both are tested here.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -18,12 +19,14 @@ from harness import cli
 from harness.constants import ExitCode
 
 ROOT = Path(__file__).resolve().parents[2]
+# the suite's own config (tests/conftest.py): these subprocesses start with a bare env and would find none
+CONFIG_ENV = {"RFC_AGENT_CONFIG": os.environ.get("RFC_AGENT_CONFIG", "")}
 
 
 def _run(*args: str, env: dict | None = None) -> subprocess.CompletedProcess:
     """Drive the real console entry point in a subprocess — exit codes are the contract."""
     base = {"PYTHONPATH": str(ROOT / "src"), "PATH": "/usr/bin:/bin:/usr/local/bin",
-            "HOME": str(Path.home()), "COLUMNS": "100"}
+            "HOME": str(Path.home()), **CONFIG_ENV, "COLUMNS": "100"}
     return subprocess.run([sys.executable, "-m", "harness.cli", *args], capture_output=True,
                           text=True, cwd=ROOT, env={**base, **(env or {})})
 
@@ -311,3 +314,40 @@ def test_hooks_fire_in_the_documented_order(tmp_path):
     args = _ns(run_dir=str(tmp_path / "run"), no_interactive=True, pipeline="ingest")
     cli.run_workflow("testing", args, hooks)
     assert order == ["early_exit", "prepare", "before_run", "after_run"]
+
+
+# ---- the workflow composes its own pipeline from its flags ---------------------------------------------
+
+def _composed(tmp_path, **kw) -> list[str]:
+    """The stage names the CLI hands to `compose`, without running anything."""
+    seen: list[str] = []
+
+    def compose(names):
+        seen.extend(names)
+        return []
+
+    hooks = cli.RunHooks(load_config=lambda: _Cfg(), compose=compose, run=lambda s, ctx, **k: None,
+                         slug=lambda a: "t")
+    args = _ns(**{"run_dir": str(tmp_path / "run"), "no_interactive": True, "set": [], "enable": [],
+                  "disable": [], **kw})
+    assert cli.run_workflow("testing", args, hooks) == ExitCode.OK
+    return seen
+
+
+def test_the_workflows_composition_flags_shape_the_run(tmp_path):
+    """`testing.execute` used to be read by nothing: the CLI ran `default_pipeline` regardless."""
+    assert _composed(tmp_path)[-2:] == ["store_cases", "prerequisites"]
+    assert _composed(tmp_path, enable=["testing.execute"])[-2:] == ["derive_spec", "execute_be"]
+    assert "evaluate" not in _composed(tmp_path)                              # on demand, not by default
+    assert "evaluate" in _composed(tmp_path, enable=["testing.evaluate"])
+
+
+def test_stages_can_select_an_opt_in_stage(tmp_path):
+    """`--stages derive_spec,execute_be` is how a reviewed suite is run on its upload run dir."""
+    names = _composed(tmp_path, stages="derive_spec,execute_be")
+    assert names[-4:] == ["store_cases", "prerequisites", "derive_spec", "execute_be"]
+
+
+def test_an_explicit_pipeline_still_wins(tmp_path):
+    assert _composed(tmp_path, pipeline="sources,store_cases", enable=["testing.execute"]) == \
+        ["sources", "store_cases"]

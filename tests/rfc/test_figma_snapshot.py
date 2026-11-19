@@ -272,3 +272,25 @@ def test_install_copies_plugin_to_stable_path_with_fresh_id(tmp_path, monkeypatc
     assert manifest["networkAccess"]["allowedDomains"] == ["http://localhost:8790"]
     assert (tmp_path / "plugin" / "code.js").exists() and (tmp_path / "plugin" / "ui.html").exists()
     assert "Import plugin from manifest" in capsys.readouterr().out
+
+
+def test_prototype_edges_skips_null_actions_and_interactions(tmp_path):
+    """An on-click with no action set exports as `"actions": [null]` (2026-11-19: crashed Investigate 1b)."""
+    snap = tmp_path / "snap"
+    snap.mkdir()
+    frames = {
+        "1:1": {"document": {"id": "1:1", "name": "A", "type": "FRAME", "children": [
+            {"id": "1:2", "name": "Shimmer", "type": "FRAME",
+             "interactions": [None, {"trigger": {"type": "ON_CLICK"}, "actions": [None]}]},
+            {"id": "1:3", "name": "cta", "type": "FRAME",
+             "interactions": [{"trigger": {"type": "ON_CLICK"},
+                               "actions": [None, {"type": "NODE", "destinationId": "2:1",
+                                                  "navigation": "NAVIGATE"}]}]},
+        ]}},
+        "2:1": {"document": {"id": "2:1", "name": "B", "type": "FRAME", "children": []}},
+    }
+    for fid, body in frames.items():
+        (snap / f"{fid.replace(':', '-')}.json").write_text(json.dumps(body))
+    (snap / "index.json").write_text(json.dumps(
+        {"frames": [{"id": fid, "json": f"{fid.replace(':', '-')}.json"} for fid in frames]}))
+    assert figma_snapshot.prototype_edges(snap) == [("1:1", "cta", "NAVIGATE", "2:1")]

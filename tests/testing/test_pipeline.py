@@ -76,7 +76,21 @@ def recipes(clean_cases, clean_scenarios):
         (run_dir / "qa" / "eval.json").write_text(
             json.dumps(eval_json(clean_cases, clean_scenarios)))
 
-    return {"generate_cases": generate, "evaluate": evaluate}
+    def prerequisites(run_dir):
+        (run_dir / "qa" / "prerequisites.json").write_text(json.dumps(prereq_doc(run_dir)))
+
+    return {"generate_cases": generate, "evaluate": evaluate, "prerequisites": prerequisites}
+
+
+def prereq_doc(run_dir):
+    """A prerequisites file that satisfies the gate: every case that carries data in one fixture, the rest
+    prerequisite-free."""
+    facts = json.loads((run_dir / "qa" / "prerequisites.facts.json").read_text())
+    needy = [r["id"] for r in facts["cases"] if r["placeholders"] or r["invented"]]
+    fixtures = [{"id": "FX-01", "entity": "lab slot", "state": "open", "how_to_create": "seed",
+                 "used_by": needy}] if needy else []
+    return {"fixtures": fixtures, "config": [], "external_systems": [], "secrets": [],
+            "no_prerequisites": [r["id"] for r in facts["cases"] if r["id"] not in needy]}
 
 
 @pytest.fixture
@@ -93,8 +107,12 @@ def pipeline_ctx(tmp_path, ctx_factory, recipes):
     return ctx, engine
 
 
+#: The default pipeline plus `evaluate`, which runs on demand: these tests exercise its gate end to end.
+WITH_EVALUATE = ("sources", "generate_cases", "render_xlsx", "evaluate", "store_cases", "prerequisites")
+
+
 def stages(names=None):
-    return [WORKFLOW.stage(n) for n in (names or WORKFLOW.default_pipeline)]
+    return [WORKFLOW.stage(n) for n in (names or WITH_EVALUATE)]
 
 
 def manifest(ctx) -> dict:
@@ -107,15 +125,48 @@ def test_the_default_pipeline_runs_green_end_to_end(pipeline_ctx):
     run_pipeline(stages(), ctx)
 
     m = manifest(ctx)
-    assert set(m) == set(WORKFLOW.default_pipeline)
+    assert set(m) == set(WITH_EVALUATE)
     for name, entry in m.items():
         assert entry["status"] == "ok", (name, entry)
         assert entry["gate"]["passed"] is True
     # only the two persona stages went to the engine
-    assert engine.calls == ["generate_cases", "evaluate"]
+    assert engine.calls == ["generate_cases", "evaluate", "prerequisites"]
     for rel in ("qa/sources.json", "qa/cases.json", "qa/scenarios.json", "qa/eval.json",
-                "qa/eval.mechanical.json", "qa/store.json", "qa/spec.json"):
+                "qa/eval.mechanical.json", "qa/store.json", "qa/prerequisites.md",
+                "qa/test_data.template.yaml"):
         assert ctx.path(rel).exists(), rel
+    # the default pipeline ends at the upload: nothing is derived until a reviewer approves the suite
+    assert not ctx.path("qa/spec.json").exists()
+    assert json.loads(ctx.path("qa/store.json").read_text())["status"] == "PROPOSED"
+
+
+def test_after_review_the_run_pipeline_derives_the_spec(pipeline_ctx, approve):
+    """Generate and upload, a reviewer approves, then derive_spec runs on the same run dir."""
+    ctx, _ = pipeline_ctx
+    run_pipeline(stages(), ctx)
+    approve(ctx.run_dir / "store")
+    run_pipeline(stages([*WORKFLOW.default_pipeline, "derive_spec"]), ctx, selected=["derive_spec"])
+    assert manifest(ctx)["derive_spec"]["status"] == "ok"
+    assert ctx.path("qa/spec.json").exists()
+
+
+def test_the_persona_stages_read_local_copies_of_the_sources(pipeline_ctx):
+    """A headless child cannot read outside its run dir without a prompt nobody answers."""
+    ctx, engine = pipeline_ctx
+    run_pipeline(stages(), ctx)
+    prompt = next(r for r in engine.requests if r.label == "generate_cases").prompt
+    local = ctx.path("qa/sources/prd.md")
+    assert local.exists() and f"PRD: {local}" in prompt
+
+
+def test_the_engine_request_carries_what_the_claude_adapter_needs(pipeline_ctx):
+    """The default engine refuses a request without native_ctx, and discovers skills from the run dir."""
+    ctx, engine = pipeline_ctx
+    run_pipeline(stages(), ctx)
+    for req in engine.requests:
+        assert req.native_ctx["ctx"] is ctx and req.native_ctx["stage"].name == req.label
+        staged = ctx.run_dir / ".claude" / "skills" / req.label / "SKILL.md"
+        assert staged.read_text() == req.skill_path.read_text()
 
 
 def test_the_python_stages_report_themselves_as_python(pipeline_ctx):
@@ -124,7 +175,6 @@ def test_the_python_stages_report_themselves_as_python(pipeline_ctx):
     m = manifest(ctx)
     assert m["sources"]["engine"] == "python"
     assert m["store_cases"]["engine"] == "python"
-    assert m["derive_spec"]["engine"] == "python"
     assert m["generate_cases"]["engine"] == "fake:test"
 
 
@@ -167,26 +217,26 @@ def test_a_second_invocation_skips_every_green_stage(pipeline_ctx):
     assert engine.calls == []
     decisions = [json.loads(x) for x in ctx.path("logs/decisions.jsonl").read_text().splitlines()]
     skipped = {d["stage"] for d in decisions if d["decision"] == "green_skip"}
-    assert skipped == set(WORKFLOW.default_pipeline)
+    assert skipped == set(WITH_EVALUATE)
 
 
 def test_a_stage_subset_reruns_exactly_that_stage(pipeline_ctx):
     ctx, engine = pipeline_ctx
     run_pipeline(stages(), ctx)
-    ctx.path("qa/spec.json").unlink()
+    ctx.path("qa/store.json").unlink()
     engine.calls.clear()
-    run_pipeline(stages(), ctx, selected=["derive_spec"])
-    assert engine.calls == []                      # derive_spec is python
-    assert ctx.path("qa/spec.json").exists()
+    run_pipeline(stages(), ctx, selected=["store_cases"])
+    assert engine.calls == []                      # store_cases is python
+    assert ctx.path("qa/store.json").exists()
 
 
 def test_the_chain_resumes_from_disk_one_stage_per_invocation(pipeline_ctx):
     """The flow a plugin command drives: --stages sources, then --stages generate_cases, ..."""
     ctx, engine = pipeline_ctx
-    for name in WORKFLOW.default_pipeline:
+    for name in WITH_EVALUATE:
         run_pipeline(stages(), ctx, selected=[name])
-    assert engine.calls == ["generate_cases", "evaluate"]
-    assert manifest(ctx)["derive_spec"]["status"] == "ok"
+    assert engine.calls == ["generate_cases", "evaluate", "prerequisites"]
+    assert manifest(ctx)["store_cases"]["status"] == "ok"
 
 
 def test_a_changed_source_re_runs_the_stages_downstream_of_it(pipeline_ctx, tmp_path):
@@ -386,7 +436,7 @@ def test_from_cases_reads_a_workbook_with_its_execution_column(tmp_path, ctx_fac
 def test_every_stages_requires_are_produced_by_an_earlier_stage():
     """Slot compatibility: the pipeline cannot be composed with a hole in it."""
     produced: set[str] = set()
-    for name in (*WORKFLOW.default_pipeline, "execute_be"):
+    for name in (*WORKFLOW.default_pipeline, "derive_spec", "execute_be"):
         stage = WORKFLOW.stage(name)
         missing = [r for r in stage.requires if r not in produced]
         assert missing == [], f"{name} requires {missing}, which nothing earlier produces"
@@ -419,18 +469,19 @@ def test_compose_pipeline_defaults_to_the_declared_default(ctx):
 
 
 @pytest.mark.parametrize("flags,want", [
-    ({}, ("sources", "generate_cases", "render_xlsx", "evaluate", "store_cases", "derive_spec")),
-    ({"testing.evaluate": False},
-     ("sources", "generate_cases", "render_xlsx", "store_cases", "derive_spec")),
+    ({}, ("sources", "generate_cases", "render_xlsx", "store_cases", "prerequisites")),
+    ({"testing.evaluate": True},
+     ("sources", "generate_cases", "render_xlsx", "evaluate", "store_cases", "prerequisites")),
     ({"testing.execute": True},
-     ("sources", "generate_cases", "render_xlsx", "evaluate", "store_cases", "derive_spec",
-      "execute_be")),
+     ("sources", "generate_cases", "render_xlsx", "store_cases", "prerequisites", "derive_spec", "execute_be")),
     # no store -> nothing that reads from it, so the operator is told by the shape of the run
-    ({"testing.store": False}, ("sources", "generate_cases", "render_xlsx", "evaluate")),
+    ({"testing.store": False}, ("sources", "generate_cases", "render_xlsx", "prerequisites")),
     ({"testing.store": False, "testing.execute": True},
-     ("sources", "generate_cases", "render_xlsx", "evaluate")),
-    ({"testing.evaluate": False, "testing.store": False},
+     ("sources", "generate_cases", "render_xlsx", "prerequisites")),
+    ({"testing.store": False, "testing.prerequisites": False},
      ("sources", "generate_cases", "render_xlsx")),
+    ({"testing.prerequisites": False, "testing.execute": True},
+     ("sources", "generate_cases", "render_xlsx", "store_cases", "derive_spec", "execute_be")),
 ])
 def test_compose_pipeline_honours_the_composition_flags(tmp_path, ctx_factory, flags, want):
     from workflows.testing import compose_pipeline
@@ -455,3 +506,53 @@ def test_a_composed_pipeline_actually_runs(pipeline_ctx):
     names = compose_pipeline(ctx.flags)
     run_pipeline(stages(names), ctx)
     assert set(manifest(ctx)) == set(names)
+
+
+# ---- an errored model session ----------------------------------------------------------------------------
+
+
+class ErroringEngine(FakeEngine):
+    """Ends `generate_cases` with an errored result (a dropped connection), optionally after writing."""
+
+    def __init__(self, recipes: dict, *, write: bool) -> None:
+        super().__init__(recipes)
+        self.write = write
+
+    def run(self, req) -> EngineResult:
+        if req.label != "generate_cases":
+            return super().run(req)
+        self.calls.append(req.label)
+        if self.write:
+            self.recipes[req.label](req.cwd)
+        return EngineResult(
+            summary=TraceSummary(got_result=True, is_error=True, error_reason="api_error", cost_usd=0.5),
+            duration_s=1.0, engine_desc="fake:test", prompt_sent=req.prompt, trace_path=req.trace_path,
+        )
+
+
+def test_an_errored_session_that_wrote_nothing_stops_without_spending_the_revision(pipeline_ctx, recipes):
+    """2026-11-03, hdpo: an api_error read as "declared output missing" and burned the automatic revision."""
+    from harness.contracts import EngineFailure
+
+    ctx, _ = pipeline_ctx
+    ctx.engine = engine = ErroringEngine(recipes, write=False)
+    with pytest.raises(EngineFailure, match=r"api_error.*dropped connection"):
+        run_pipeline(stages(), ctx)
+    assert engine.calls == ["generate_cases"]                      # no second call into the outage
+    assert manifest(ctx)["generate_cases"]["status"] == "engine_failed"
+
+
+def test_an_errored_session_that_wrote_its_outputs_still_goes_to_the_gate(pipeline_ctx, recipes):
+    ctx, _ = pipeline_ctx
+    ctx.engine = ErroringEngine(recipes, write=True)
+    run_pipeline(stages(), ctx)
+    assert manifest(ctx)["generate_cases"]["status"] == "ok"
+
+
+def test_the_default_pipeline_leaves_evaluate_for_later(pipeline_ctx):
+    """evaluate runs on demand (/test-agent:evaluate): generation goes straight to the upload."""
+    ctx, engine = pipeline_ctx
+    run_pipeline(stages(WORKFLOW.default_pipeline), ctx)
+    assert "evaluate" not in manifest(ctx) and engine.calls == ["generate_cases", "prerequisites"]
+    run_pipeline(stages([*WORKFLOW.default_pipeline, "evaluate"]), ctx, selected=["evaluate"])
+    assert manifest(ctx)["evaluate"]["status"] == "ok" and ctx.path("qa/eval.json").exists()

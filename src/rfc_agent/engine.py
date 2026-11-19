@@ -42,10 +42,14 @@ from .streams import StreamResult, parse_stream, stream_event_label
 
 _STAGES_DIR = Path(__file__).parent / "stages"
 _GUARD = Path(__file__).parent / "hooks" / "guard_writes.py"
+_GUARD_BROWSER = Path(__file__).parent / "hooks" / "guard_browser.py"
+_GUARD_DEVICE = Path(__file__).parent / "hooks" / "guard_device.py"
 _APPROVE_RO = Path(__file__).parent / "hooks" / "approve_readonly.py"
 _REPO_HISTORY = Path(__file__).parent / "hooks" / "repo_history.py"
 _STAGE_TOOLS = Path(__file__).parent / "hooks" / "stage_tools.py"
 _BYTE_BUDGET = Path(__file__).parent / "hooks" / "byte_budget.py"
+#: env var naming the current stage's Stage.allow_commands to the approve_readonly hook
+ALLOWED_COMMANDS_ENV = "RFC_AGENT_ALLOWED_COMMANDS"
 _CANARY_PROBED = False  # hooks_canary runs at most once per process (it caches per CLI version on disk)
 
 
@@ -154,6 +158,18 @@ def _hook_settings(disabled: set[str]) -> dict:
             "matcher": "Bash",
             "hooks": [{"type": "command", "command": f"{sys.executable} {_APPROVE_RO}"}],
         }),
+        # the browser tools of execute_ui_agent (mcp_tools.BROWSER_ACTION_TOOLS) act on a live site:
+        # every call is held to the run's own origin. Inert for a stage with no `playwright` server.
+        "guard_browser": ("PreToolUse", {
+            "matcher": "mcp__playwright__.*",
+            "hooks": [{"type": "command", "command": f"{sys.executable} {_GUARD_BROWSER}"}],
+        }),
+        # the device tools of execute_app (mcp_tools.DEVICE_ACTION_TOOLS) act in an app on an emulator:
+        # every call is held to its device, its app and an allow-list of commands. Inert without `maestro`.
+        "guard_device": ("PreToolUse", {
+            "matcher": "mcp__maestro__.*",
+            "hooks": [{"type": "command", "command": f"{sys.executable} {_GUARD_DEVICE}"}],
+        }),
         # continuous byte-budget accounting: the 50KB ceiling used to be visible
         # only at the terminal gate (v1 binary-searched it for 4.3 min, v2's
         # revision died at it). Warns once per file per threshold; never blocks.
@@ -182,7 +198,8 @@ def _hook_settings(disabled: set[str]) -> dict:
 
 
 def _write_guard_settings(run_dir: Path, dest: Path, *, hooks_enabled: bool = True,
-                          disabled_hooks: tuple[str, ...] | list[str] = ()) -> Path:
+                          disabled_hooks: tuple[str, ...] | list[str] = (),
+                          allow_commands: tuple[str, ...] | list[str] = ()) -> Path:
     """Settings JSON for one headless child: the PreToolUse write-guard (containment) + the curated
     read-only Bash allowlist (throughput). The guard is the enforcement layer; the allowlist only stops
     text-reading commands from dying in headless auto-deny.
@@ -195,7 +212,7 @@ def _write_guard_settings(run_dir: Path, dest: Path, *, hooks_enabled: bool = Tr
     if not _GUARD.exists():  # fail loudly: a missing guard must not silently downgrade to "no containment"
         raise EngineFailure(f"write-guard hook missing at {_GUARD} — refusing to run with repo write access")
     off = set(disabled_hooks or ())
-    allow = list(_READONLY_BASH_ALLOW)
+    allow = list(_READONLY_BASH_ALLOW) + [f"Bash({c}:*)" for c in allow_commands]  # Stage.allow_commands
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(
         json.dumps(
@@ -923,6 +940,7 @@ def run_claude(
     extra_env: dict[str, str] | None = None,
     steer_epoch: float | None = None,
     effort: str | None = None,
+    mcp_overrides: dict | None = None,
 ) -> StreamResult:
     """ONE headless claude invocation under the stage's full containment (materialized MCP subset,
     write-guard, read-only allowlist, --setting-sources project).
@@ -947,7 +965,11 @@ def run_claude(
     logs.mkdir(parents=True, exist_ok=True)
     err_path = logs / f"{label}.stderr"
     mcp_servers = stage_mcp_servers(stage, ctx)
-    mcp_path = cfg.materialize_mcp(mcp_servers, logs / f"{label}.mcp.json")
+    # mcp_overrides: per-invocation server definitions (see Config.materialize_mcp). Passed only when
+    # there are some, so a config object that predates the argument keeps working unchanged.
+    mcp_dest = logs / f"{label}.mcp.json"
+    mcp_path = cfg.materialize_mcp(mcp_servers, mcp_dest, mcp_overrides) if mcp_overrides else \
+        cfg.materialize_mcp(mcp_servers, mcp_dest)
 
     # per-stage model override (AGENT.STAGE_MODELS, e.g. {"generate": "<fast-writer>"}): the write leg's
     # speed is a MODEL property (Cursor's whole Composer thesis — a fast model for the high-token leg);
@@ -1020,6 +1042,7 @@ def run_claude(
         ctx.run_dir, logs / f"{label}.settings.json",
         hooks_enabled=bool(ctx.flag("hooks", True)),
         disabled_hooks=tuple(ctx.flag("hooks_off", []) or ()),
+        allow_commands=tuple(getattr(stage, "allow_commands", ()) or ()),
     )
     cmd += ["--settings", str(settings_path)]
     # feedback-channel canary (2026-09-03): once per process, once per CLI version per machine — a
@@ -1076,6 +1099,10 @@ def run_claude(
     env = {**child_env_base, "RFC_AGENT_RUN_DIR": str(ctx.run_dir.resolve()),
            # the guard hook reads RFC_AGENT_RUN_DIR to know the one writable tree
            "RFC_AGENT_REPOS_ROOT": str(Path(ctx.inputs.get("repos_root") or "").expanduser()),
+           # Stage.allow_commands, for approve_readonly: the allow rule in --settings only skips the CLI's
+           # ask, and that hook would still deny the interpreter as "ad-hoc" (2026-11-02: check_suite.py
+           # denied 3 times, the model fell back to hand-rolled jq). Newline-separated exact prefixes.
+           ALLOWED_COMMANDS_ENV: "\n".join(getattr(stage, "allow_commands", ()) or ()),
            **(extra_env or {})}
     if tap:
         env["ANTHROPIC_BASE_URL"] = tap.base_url
@@ -1197,6 +1224,9 @@ def run_claude(
         raise EngineFailure(
             f"'{label}' exited {proc.returncode} before emitting a result — stderr tail: "
             f"{_stderr_tail(err_path)} (full: {err_path})")
+    # a resumed session reports its running total; book only what this call added (harness.session_cost)
+    from harness.session_cost import charge
+    res.cost_usd = charge(ctx.run_dir, res.session_id, res.cost_usd, resumed=resume)
     if res.extra_results:
         # a post-result bonus turn ran (a steer racing the terminal result — file-poll lag window).
         # Its verdict is deliberately discarded (first-result-wins), but its file edits are on disk,

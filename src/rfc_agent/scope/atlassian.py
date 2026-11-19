@@ -20,10 +20,12 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .. import observe
 
-# the claude.ai connector, or the user-scope `atlassian` server SETUP.md adds (same tools, same OAuth host)
+# the claude.ai connector, or the user-scope `atlassian` server the install guide adds (CONFIG.md §5):
+# same tools, same OAuth host
 PREFIXES = ("mcp__claude_ai_Atlassian__", "mcp__atlassian__")
 TOOLS = ("getAccessibleAtlassianResources", "getConfluencePage", "getConfluencePageDescendants", "getJiraIssue")
 DEFAULT_MODEL = "claude-haiku-4-5"
@@ -103,6 +105,7 @@ class ConnectorSession:
         self._lines: list[dict] = []
         self._cv = threading.Condition()
         self._results = 0
+        self._billed = 0.0  # the session total already charged to earlier turns
 
     # ---- process plumbing --------------------------------------------------------------------
     def __enter__(self) -> ConnectorSession:
@@ -141,6 +144,13 @@ class ConnectorSession:
         with self._cv:
             self._results = 10**6  # process ended: release every waiter
             self._cv.notify_all()
+
+    def _share(self, total: float) -> float:
+        """This turn's cost. The open session reports its running total, so charge only what it added
+        (a lower total means the CLI started counting again)."""
+        share = total - self._billed if total >= self._billed else total
+        self._billed = total
+        return share
 
     def _turn(self, text: str) -> TurnResult:
         """One user turn, recorded on the trace as `agent:atlassian` (tool spans when verbose)."""
@@ -186,7 +196,7 @@ class ConnectorSession:
                     call.text = _result_text(b.get("content"))
                     call.is_error = bool(b.get("is_error"))
             if ev.get("type") == "result":
-                res.cost_usd += float(ev.get("total_cost_usd") or 0)
+                res.cost_usd += self._share(float(ev.get("total_cost_usd") or 0))
                 if ev.get("is_error"):
                     # claude itself refused the turn (usage limit, auth, overload): the connector was never asked
                     raise AtlassianError(f"headless claude refused the request: {ev.get('result') or ev.get('subtype')}"
@@ -210,16 +220,7 @@ class ConnectorSession:
         res = self._turn("Call getAccessibleAtlassianResources once. Do not call anything else. Reply: done.")
         for c in res.calls:
             if c.name == "getAccessibleAtlassianResources" and not c.is_error:
-                try:
-                    sites = json.loads(c.text)
-                except ValueError:
-                    sites = []
-                host = site.split("//")[-1].rstrip("/")
-                for s in sites if isinstance(sites, list) else []:
-                    if host in str(s.get("url", "")):
-                        self.cloud_id = s.get("id")
-                if not self.cloud_id and isinstance(sites, list) and sites:
-                    self.cloud_id = sites[0].get("id")
+                self.cloud_id = pick_cloud_id(c.text, site)
         if not self.cloud_id:
             raise AtlassianError(
                 "the Atlassian connector is not usable from headless claude (no getAccessibleAtlassianResources "
@@ -244,6 +245,30 @@ class ConnectorSession:
 
 # ---- turning tool results into raw/ files ---------------------------------------------------------
 
+def _host(url: str) -> str:
+    u = str(url or "").strip()
+    return (urlsplit(u if "//" in u else "//" + u).hostname or "").lower()
+
+
+def pick_cloud_id(sites_text: str, site: str) -> str | None:
+    """The cloudId of the accessible Atlassian site whose host is exactly ATLASSIAN.SITE's. None when the result
+    lists no sites (the connector didn't answer: retryable). When it lists sites and none matches, raise: on an
+    account with several sites, any other pick would fetch a valid-looking PRD from the wrong one."""
+    try:
+        sites = json.loads(sites_text)
+    except ValueError:
+        return None
+    if not isinstance(sites, list) or not sites:
+        return None
+    want = _host(site)
+    for s in sites:
+        if isinstance(s, dict) and want and _host(s.get("url", "")) == want:
+            return s.get("id")
+    hosts = ", ".join(sorted({_host(s.get("url", "")) for s in sites if isinstance(s, dict)})) or "none"
+    raise AtlassianError(f"ATLASSIAN.SITE is {want or 'not set'}, but this Atlassian sign-in reaches only: {hosts}. "
+                         "Fix ATLASSIAN.SITE, or sign in with an account that can see that site.")
+
+
 def parse_page(call: ToolCall) -> dict | None:
     """getConfluencePage result -> {id, title, body, url, last_modified}. None when it is not a page."""
     try:
@@ -256,8 +281,14 @@ def parse_page(call: ToolCall) -> dict | None:
         node = nodes[0] if nodes else (data if "body" in data else None)
     if not isinstance(node, dict) or not isinstance(node.get("body"), str):
         return None
+    # the claude.ai connector returns webUrl/lastModified; Atlassian's own MCP server (the user-scope `atlassian`
+    # server, and Axon's) returns the Confluence v2 shape: _links.webui (+ base) and version.createdAt
+    links = node.get("_links") if isinstance(node.get("_links"), dict) else {}
+    web = links.get("webui") and (links.get("base") or "") + links["webui"]
+    version = node.get("version") if isinstance(node.get("version"), dict) else {}
     return {"id": str(node.get("id") or call.input.get("pageId") or ""), "title": node.get("title") or "",
-            "body": node["body"], "url": node.get("webUrl") or "", "last_modified": node.get("lastModified") or ""}
+            "body": node["body"], "url": node.get("webUrl") or web or "",
+            "last_modified": node.get("lastModified") or version.get("createdAt") or ""}
 
 
 def parse_descendants(call: ToolCall) -> list[dict]:
@@ -296,12 +327,13 @@ def jira_keys(body: str) -> list[str]:
 
 def open_session(stack, log_path: Path, site: str, *, claude_bin: str = "claude", model: str = DEFAULT_MODEL,
                  cwd: Path | None = None, say=None, attempts: int = CONNECT_ATTEMPTS,
-                 wait_s: float = RETRY_WAIT_S) -> tuple[ConnectorSession, float]:
+                 wait_s: float = RETRY_WAIT_S, make=None) -> tuple[ConnectorSession, float]:
     """A connected session, entered on `stack` (an ExitStack), and the cost of connecting. A slow Atlassian
-    server gets a fresh connection, up to `attempts` in all; a missing sign-in or a refusal stops at once."""
+    server gets a fresh connection, up to `attempts` in all; a missing sign-in or a refusal stops at once.
+    `make()` builds another kind of session with the same API (Scope on Axon passes AxonConnectorSession)."""
     cost = 0.0
     for attempt in range(1, attempts + 1):
-        session = ConnectorSession(log_path, claude_bin=claude_bin, model=model, cwd=cwd)
+        session = make() if make else ConnectorSession(log_path, claude_bin=claude_bin, model=model, cwd=cwd)
         session.__enter__()
         try:
             res = session.connect(site)

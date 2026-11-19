@@ -1,8 +1,23 @@
-# rfc_agent
+# O1
+
+Tata 1mg's agent toolkit for the software lifecycle: from a PRD to a grounded tech RFC, test cases and code,
+with every claim about existing code cited to a file and line.
+
+| Component | What it does | Status |
+|---|---|---|
+| **rfc-agent** | PRD → grounded tech RFC (Scope → Summarize). A Claude Code plugin | Pilot (0.1.0) |
+| **Harness** | Agent-agnostic run loop, engines, contracts and policy that the agents share (`src/harness`) | In progress |
+| **Testing agent** | Tech RFC → QA test cases (`src/workflows/testing`) | In progress |
+| **Context layer** | Finds and traces code across repos, to ground every agent | Planned |
+| **Coding agent** | Tech RFC → implementation | Planned |
+
+Today the repo ships **rfc-agent**. The rest of this README covers it.
+
+## rfc-agent
 
 > **Pipeline (Scope → Summarize, `uv run rfc`)** — architecture and flow diagrams: **[docs/HLD.md](docs/HLD.md)**.
 >
-> **New user?** In Claude Code, say "Set up rfc-agent by following [INSTALL.md](INSTALL.md)". Claude does the rest.
+> **New user?** In Claude Code, say "Set up rfc-agent by following [CLAUDE_INSTALL.md](CLAUDE_INSTALL.md)". Claude does the rest.
 
 RFC-generation pipeline: **PRD → grounded Tech RFC**. Each stage runs headless Claude Code agents with a
 tightly scoped tool set; deterministic Python gates check the output between stages.
@@ -50,8 +65,10 @@ Pipeline diagrams in more detail: [docs/HLD.md](docs/HLD.md).
 
 ## Installing
 
-Follow **[INSTALL.md](INSTALL.md)**. It covers the prerequisites (Claude Code, access to your Confluence / Jira and
-code host), installing the plugin, and first-time setup. The shorter "Setup" section further down is for
+Follow **[INSTALL.md](INSTALL.md)**. It picks the guide for the tool you run in: [CLAUDE_INSTALL.md](CLAUDE_INSTALL.md)
+for Claude Code, [AXON_INSTALL.md](AXON_INSTALL.md) for Axon (`/rfc` and `/test`). They cover the prerequisites (access to
+your Confluence / Jira and code host), installing the plugin, and first-time setup. Every setting is in
+[CONFIG.md](CONFIG.md). The shorter "Setup" section further down is for
 people working from a checkout.
 
 ## The stages
@@ -102,18 +119,23 @@ One workflow is discovered today:
 
 ```
 $ uv run harness workflows
-WORKFLOW  PIPELINE                                                                            DESCRIPTION
---------  ----------------------------------------------------------------------------------  ------------------------------------------------------------
-testing   sources -> generate_cases -> render_xlsx -> evaluate -> store_cases -> derive_spec  QA suite generation, evaluation, storage and backend executi
+WORKFLOW  PIPELINE                                                                  DESCRIPTION
+--------  ------------------------------------------------------------------------  ------------------------------------------------------------
+testing   sources -> generate_cases -> render_xlsx -> store_cases -> prerequisites  QA suite generation, evaluation, storage, and backend / web
 ```
+
+That is the default: generate the suite, upload it to Kiwi as PROPOSED for review, and list what prestag needs.
+The rest is opt-in and runs on the same run dir: `evaluate` scores the suite on demand, and after review
+`derive_spec -> execute_be` (backend), `derive_ui -> execute_web` (web UI, Playwright) and `publish_app`
+(app UI, a Maestro report) run the CONFIRMED cases. See src/workflows/testing/README.md.
 
 ### Worked examples
 
 Swapping the engine, globally or per stage — an argument, never a code edit:
 
 ```bash
-# every stage on Pi; evaluate stays on Claude Code
-uv run harness run testing --feature TASK-29354 --rfc-run-dir ~/rfc-runs/TASK-29354 --engine pi --stage-engine evaluate=claude-code
+# every stage on Pi; generate_cases stays on Claude Code
+uv run harness run testing --feature TASK-29354 --rfc-run-dir ~/rfc-runs/TASK-29354 --engine pi --stage-engine generate_cases=claude-code
 ```
 
 Turning a stage off and choosing a storage backend, for the testing workflow:
@@ -121,6 +143,13 @@ Turning a stage off and choosing a storage backend, for the testing workflow:
 ```bash
 # skip the xlsx render (the JSON artifact is canonical), and upsert into Kiwi instead of local JSON
 uv run harness run testing --feature TASK-29354 --rfc-run-dir ~/rfc-runs/TASK-29354     --disable-stage render_xlsx --set testing.storage=kiwi
+```
+
+Running an opt-in stage on an existing run — score the suite, then, after review, the confirmed backend cases:
+
+```bash
+uv run harness run testing --feature TASK-29354 --run-dir ~/rfc-runs/2026-11-03-testing-TASK-29354 --stages evaluate --enable testing.evaluate
+uv run harness run testing --feature TASK-29354 --run-dir ~/rfc-runs/2026-11-03-testing-TASK-29354 --stages derive_spec,execute_be --enable testing.execute --curl ~/.secrets/curls/prestag.txt --env prestag --build <sha>
 ```
 
 Asking the harness what it can be told to do — the surface an agent drives:
@@ -156,7 +185,7 @@ for agents driving the harness, and for contributors adding a workflow or an eng
 
 ## Setup
 
-> Full operator prerequisites (auth, seats, service accounts, failure signatures): **[SETUP.md](SETUP.md)**.
+> Settings and failure signatures: **[CONFIG.md](CONFIG.md)**.
 
 ```bash
 uv sync
@@ -170,10 +199,10 @@ before it leaves your machine. See [scripts/security/SECURITY.md](scripts/securi
 
 **Config lives OUTSIDE the plugin**, in `~/.config/rfc-agent/config.json`: an installed plugin is replaced on every
 update, and a config inside it once leaked credentials into plugin cache copies. It holds everything you supply —
-team values (Atlassian site, fleetlens URL, product surfaces, service inventory, Langfuse host) and your own
+team values (Atlassian site, fleetlens URL, service inventory, Langfuse host) and your own
 (`REPOS_ROOT`, `RUNS_ROOT`, Langfuse keys, tokens). The harness's own working values ship read-only in
 `config.harness.json`; any key you set in your config.json wins, and env vars win over both. Nothing org-specific
-ships in the plugin. Details: SETUP.md §3.
+ships in the plugin. Details: CONFIG.md §1–§4.
 
 ## Install as a Claude Code plugin
 
@@ -184,6 +213,18 @@ config.json survives updates; a git-installed plugin cache is wiped on update):
 /plugin marketplace add /path/to/rfc_agent
 /plugin install rfc-agent@rfc-agent-marketplace
 ```
+
+The same marketplace also lists **test-agent** (`plugins/test-agent/`): `/plugin install
+test-agent@rfc-agent-marketplace`. Four commands (src/workflows/testing/README.md, "From chat"):
+
+- `/test-agent:test` turns a finished RFC run into a QA suite in Kiwi, tells you what prestag needs, and once
+  you have confirmed the cases runs them: backend cases over HTTP, web UI cases in Playwright, app UI cases
+  from a Maestro run.
+- `/test-agent:execute [web|backend|ui-agent|android|all]` runs the CONFIRMED cases of an existing run or Kiwi plan,
+  on any environment: web in Playwright or by an agent in a browser, Android by its Maestro flow or an agent on the
+  emulator; `--only-existing` starts the web tests already written at once, without the model.
+- `/test-agent:evaluate` scores a suite against the rubric and the 14 compliance checks, on demand.
+- `/test-agent:convert-flows` turns Android agent passes into validated Maestro flows (Claude Code only).
 
 Then `/rfc-agent:setup` once, and `/rfc-agent:rfc --prd <url>` per RFC (deliverables land in
 `$RUNS_ROOT/<jira-key-or-slug>-<timestamp>/`, default `~/rfc-runs/`; continue a stopped run with

@@ -1,7 +1,8 @@
 """Engine protocol + registry. An ENGINE runs one headless agent invocation under a containment policy and
 writes a canonical trace. It knows nothing about stages' meaning; the runner and stage-owned fan-out
 engines drive it. Adapters: `claude_code` (the existing `claude -p` primitive, default), `pi` (badlogic
-pi-coding-agent, `--mode json`), `replay` (re-emits a recorded trace + fixture outputs: parity + benchmarks).
+pi-coding-agent, `--mode json`), `axon` (the org's managed Pi, `axon pi --mode json`), `replay` (re-emits a
+recorded trace + fixture outputs: parity + benchmarks).
 
 Selection is by NAME through flags (`engine`, `stage_engines`), so switching an engine — globally or for one
 stage — is an argument, not a code edit: `harness run rfc --engine pi --stage-engine review=claude-code`.
@@ -34,6 +35,13 @@ class Containment:
     readonly_shell: bool = True  # allow only provably read-only shell segments without asking
     hooks_enabled: bool = True  # master switch for adapter-side hook transport (flag `hooks`)
     disabled_hooks: tuple[str, ...] = ()  # names of individual hooks turned off (flag `hooks_off`)
+    # (tool-name prefix, argv): a command run before every tool call whose name starts with the prefix. It
+    # gets the Claude PreToolUse payload on stdin; exit 0 allows, exit 2 denies with its stderr, anything
+    # else denies. The claude-code adapter carries the same scripts as its own hooks and ignores this.
+    tool_guards: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    # (absolute file, argv): a command run after a write to that file; what it prints is appended to the
+    # write's result. For a check an agent would otherwise have to run through a shell.
+    write_checks: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass
@@ -94,6 +102,7 @@ class Engine(Protocol):
 _BUILTIN: dict[str, str] = {
     "claude-code": "harness.engines.claude_code:ClaudeCodeEngine",
     "pi": "harness.engines.pi:PiEngine",
+    "axon": "harness.engines.axon:AxonEngine",
     "replay": "harness.engines.replay:ReplayEngine",
 }
 _REGISTRY: dict[str, Callable[..., Engine]] = {}

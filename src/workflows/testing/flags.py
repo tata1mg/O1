@@ -62,15 +62,32 @@ NAMES = (
     _f("run_template", str, "{feature} · {env} · {build}",
        "Test-run summary template; also the run's identity for reuse (was kiwi_runner.py:62). "
        "Placeholders: {feature} {env} {build}."),
+    _f("upload_status", str, "PROPOSED",
+       "Status a case is stored with. PROPOSED (default): a human approves it (CONFIRMED) or rejects it "
+       "(DISABLED) before it can run. CONFIRMED skips that review and is accepted by the JSON store only, "
+       "for offline trials and tests; the Kiwi store refuses it.",
+       choices=("PROPOSED", "CONFIRMED")),
     _f("exec_tag", str, "exec:http",
        "The tag a case must carry to be machine-executable (was EXEC_TAG in be_execute.py:25)."),
     # ---- pipeline shape ------------------------------------------------------------------------------
-    _f("evaluate", bool, True,
-       "Run the evaluator stage (presence checks in Python, rubric checked by the model); ON by default."),
+    _f("evaluate", bool, False,
+       "Run the evaluator stage (presence checks in Python, rubric checked by the model) in the pipeline. "
+       "OFF by default: it runs on demand on an existing run (`--stages evaluate --enable testing.evaluate`, "
+       "or /test-agent:evaluate), so ~17 minutes of scoring no longer delay the upload for review."),
     _f("store", bool, True, "Run the store_cases stage (upsert the suite into the case store)."),
+    _f("prerequisites", bool, True,
+       "Run the prerequisites stage: qa/prerequisites.md (services, deploy order, config, secrets, test "
+       "data fixtures prestag needs) and qa/test_data.template.yaml for the team to fill."),
     _f("execute", bool, False,
        "Run the execute_be stage. OFF by default because it issues real requests against a live "
        "service and records results; opt in with --enable testing.execute."),
+    _f("execute_web", bool, False,
+       "Run derive_ui and execute_web: Playwright tests for the CONFIRMED web UI cases, run against "
+       "--base-url with the tester's recorded session. OFF by default: it drives a browser against a live "
+       "environment as a real user and records results."),
+    _f("publish_app", bool, False,
+       "Run publish_app: record a Maestro run's JUnit report as one execution per CONFIRMED app UI case. "
+       "OFF by default: it writes results into the shared store."),
     _f("xlsx", bool, True,
        "Render the derived two-sheet workbook. Needs the optional extra `testing` (openpyxl); when that "
        "is absent the stage records a decision and skips instead of failing the run."),
@@ -104,17 +121,175 @@ NAMES = (
     _f("route_map", str, "",
        "Path to a JSON {contract_path: deployed_path} map. Empty = no rewriting (test_agent defaulted to "
        "config/route-map/<feature>.json inside its own repo, which a run dir has no business reading)."),
+    _f("attach_responses", bool, False,
+       "Attach each case's full JSON response to its execution (`response-<extid>.json`), beyond the "
+       "900-character `actual` property. OFF by default: Kiwi attachments are readable by every account, "
+       "so only turn it on where responses carry no personal data or secrets."),
     _f("cohort_path", str, "",
        "Dotted response path recorded as the `cohort_observed` execution property. Empty = do not record "
        "it. In test_agent this was hardcoded to `data.mix_panel_data.labs_careplan_variant` "
        "(be_execute.py:330) — one feature's experiment field baked into the generic executor."),
+    # ---- UI execution ---------------------------------------------------------------------------------
+    _f("base_url", str, "", "execute_web: the web app's origin on the target environment (--base-url)."),
+    _f("ui_auth", str, "",
+       "execute_web: a Playwright storage-state file holding a logged-in session (--ui-auth), recorded "
+       "with `npx playwright codegen --save-storage=<file> <base url>`. Passed to Playwright, never read."),
+    _f("cases", str, "",
+       "Only these case ids (comma-separated) are derived and run by derive_spec and derive_ui — to run one "
+       "case end to end. Empty = every CONFIRMED case of the kind."),
+    _f("ui_only_new", bool, False,
+       "derive_ui: keep the tests already written and derive only the CONFIRMED web cases that have neither a "
+       "test nor a skip; nothing new = no model call. What /test-agent:execute uses by default."),
+    _f("environments", str, "",
+       "The environments a run can target, comma-separated (e.g. dione,earth,jupiter,…). The command offers "
+       "them as choices; the chosen one is --env and, with base_url_template, gives the web base URL."),
+    _f("base_url_template", str, "",
+       "execute_web: the web base URL for an environment, with {env} (e.g. https://{env}.1mg.com). Used when "
+       "--base-url is not given."),
+    _f("ui_headed", bool, False,
+       "execute_web / execute_ui_agent: run the browser visibly, one test (or case) at a time, so a person "
+       "can watch. Off for unattended runs."),
+    _f("ui_login", str, "",
+       "execute_web: a JSON file {\"phone\", \"otp\"} for a test account whose number and OTP stay fixed "
+       "on the environment (--ui-login). derive_ui writes a login step that runs before every test run, so "
+       "no session expires; the values reach the Playwright process's environment and nothing else."),
+    _f("ui_device", str, "Pixel 7",
+       "execute_web: the Playwright device to emulate. Default a phone, because the web cases are mweb; "
+       "empty = a desktop browser."),
+    _f("ui_timeout_s", int, 60, "execute_web: per-test timeout, in seconds."),
+    _f("ui_source_roots", str, "",
+       "derive_ui: comma-separated source trees to take locators from. Empty = every repo snapshot of the "
+       "RFC run (<rfc run>/_snap/*)."),
+    # ---- agent-driven UI execution ---------------------------------------------------------------------
+    _f("execute_ui_agent", bool, False,
+       "Run the execute_ui_agent stage: an agent drives a real browser through each CONFIRMED web UI case "
+       "and returns a verdict with evidence — no Playwright script is derived. OFF by default: it acts on a "
+       "live test environment as a real user, and costs a model session per case on every run."),
+    _f("agent_max_actions", int, 60,
+       "execute_ui_agent: browser actions one case may take before it stops and marks what is left "
+       "`not reached`."),
+    _f("agent_case_timeout_s", int, 900,
+       "execute_ui_agent: wall time for one case, in seconds. 900: a five-part case did not fit in 480 (second "
+       "pilot), and what the agent had judged by then was lost."),
+    _f("agent_parallel", int, 5,
+       "execute_ui_agent: cases run in batches of this many, one agent and one browser per case."),
+    _f("agent_confirm_fail", bool, True,
+       "execute_ui_agent: re-run a FAIL once in a fresh browser. FAIL twice = FAIL; otherwise the case is "
+       "reported as flaky with both reasons."),
+    _f("agent_hosts", str, "",
+       "execute_ui_agent: hosts the agent may drive, comma-separated (e.g. prestag.1mg.com). The stage acts "
+       "on a live site, so it refuses a base address that is neither listed here nor the "
+       "base_url_template of an environment named in `environments`. Never list production."),
+    _f("agent_production", bool, False,
+       "execute_ui_agent: allow a base address that is not a named test environment — production. Set by "
+       "`execute ui-agent --production`. With a logged-in session it also needs agent_test_account. The "
+       "browser guard's forbidden actions (testing.agent_forbid) still apply: a test account on production "
+       "places real orders."),
+    _f("agent_test_account", bool, False,
+       "execute_ui_agent: the operator's statement that the logged-in session (--ui-auth) belongs to a TEST "
+       "account, not a customer's. Required for a logged-in run on production; `execute ui-agent "
+       "--production` asks for it. Recorded in the results."),
+    _f("agent_forbid", str, "",
+       "execute_ui_agent / execute_app / convert_flows: a hand-written regex over the target of each browser or "
+       "device action (the agent's own words for the element, and what it types). Set, it replaces the "
+       "default list entirely. Empty (default) = every group in ui_agent.FORBID_GROUPS that testing.agent_allow "
+       "does not name: NeuCoins and wallet, coupons, checkout and payment, Care Plan add/remove, address / "
+       "patient / profile edits, prescription upload, logout. A match is refused by the guard and the clause "
+       "becomes `not reached`. A tripwire on declared intent, not a sandbox."),
+    _f("agent_allow", str, "",
+       "execute_ui_agent / execute_app: forbidden-action groups this run may touch, comma-separated, from "
+       "neucoins, coupons, checkout, careplan, account, rx, logout (`execute ui-agent --allow coupons`). The "
+       "agent is told to undo what it did (remove the coupon it applied). neucoins on a logged-in run needs "
+       "testing.agent_test_account. Ignored when testing.agent_forbid is set."),
+    _f("agent_read_only", bool, False,
+       "execute_ui_agent: tell the agent to change nothing — no add to cart, booking, order, address, patient "
+       "or profile edit, no form submitted. A clause that needs one is `not reached`. An instruction to the "
+       "agent, not a block: for a run somewhere a change would matter."),
+    _f("agent_include_manual", bool, False,
+       "execute_ui_agent / execute_app (`execute ui-agent --include-manual`): also hand the agent CONFIRMED "
+       "cases tagged exec:manual with a surface:web / surface:android tag. The agent needs no "
+       "source code, so a case a script could not be written for may still be one a browser can verify."),
+    _f("agent_code_context", bool, False,
+       "execute_ui_agent: give the agent the fleetlens MCP server (read-only code lookup), to find where a "
+       "feature lives or which route opens it when it is stuck. Never to decide what the expected result is."),
+    _f("agent_browser", str, "",
+       "execute_ui_agent: the browser or channel Playwright MCP drives (chrome, msedge, firefox, webkit). "
+       "Empty = its bundled Chromium, which must be installed for the pinned @playwright/mcp version."),
+    _f("production_base_url", str, "",
+       "The live site's address (e.g. https://www.example.com), so `execute` can turn \"on prod\" into an "
+       "address without it being typed. It only names the address: running there still needs "
+       "`execute ui-agent --production`, which is never implied."),
+    _f("sessions_dir", str, "~/.secrets/playwright",
+       "The folder of recorded login sessions (*.json, Playwright storage state) that `execute --lookup` "
+       "offers by file name. A file is passed to the browser as --ui-auth and is never read by the helper."),
+    _f("kiwi_plan_id", str, "",
+       "The Kiwi test plan to read cases from and record into, by id (--kiwi-plan). Empty = the plan named "
+       "by plan_template under the feature's product. Set to run a plan this workflow did not create."),
+    _f("kiwi_direct", bool, False,
+       "Run a Kiwi plan this workflow did not upload: a CONFIRMED case with no extid: tag is identified as "
+       "KIWI-<case id>, and a case with no exec: tag is treated as a UI case. Set by `execute --kiwi-plan`."),
+    _f("kiwi_direct_surface", str, "web",
+       "Direct mode: the platform a CONFIRMED case with no surface: tag runs on — web (as before), android, "
+       "both, or none (left out, and listed by `execute --pending` so the command can ask). Set by "
+       "`execute --untagged`.", choices=("web", "android", "both", "none")),
+    # ---- Android (execute_app, convert_flows) ---------------------------------------------------------
+    _f("execute_app", bool, False,
+       "Run the execute_app stage: each CONFIRMED Android UI case runs on an emulator — as its VALIDATED "
+       "Maestro flow when one covers it, otherwise an agent drives the app through Maestro MCP. OFF by default: "
+       "it acts on a device as a real user and records results."),
+    _f("maestro_repo", str, "",
+       "The maestro-automation checkout, written by `/rfc-agent:setup` (Android step) / `preflight "
+       "setup-android`. Empty = Android runs are not set up. The checkout supplies its .maestro/flows "
+       "(which case each flow covers, and whether it is VALIDATED), scripts/ (app_id.sh, ensure_account.sh, "
+       "maestro_report.py) and .maestro/devices.yaml."),
+    _f("android_mode", str, "auto",
+       "execute_app: auto = a case's VALIDATED flow when it has one, else the agent; flow = flows only (cases "
+       "with none are listed, not run); agent = the agent for every case.", choices=("auto", "flow", "agent")),
+    _f("app_variant", str, "dev-release",
+       "execute_app: the build variant on the device (scripts/app_id.sh): dev-release, debug or prod. prod "
+       "needs testing.agent_production, as a production web run does.", choices=("dev-release", "debug", "prod")),
+    _f("devices", str, "",
+       "execute_app: the device serials to use, comma-separated. Empty = every `adb devices` entry in "
+       "`device` state. One case runs on a device at a time."),
+    _f("device_roles", str, "",
+       "execute_app: each device's role, `serial=role` comma-separated: guest (no-account cases only), an "
+       "account profile such as care_plan_user (that account's cases only; the device is kept signed in to it, "
+       "no sign-in is attempted) or pool (anything). Empty = the maestro repo's .maestro/devices.yaml when more "
+       "than one device is ready, else pool."),
+    _f("app_max_actions", int, 60,
+       "execute_app: Maestro commands one case's agent may run (each command inside a `run` call counts) "
+       "before it stops and marks what is left."),
+    _f("app_case_timeout_s", int, 900, "execute_app: wall time for one case's agent, in seconds."),
+    _f("flow_timeout_s", int, 900, "execute_app: wall time for one `maestro test` of one flow, in seconds."),
+    _f("convert_flows", bool, False,
+       "Run the convert_flows stage: each agent PASS that left a draft flow is linted and run on a device "
+       "until green (plain `maestro test` first, then a bounded fix by a model); never records attempts in "
+       "Kiwi, adds one comment to the case's execution with the outcome. Set by `/test-agent:convert-flows`."),
+    _f("convert_fix_rounds", int, 3,
+       "convert_flows: model fix rounds for a draft that fails its plain run, before it is left as stuck."),
+    _f("maestro_report", str, "", "publish_app: the JUnit report of a Maestro run (--maestro-report)."),
+    _f("maestro_flows", str, "",
+       "publish_app: the flows folder the run used, <druid>/.maestro/flows (--maestro-flows). Its headers' "
+       "`# Covers:` blocks and step labels say which case each result belongs to."),
+    _f("maestro_map", str, "", "publish_app: JSON {flow: [case ids]} overriding the derived mapping."),
+    _f("maestro_blocked", str, "",
+       "publish_app: curated exclusions, `TC-…  reason` per line; those cases are recorded BLOCKED."),
+    _f("maestro_only_folder", str, "",
+       "publish_app: publish only testcases whose flow sits under .maestro/flows/<this>/ (a whole-suite "
+       "report spans suites that belong to different features)."),
+    _f("app_exec_tag", str, "exec:ui",
+       "publish_app: the tag a case needs to be recorded. Empty = any CONFIRMED case a flow covers "
+       "(cases test_agent imported may carry no exec: tag)."),
     # ---- Kiwi connection ------------------------------------------------------------------------------
     _f("kiwi_url", str, "", "Kiwi XML-RPC endpoint. Empty = fall back to ~/.tcms.conf (tcms-api's default).",
        env="TCMS_API_URL"),
     # secret=True: never serialised into flags.json, `flags --json` or `--explain` (harness.flags).
     # Marked by the kernel builder as part of review BLOCKER 1.1 — a credential in every run dir is not
     # something to leave to builder sequencing. Ownership of this file otherwise unchanged.
-    _f("kiwi_user", str, "", "Kiwi username. Empty = ~/.tcms.conf.", env="TCMS_USERNAME"),
+    _f("kiwi_user", str, "",
+       "Kiwi username, used with kiwi_url + kiwi_password. Empty = ~/.tcms.conf, and when the connection "
+       "falls back to that file its username is the agent's account (README 'Kiwi account').",
+       env="TCMS_USERNAME"),
     _f("kiwi_password", str, "",
        "Kiwi password. Empty = ~/.tcms.conf. There is deliberately NO default: test_agent shipped the "
        "admin password as a literal in two modules and wrote it into ~/.tcms.conf from the Makefile.",

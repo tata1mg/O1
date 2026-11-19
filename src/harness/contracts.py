@@ -197,6 +197,11 @@ class Stage:
     # targeted edits instead of a from-scratch rewrite (measured: a full GENERATE rewrite is ~46K output
     # tokens ≈ 8min; a revision is a fraction). Safe only where gates fully re-police the revised output.
     revise_on_retry: bool = False
+    # exact command prefixes this stage's headless child may run without asking (each becomes a
+    # `Bash(<prefix>:*)` allow rule beside the shared read-only list). Pin an absolute interpreter + script,
+    # never a bare verb: allow rules are string-prefix matches. For a stage-owned read-only checker, so the
+    # model calls one sanctioned command instead of hand-rolling jq pipelines the CLI then denies.
+    allow_commands: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -228,6 +233,10 @@ class Workflow:
     decisions: tuple[str, ...] = ()
     # run-dir-relative files that seed the inputs digest for stage 1 (RFC: raw/*.md)
     input_roots: tuple[str, ...] = ()
+    # resolved flags -> ordered stage names. When set, it replaces `default_pipeline` for a run that does
+    # not pass --pipeline, so a workflow's own composition flags (testing.execute, ...) shape the run
+    # instead of being read by nothing. `--disable-stage` still applies on top.
+    compose_pipeline: Callable[[object], tuple[str, ...]] | None = None
     # Engine-neutral env a workflow exports to EVERY child it spawns, computed from the RunContext.
     #
     # WHY a workflow hook and not kernel code: the containment POLICY needs three things only a
@@ -240,6 +249,12 @@ class Workflow:
     #
     # Returns {env var: value}; merged into EngineRequest.env by `rfc_agent.engine.engine_call`.
     containment_env: Callable[[RunContext], dict[str, str]] | None = None
+    # The workflow's own outcome measures, sent as trace scores when a traced run closes. Called with the
+    # run context and the set of stages THIS invocation ran (None = unknown), so a resume does not re-score
+    # what it never touched. Returns {score name: {"value": ..., "data_type"?: "NUMERIC" | "CATEGORICAL" |
+    # "BOOLEAN", "comment"?: str}}. Kernel gate scores say only whether each stage passed; this is where
+    # "how good was the output" reaches the trace.
+    run_scores: Callable[[RunContext, set | None], dict[str, dict]] | None = None
 
     def stage(self, name: str) -> Stage:
         for s in self.stages:

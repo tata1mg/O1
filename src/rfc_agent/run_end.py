@@ -181,9 +181,11 @@ def mark_stage(run_dir: Path, stage: str) -> None:
 
 
 def close_attempt(run_dir: Path, *, kind: str, start_stage: str, code: int, status: str, stage: str | None,
-                  tail_text: str = "") -> dict:  # fmt: skip
-    """Write the attempt's end line and clear the open marker. Returns the line."""
-    entry: dict = {"ts": _now(), "kind": kind, "from": start_stage, "exit": code, "status": status}
+                  tail_text: str = "", extra: dict | None = None) -> dict:  # fmt: skip
+    """Write the attempt's end line and clear the open marker. Returns the line.
+
+    `extra` adds fields to the line as they are (run.py passes the O1 commit the attempt ran on)."""
+    entry: dict = {"ts": _now(), "kind": kind, "from": start_stage, "exit": code, "status": status, **(extra or {})}
     sk = stop_kind(code)
     if sk:
         entry["stop_kind"], entry["stage"] = sk, stage

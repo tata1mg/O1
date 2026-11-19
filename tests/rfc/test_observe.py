@@ -37,9 +37,6 @@ class Obs:
     def score(self, **kw):
         self.scores.append(kw)
 
-    def set_trace_io(self, **kw):
-        self.client.trace_io.update(kw)
-
     @property
     def level(self):
         return self.updates.get("level", self.kw.get("level", "DEFAULT"))
@@ -48,7 +45,6 @@ class Obs:
 class FakeClient:
     def __init__(self):
         self.all: list[Obs] = []
-        self.trace_io: dict = {}
         self.flushed = 0
         self.created: list[dict] = []
         self.lock = threading.Lock()
@@ -231,7 +227,9 @@ def test_standalone_stage_gets_its_own_trace(traced, tmp_path):
     c = traced["client"]
     root, stage = c.one("rfc-run"), c.one("stage:review")
     assert stage.parent is root and stage.type == "chain" and stage.ended
-    assert stage.updates["output"] == {"exit": 0} and c.trace_io["output"] == {"exit": 0}
+    assert stage.updates["output"] == {"exit": 0}
+    # SDK v5: the trace's Input/Output is the root observation's own io
+    assert root.updates["output"] == {"exit": 0} and root.updates["input"]["entry"] == "review"
     assert c.flushed == 2  # the spans before the run's numbers are counted, then everything at the end
     assert (tmp_path / "identity.json").exists()  # the session id outlives this invocation
 
@@ -418,29 +416,6 @@ def test_pause_answers_are_recorded(traced, tmp_path):
     op = traced["client"].one("operator:pause1")
     assert op.kw["input"]["selected"] == ["repo:svc"] and op.kw["input"]["not_selected"] == ["repo:web"]
     assert op.kw["input"]["header"] == "── Investigate · Pause 1 ──"
-
-
-def test_scope_summary_call_is_recorded(traced, tmp_path, monkeypatch):
-    from rfc_agent.scope import context
-
-    fake = tmp_path / "claude"
-    fake.write_text(
-        "#!/usr/bin/env python3\nimport json,sys\nsys.stdin.read()\n"
-        'print(json.dumps({"total_cost_usd": 0.01, "usage": {"input_tokens": 7},'
-        ' "result": json.dumps({"summary": "adds a field", "surfaces": []})}))\n'
-    )
-    fake.chmod(0o755)
-
-    @observe.entry("scope")
-    def main(argv=None):
-        assert context.summarise("# PRD", Cfg(**{"AGENT.CLAUDE_BIN": str(fake)}))["ok"]
-        return 0
-
-    assert main(["--run-dir", str(tmp_path)]) == 0
-    c = traced["client"]
-    gen = c.one("llm:prd-summary")
-    assert c.one("agent:prd-summary").parent is c.one("stage:scope")
-    assert gen.updates["output"]["summary"] == "adds a field" and gen.updates["usage_details"]["input"] == 7
 
 
 def test_preflight(traced, capsys, monkeypatch):

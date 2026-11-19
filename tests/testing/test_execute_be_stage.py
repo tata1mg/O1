@@ -20,14 +20,16 @@ CURL = "curl 'https://svc.test/anything' -H 'x-client: web' -b 'sid=abc'"
 
 
 @pytest.fixture
-def be_ctx(tmp_path, ctx_factory, clean_cases):
-    """A run dir at the point derive_spec has finished, plus a captured curl on disk."""
+def be_ctx(tmp_path, ctx_factory, clean_cases, approve):
+    """A run dir at the point derive_spec has finished — the suite stored and then approved by a
+    reviewer — plus a captured curl on disk."""
     curl = tmp_path / "curl.txt"
     curl.write_text(CURL)
     c = ctx_factory(tmp_path / "run",
                     inputs={"feature": "RSE-1", "curl": str(curl), "env": "staging", "build": "b1"})
     write_json(c.path("qa/cases.json"), clean_cases)
     store_cases.STAGE.engine(store_cases.STAGE, c)
+    approve(c.run_dir / "store")
     write_json(c.path("qa/spec.json"), [
         {"extid": "TC-RSE-SLOT-FUNC-01", "path": "/radiology/v1/slots?lab_id=42", "method": "GET",
          "expect_status": 200, "assert": [{"path": "slots.0.remaining_capacity", "equals": 1}]},
@@ -85,8 +87,35 @@ def test_results_are_also_recorded_in_the_store(be_ctx):
     assert executions["TC-RSE-SLOT-FUNC-01"]["props"]["endpoint"] == "/radiology/v1/slots?lab_id=42"
 
 
+def test_each_execution_records_when_its_request_finished(be_ctx):
+    with responder(HEALTHY):
+        run_stage(be_ctx)
+    run_file = next((be_ctx.run_dir / "store" / "runs").rglob("*.json"))
+    finished = json.loads(run_file.read_text())["executions"]["TC-RSE-SLOT-FUNC-01"]["finished_at"]
+    assert finished.endswith("+00:00")
+
+
+def test_responses_are_attached_only_when_asked(be_ctx, tmp_path, ctx_factory, clean_cases, approve):
+    """Kiwi attachments are readable by every account, so the full body is opt-in."""
+    with responder(HEALTHY):
+        run_stage(be_ctx)
+    assert not (be_ctx.run_dir / "store" / "attachments").exists()
+
+    c = ctx_factory(tmp_path / "run2", inputs={**be_ctx.inputs}, flags={"testing.attach_responses": True})
+    write_json(c.path("qa/cases.json"), clean_cases)
+    store_cases.STAGE.engine(store_cases.STAGE, c)
+    approve(c.run_dir / "store")
+    write_json(c.path("qa/spec.json"), json.loads(be_ctx.path("qa/spec.json").read_text()))
+    with responder(HEALTHY):
+        run_stage(c)
+    body = next((c.run_dir / "store" / "attachments").rglob("response-TC-RSE-SLOT-FUNC-01.json"))
+    assert json.loads(body.read_text()) == {"slots": [{"remaining_capacity": 1}]}
+    lines = [json.loads(x) for x in c.path("logs/decisions.jsonl").read_text().splitlines()]
+    assert any(x["decision"] == "response_attached" for x in lines)
+
+
 def test_the_cohort_property_is_only_recorded_when_a_path_is_configured(be_ctx, tmp_path, ctx_factory,
-                                                                       clean_cases):
+                                                                       clean_cases, approve):
     """`cohort_observed` is recorded only when a cohort path is configured. Absent flag -> the property is not
     written at all."""
     with responder(HEALTHY):
@@ -99,6 +128,7 @@ def test_the_cohort_property_is_only_recorded_when_a_path_is_configured(be_ctx, 
                     inputs={**be_ctx.inputs}, flags={"testing.cohort_path": "slots.0.remaining_capacity"})
     write_json(c.path("qa/cases.json"), clean_cases)
     store_cases.STAGE.engine(store_cases.STAGE, c)
+    approve(c.run_dir / "store")
     write_json(c.path("qa/spec.json"), json.loads(be_ctx.path("qa/spec.json").read_text()))
     with responder(HEALTHY):
         run_stage(c)
@@ -142,10 +172,13 @@ def test_preflight_tolerates_blocked_and_404(be_ctx):
     assert json.loads(be_ctx.path("qa/results.json").read_text())["tally"] == {"BLOCKED": 2}
 
 
-def test_nothing_runnable_is_a_gate_failure(be_ctx, clean_cases):
+def test_nothing_runnable_is_a_gate_failure(be_ctx, clean_cases, approve):
     """Nothing runnable means the suite is wrong, not the machine — so it is a gate failure."""
+    # back to unreviewed first: a reviewed case is never overwritten by a re-upload
+    approve(be_ctx.run_dir / "store", status="PROPOSED")
     write_json(be_ctx.path("qa/cases.json"), [{**c, "execution": "manual"} for c in clean_cases])
     store_cases.STAGE.engine(store_cases.STAGE, be_ctx)
+    approve(be_ctx.run_dir / "store")
     with responder(HEALTHY):
         with pytest.raises(GateFailure, match="nothing to run"):
             execute_be.STAGE.engine(execute_be.STAGE, be_ctx)

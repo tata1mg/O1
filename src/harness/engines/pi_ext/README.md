@@ -166,3 +166,28 @@ and only exercised pi's startup path.
 | `-e <abs>/probe.js` with `--mode json -p --no-extensions` | the extension factory ran — a plain `.js` extension loads. |
 | a `console.log` from that extension | arrived on **stderr**; stdout stayed empty. |
 | the `{"type":"session",...}` header as line 1 | **not** observed: with an invalid API key pi produced no stdout at all before it was killed at 120 s, so the header may be written after provider setup rather than at process start. The translator tolerates a missing header for exactly this reason. |
+
+## rfc-tools.js (axon only)
+
+Loaded next to the guard by the `axon` adapter and by rfc-agent's Axon backend. Configured by one 0600 JSON
+file named in `RFC_TOOLS_CONFIG`, it does three things:
+
+- registers the stage's MCP servers for the one session (`pi.registerMcpServer`, `direct` exposure, so the
+  tools keep their `mcp__<server>__<tool>` names);
+- runs rfc-agent's `investigate/hook.py` with a Claude-shaped payload: `pre` on write/edit `tool_call`
+  (exit 2 blocks with the hook's message), `post` on `tool_result` (its `additionalContext` is appended to
+  the result);
+- cancels Axon's threshold compaction unless the config allows it.
+- runs a stage's tool guards (`Containment.tool_guards`, config key `guards`): for every tool whose name starts
+  with a guard's prefix, the guard script gets the Claude `PreToolUse` payload on stdin. Exit 0 allows, exit 2
+  blocks with its stderr, anything else blocks. These are the scripts Claude runs as hooks for the browser of
+  `execute_ui_agent` and the device of `execute_app`; a block is also appended to the denials file;
+- runs a stage's write checks (`Containment.write_checks`, config key `write_checks`): after a write to the
+  named file, the command's output is appended to the result the model reads.
+
+A config that cannot be loaded blocks writes and every `mcp__` tool. Stdio MCP servers (`command` + `args`)
+register the same way url servers do (measured on Axon 1.0.4, 2026-11-19).
+
+Failure policy matches the guard. A write check that can't run blocks the write; a post check that can't run
+adds nothing. `tests/fixtures/axon/rfc_tools_cases.mjs` drives it under plain `node`, including once against
+the real `hook.py`.

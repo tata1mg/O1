@@ -3,6 +3,83 @@
 All notable changes to this project. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions match `.claude-plugin/plugin.json`.
 
+## 0.2.1
+
+test-agent is listed in the same marketplace as **0.9.0** (new on `main`: the plugin, with the testing workflow's
+execution stages). Its version is in `plugins/test-agent/.claude-plugin/plugin.json`.
+
+### Added
+
+- **`/rfc feedback` on Axon.** `/rfc feedback [--run-dir R] [up|down]` asks the same questions as
+  `/rfc-agent:feedback` for a finished, stopped, failed or unknown-end run (and a re-rating, with a preview) and
+  saves them on the run's Langfuse trace through `feedback.py`. Axon offers it once when a run ends. Each area has
+  a `Something else (type it)` row for a gap that is not listed, and a note is asked only where a gap was ticked.
+- **`GIT_REPOS_REMOTE`** (env `RFC_AGENT_GIT_REPOS_REMOTE`): the team's clone address, with `{repo}` where the repo
+  name goes. Scope and the Android setup clone from it first and fall back to the first checkout in `REPOS_ROOT`.
+  Setup asks for it once, so install no longer needs a repo to be cloned.
+
+### Changed
+
+- **One install flow.** `INSTALL.md` is a router: the agent detects Claude Code or Axon, follows only that guide,
+  and stops with a "raise a GitHub issue" message on any other harness. The Claude guide is `CLAUDE_INSTALL.md`,
+  the Axon guide `AXON_INSTALL.md` (moved out of `docs/`, installs from `main`, assumes Axon is installed and
+  signed in). `SETUP.md` is replaced by `CONFIG.md` (settings and a failure table). `docs/AXON.md` is folded into
+  `AXON_INSTALL.md` and removed. **Links to the old paths break.**
+- test-agent is 0.9.0 (it was never on `main`; 0.9.0 stays above the 0.8.0 some testers already hold).
+
+### Fixed
+
+- `/test-agent:*` run from the marketplace's folder, not the plugin cache that setup synced, so the Kiwi client
+  was missing on the first test. `/rfc-agent:setup` now installs and checks that folder too.
+- Axon rating: a typed note after "Nothing wrong" was scored as a gap.
+
+## 0.2.0
+
+### Added
+
+- **Axon engine.** The pipeline's agents can run on Axon, the org's managed Pi, instead of `claude -p`:
+  `rfc --engine axon`, or a single stage with `--stage-engine review=axon` (also config `AGENT.ENGINE` /
+  `AGENT.STAGE_ENGINES`). Claude Code stays the default and its path is unchanged. Claude models map to gateway
+  models by tier (`AGENT.AXON.MODELS`). `python -m rfc_agent.axon_agent doctor` checks the setup. The harness
+  gains an `axon` adapter. See [AXON_INSTALL.md](AXON_INSTALL.md) and [decisions.md](decisions.md).
+- **`/rfc` inside Axon.** `uv run python -m rfc_agent.axon_agent install` adds an `/rfc` command to Axon.
+  It runs the same pipeline, shows progress above the editor and asks each pause as a question in the
+  session. `/rfc attach <run>` reconnects to a run, and `/rfc doctor` checks the setup. It also adds a
+  read-only `rfc_status` tool and turns on Pi's `read`/`grep`/`find`/`ls`, so asking Axon about a run doesn't
+  hit terminal approval prompts. Others can install it without a checkout:
+  `axon pi install git:github.com/tata1mg/O1@<tag>` (the repo is now a Pi package).
+- **Confluence/Jira on Axon.** When Scope runs on Axon, it fetches the PRD through Axon's own Atlassian MCP
+  sign-in (`axon pi mcp login atlassian`), so `--engine axon` no longer needs `claude`. The Axon doctor checks
+  the sign-in.
+
+### Changed
+
+- **Scope finds repos with one Opus agent, in two tiers.** The Haiku PRD summary and the surface table
+  (`SCOPE.SURFACES`, `SCOPE.SUMMARY_MODEL`) are gone. One agent (`claude-opus-5-5`, `SCOPE.DISCOVERY_MODEL`)
+  explores fleetlens and returns "changes" repos (proposed ticked) and "maybe" repos (proposed unticked, with a
+  reason), backend and frontend, up to 15. Same on Claude Code and Axon.
+- **Langfuse Python SDK v5, ready for the Langfuse v4 platform.** `langfuse>=5,<6` (5.2.0 locked). A trace's
+  input and output are now its root observation's own (`set_trace_io` / `set_current_trace_io` are gone in v5).
+  The secret scrubber decodes v5's JSON-encoded metadata and input/output before scrubbing, so redacting a key
+  no longer corrupts the JSON. `scripts/mine_reasons.py` reads the Observations API v2
+  (`/api/public/v2/observations`, cursor pages, `--days`) instead of the v1 endpoint Langfuse Cloud retires on
+  2026-11-16. `tests/infra/test_langfuse_v5.py` fails on any call v5 removed or any retired endpoint.
+
+### Fixed
+
+- **Investigate: a Figma interaction with no action no longer crashes step 1b.** An on-click with no action
+  set exports as `"actions": [null]`, and reading prototype links raised `AttributeError`. Empty actions and
+  interactions are now skipped.
+- **Axon: a recovered retry no longer fails the agent.** A failed model attempt that Pi retried successfully
+  kept its error; now only exhausted retries and aborts fail.
+- **Scope: the fleetlens token is no longer left on disk.** Without a run folder, the discovery agent's MCP
+  config went to `$TMPDIR` and stayed there; it now goes in a scratch folder that is deleted.
+- **Scope: a failing progress callback kills the discovery agent** instead of leaving it running.
+- **Scope: an error Claude reports with exit 0 (e.g. a usage limit) keeps its reason** on the agent card
+  instead of "exit 0".
+- **Rate limits are counted from protocol fields** and failed-result text (`API Error: 429`, Pi's
+  `rate_limit_error`), not from any message that mentions rate limits.
+
 ## 0.1.2 (pilot)
 
 ### Changed

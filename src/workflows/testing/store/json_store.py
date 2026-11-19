@@ -2,8 +2,13 @@
 
 Layout under `<run_dir>/store/`:
 
-    cases/<feature>.json                 {extid: {case: <canonical dict>, status, tags}}
+    cases/<feature>.json                 {extid: {case: <canonical dict>, status, tags, suggestions[]}}
     runs/<feature>/<env>__<build>.json   {run_id, attached[], executions: {extid: {...}}}
+    attachments/<scope>/<id>/<name>      files attached to an execution, case, run or plan
+
+There is no review UI for this store: a reviewer edits `status` in the cases file (CONFIRMED / DISABLED).
+A row whose status differs from the one this store writes is human-reviewed, and a re-upload keeps it
+as it is and appends the would-be change to its `suggestions` — the Kiwi store's rule, in a file.
 
 WHY the canonical dict rather than Kiwi's rendered text (survey §6.3 blocker 3): the case text is Kiwi's
 transport for the steps, not the data. Keeping the dict means the store round-trips every field — including
@@ -17,11 +22,12 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .._io import atomic_write_text, load_json_strict, locked
 from ..schema import case_tags, render_text
-from . import Case, Run
+from . import Case, Run, check_scope
 
 
 def _slug(s: str) -> str:
@@ -32,8 +38,9 @@ def _slug(s: str) -> str:
 class JsonCaseStore:
     name = "json"
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, upload_status: str = "PROPOSED") -> None:
         self.root = Path(root)
+        self.upload_status = upload_status
 
     # ---- paths ----------------------------------------------------------------------------------
     def _cases_path(self, feature: str) -> Path:
@@ -62,25 +69,37 @@ class JsonCaseStore:
         # same feature cannot land on a stale copy and drop the other writer's cases.
         with locked(path):
             stored = self._read(path)
-            created = updated = 0
+            created = updated = unchanged = 0
+            protected: list[str] = []
             for c in cases:
                 extid = str(c["id"])
-                if extid in stored:
-                    updated += 1
-                else:
+                row = stored.get(extid)
+                if row is None:
                     created += 1
+                elif row.get("case") == c:
+                    unchanged += 1
+                    continue
+                elif row.get("status") != self.upload_status:
+                    # reviewed: the human decision stands, the agent's change is only offered
+                    suggestion = {"case": c, "why": f"status is {row.get('status')}"}
+                    if suggestion not in row.setdefault("suggestions", []):
+                        row["suggestions"].append(suggestion)
+                    protected.append(extid)
+                    continue
+                else:
+                    updated += 1
                 stored[extid] = {
                     "case": c,
-                    # CONFIRMED on write mirrors kiwi_writer, which confirms every case as its final
-                    # step. The approval signal is the case status, so the executor needs no permission
-                    # model of its own.
-                    "status": "CONFIRMED",
+                    # The approval signal is the case status, so the executor needs no permission model
+                    # of its own. PROPOSED unless an offline run asked for CONFIRMED.
+                    "status": self.upload_status,
                     "tags": case_tags(c, feature),
                     "summary": f"[{extid}] {c.get('title', '')}".strip(),
                 }
             self._write(path, stored)
-        return {"created": created, "updated": updated, "total": len(cases), "backend": self.name,
-                "feature": feature, "path": str(path)}
+        return {"created": created, "updated": updated, "unchanged": unchanged, "protected": len(protected),
+                "protected_ids": protected, "total": len(cases), "backend": self.name,
+                "feature": feature, "path": str(path), "status": self.upload_status}
 
     def list_cases(self, feature: str, *, status: str | None = None,
                    tags: tuple[str, ...] = ()) -> list[Case]:
@@ -131,7 +150,8 @@ class JsonCaseStore:
                    skipped_wrong_execution=tuple(wrong_exec), url=path.as_uri())
 
     def record_execution(self, run_id: str, extid: str, status: str, *, actual: str = "",
-                         duration_s: float | None = None, props: dict | None = None) -> str:
+                         duration_s: float | None = None, props: dict | None = None,
+                         finished_at: datetime | None = None) -> str:
         path = self._find_run(run_id)
         if path is None:
             raise RuntimeError(f"no run {run_id!r} in {self.root} — was create_run called?")
@@ -144,16 +164,56 @@ class JsonCaseStore:
             if extid not in (data.get("attached") or []):
                 raise RuntimeError(
                     f"no execution for extid {extid} in run {run_id} — was the case attached?")
+            stop = finished_at or datetime.now(UTC)
+            if stop.tzinfo is None:
+                stop = stop.replace(tzinfo=UTC)
             data.setdefault("executions", {})[extid] = {
                 "status": status, "actual": actual, "duration_s": duration_s, "props": props or {},
+                "finished_at": stop.isoformat(timespec="microseconds"),
             }
             self._write(path, data)
         return f"{run_id}:{extid}"
+
+    def attach(self, scope: str, target_id: str, name: str, content: bytes, *,
+               replace: bool = False) -> bool:
+        check_scope(scope)
+        path = self._attachment_path(scope, target_id, name)
+        if path.exists() and not replace:
+            return True
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".part")
+        tmp.write_bytes(content)
+        tmp.replace(path)
+        return True
+
+    def attachment_url(self, scope: str, target_id: str, name: str) -> str:
+        check_scope(scope)
+        path = self._attachment_path(scope, target_id, name)
+        return path.as_uri() if path.exists() else ""
+
+    def comment_execution(self, execution_id: str, text: str) -> bool:
+        run_id, _, extid = execution_id.rpartition(":")
+        path = self._find_run(run_id)
+        if path is None:
+            return False
+        with locked(path):
+            data = self._read(path)
+            row = (data.get("executions") or {}).get(extid)
+            if row is None:
+                return False
+            comments = row.setdefault("comments", [])
+            if text not in comments:
+                comments.append(text)
+                self._write(path, data)
+        return True
 
     def health(self) -> dict:
         return {"ok": True, "backend": self.name, "root": str(self.root), "network": False}
 
     # ---- helpers ---------------------------------------------------------------------------------
+    def _attachment_path(self, scope: str, target_id: str, name: str) -> Path:
+        return self.root / "attachments" / scope / _slug(str(target_id)) / _slug(name)
+
     def _find_run(self, run_id: str) -> Path | None:
         for p in sorted((self.root / "runs").rglob("*.json")):
             if p.name.endswith(".lock") or p.name.endswith(".tmp"):

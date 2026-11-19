@@ -1,0 +1,9 @@
+{
+  "name": "testing-ui-runner",
+  "private": true,
+  "description": "Playwright for the testing workflow's derive_ui / execute_web stages, and the Playwright MCP browser server for execute_ui_agent. Installed once with `npm ci` here; each run dir's qa/ui/node_modules links to this one.",
+  "devDependencies": {
+    "@playwright/mcp": "0.0.85",
+    "@playwright/test": "1.64.1"
+  }
+}

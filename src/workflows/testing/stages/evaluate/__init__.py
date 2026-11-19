@@ -63,7 +63,7 @@ def _build_prompt(ctx: RunContext) -> str:
         "Requirement sources (read each):",
         "",
     ]
-    lines += [f"{r['label']}: {r['path']}" for r in present]
+    lines += [f"{r['label']}: {r.get('local') or r['path']}" for r in present]
     lines += [
         "",
         "The suite under review:",

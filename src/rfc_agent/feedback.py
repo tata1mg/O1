@@ -28,7 +28,8 @@ is just a score chart. Scores:
                                        not_rated (no answer passed). Written on every rating, so a re-rate replaces it.
     rfc_minutes_saved     NUMERIC      minutes the RFC saved versus writing it yourself (--minutes-saved; only if given)
     rfc_minutes_spent     NUMERIC      minutes the person spent reviewing and correcting the RFC after it was generated
-                                       (--minutes-spent; only if given). The run itself and pauses are already on the trace.
+                                       (--minutes-spent; only if given). The run itself and pauses are already on
+                                       the trace.
     rfc_feedback_stage    CATEGORICAL  only with --stage: which stage the rating is about
 
 A 👍 can carry issues too: an approved RFC may still have gaps worth charting.

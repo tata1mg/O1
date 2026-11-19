@@ -8,7 +8,12 @@
       "name": "rfc-agent",
       "source": "./",
       "description": "PRD to grounded tech RFC: Scope, Investigate, Draft, Review, Revise, Summarize. Every claim about existing code is cited to a file and line and checked by deterministic gates. Writes out/rfc.md and a short out/rfc.readable.md."
+    },
+    {
+      "name": "test-agent",
+      "source": "./plugins/test-agent",
+      "description": "QA test cases from an RFC run, from chat: preflight, generate, evaluate, upload to Kiwi for review, prerequisites, then backend, web UI (Playwright) and app UI (Maestro) execution after you confirm the cases. Needs rfc-agent installed."
     }
   ],
-  "description": "Marketplace for the rfc-agent plugin: generate grounded tech RFCs from PRDs."
+  "description": "Marketplace for the rfc-agent plugin (grounded tech RFCs from PRDs) and the test-agent plugin (QA suites from those RFCs)."
 }

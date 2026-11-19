@@ -17,6 +17,14 @@ from workflows.testing.store.json_store import JsonCaseStore
 
 @pytest.fixture
 def store(tmp_path) -> JsonCaseStore:
+    """Uploads CONFIRMED: most tests here are about runs, which need an approved suite. The review rules
+    themselves are tested against `proposed` below."""
+    return JsonCaseStore(tmp_path / "store", upload_status="CONFIRMED")
+
+
+@pytest.fixture
+def proposed(tmp_path) -> JsonCaseStore:
+    """The default: every case stored PROPOSED, waiting for a reviewer."""
     return JsonCaseStore(tmp_path / "store")
 
 
@@ -39,15 +47,63 @@ def test_upsert_creates_then_updates_in_place(store, clean_cases):
     first = store.upsert_cases("RSE-1", clean_cases)
     assert (first["created"], first["updated"], first["total"]) == (len(clean_cases), 0, len(clean_cases))
     second = store.upsert_cases("RSE-1", clean_cases)
-    assert (second["created"], second["updated"]) == (0, len(clean_cases))
+    assert (second["created"], second["updated"], second["unchanged"]) == (0, 0, len(clean_cases))
+    third = store.upsert_cases("RSE-1", [{**c, "title": c["title"] + "!"} for c in clean_cases])
+    assert (third["created"], third["updated"]) == (0, len(clean_cases))
     assert len(store.list_cases("RSE-1")) == len(clean_cases)
 
 
-def test_created_plus_updated_equals_total(store, clean_cases):
+def test_the_four_counts_add_up_to_total(store, clean_cases):
     """The store_cases gate depends on this arithmetic."""
     store.upsert_cases("RSE-1", clean_cases[:2])
     s = store.upsert_cases("RSE-1", clean_cases)
-    assert s["created"] + s["updated"] == s["total"] == len(clean_cases)
+    assert s["created"] + s["updated"] + s["unchanged"] + s["protected"] == s["total"] == len(clean_cases)
+
+
+# ---- the review rules ----------------------------------------------------------------------------------
+def test_cases_are_stored_proposed_by_default(proposed, clean_cases):
+    assert proposed.upsert_cases("RSE-1", clean_cases)["status"] == "PROPOSED"
+    assert {c.status for c in proposed.list_cases("RSE-1")} == {"PROPOSED"}
+
+
+def test_an_unreviewed_suite_cannot_run(proposed, clean_cases):
+    proposed.upsert_cases("RSE-1", clean_cases)
+    run = proposed.create_run("RSE-1", "b1", "staging", require_tag="exec:http")
+    assert run.attached == () and len(run.skipped_unconfirmed) == len(clean_cases)
+
+
+def test_a_reviewed_case_is_kept_and_the_change_offered(proposed, clean_cases, approve, tmp_path):
+    proposed.upsert_cases("RSE-1", clean_cases)
+    first, second = clean_cases[0]["id"], clean_cases[1]["id"]
+    approve(tmp_path / "store", extids={first})
+    renamed = [{**c, "title": "Renamed"} for c in clean_cases]
+    s = proposed.upsert_cases("RSE-1", renamed)
+    assert s["protected_ids"] == [first] and s["updated"] == len(clean_cases) - 1
+    by_id = {c.extid: c for c in proposed.list_cases("RSE-1")}
+    assert by_id[first].status == "CONFIRMED" and by_id[first].case["title"] != "Renamed"
+    assert by_id[second].case["title"] == "Renamed"
+    # the same suggestion twice is recorded once
+    proposed.upsert_cases("RSE-1", renamed)
+    rows = json.loads(proposed._cases_path("RSE-1").read_text())
+    assert len(rows[first]["suggestions"]) == 1
+
+
+def test_get_store_rejects_an_unknown_upload_status(tmp_path, ctx_factory):
+    from harness.contracts import PipelineConfigError
+
+    ctx = ctx_factory(tmp_path / "run", flags={"testing.upload_status": "APPROVED"})
+    with pytest.raises(PipelineConfigError, match="upload_status"):
+        get_store(ctx)
+
+
+def test_the_kiwi_store_refuses_to_upload_confirmed(tmp_path, ctx_factory):
+    """In Kiwi only a reviewer approves a case; the escape hatch is for the JSON store alone."""
+    from harness.contracts import PipelineConfigError
+
+    ctx = ctx_factory(tmp_path / "run", flags={"testing.storage": "kiwi",
+                                               "testing.upload_status": "CONFIRMED"})
+    with pytest.raises(PipelineConfigError, match="only a reviewer"):
+        get_store(ctx)
 
 
 def test_upsert_is_scoped_by_feature(store, clean_cases):
@@ -185,3 +241,34 @@ def test_importing_the_workflow_does_not_import_tcms_api():
     from workflows.testing.store import kiwi  # noqa: F401
 
     assert "tcms_api" not in sys.modules
+
+
+# ---- finish time and attachments (ported from test_agent 0188771) ----------------------------------------
+def test_record_execution_keeps_the_actual_finish_time_with_its_offset(store, clean_cases):
+    from datetime import UTC, datetime
+
+    store.upsert_cases("RSE-1", clean_cases)
+    run = store.create_run("RSE-1", "b1", "staging", require_tag="exec:http")
+    extid = run.attached[0]
+    store.record_execution(run.run_id, extid, "PASS", duration_s=1.5,
+                           finished_at=datetime(2026, 10, 30, 9, 0, 0, tzinfo=UTC))
+    run_file = next((store.root / "runs").rglob("*.json"))
+    row = json.loads(run_file.read_text())["executions"][extid]
+    assert row["finished_at"] == "2026-10-30T09:00:00.000000+00:00"
+
+
+def test_attach_is_idempotent_by_name_unless_replaced(store):
+    assert store.attachment_url("execution", "r1:TC-1", "response.json") == ""
+    assert store.attach("execution", "r1:TC-1", "response.json", b"one")
+    assert store.attach("execution", "r1:TC-1", "response.json", b"two")
+    url = store.attachment_url("execution", "r1:TC-1", "response.json")
+    assert url.startswith("file://")
+    path = next((store.root / "attachments").rglob("response.json"))
+    assert path.read_bytes() == b"one"
+    store.attach("execution", "r1:TC-1", "response.json", b"two", replace=True)
+    assert path.read_bytes() == b"two"
+
+
+def test_attach_rejects_an_unknown_scope(store):
+    with pytest.raises(ValueError, match="scope must be one of"):
+        store.attach("product", "1", "x.txt", b"")

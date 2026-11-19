@@ -199,3 +199,50 @@ def test_the_flag_help_says_it_is_insecure_and_how_to_stop_being_insecure():
 def test_the_default_still_matches_todays_behaviour():
     """Parity: flipping it would break every existing Kiwi deployment silently."""
     assert registry()["testing.insecure_tls"].default is True
+
+
+# ---- which account the agent is -------------------------------------------------------------------------
+@pytest.fixture
+def tcms_conf(tmp_path, monkeypatch):
+    """Point the store's ~/.tcms.conf lookup at a file in tmp_path; returns a writer for it."""
+    from workflows.testing.store import kiwi
+
+    path = tmp_path / "tcms.conf"
+    monkeypatch.setattr(kiwi, "TCMS_CONF_PATHS", (str(path),))
+
+    def write(username):
+        body = "[tcms]\nurl = https://kiwi.test/xml-rpc/\npassword = x\n"
+        path.write_text(body + (f"username = {username}\n" if username else ""))
+    return write
+
+
+def test_a_conf_login_makes_the_conf_username_the_agent(tcms_conf):
+    """Credentials from ~/.tcms.conf: the agent is whoever that file logs in as, with no testing.kiwi_user,
+    so its own edits are not mistaken for a reviewer's."""
+    tcms_conf("test-agent")
+    s = KiwiCaseStore(insecure=False)
+    s._client(FakeTCMS, None)
+    assert FakeTCMS.last.args == () and s.user == "test-agent"
+
+
+def test_the_conf_username_wins_over_a_flag_it_does_not_log_in_as(tcms_conf):
+    """An incomplete TCMS_* triple still logs in from the file, so a lone TCMS_USERNAME would name the
+    wrong account."""
+    tcms_conf("test-agent")
+    s = KiwiCaseStore(user="someone-else", insecure=False)
+    s._client(FakeTCMS, None)
+    assert s.user == "test-agent"
+
+
+def test_a_conf_without_a_username_keeps_the_flag(tcms_conf):
+    tcms_conf("")
+    s = KiwiCaseStore(user="svc", insecure=False)
+    s._client(FakeTCMS, None)
+    assert s.user == "svc"
+
+
+def test_a_full_triple_never_reads_the_conf(tcms_conf):
+    tcms_conf("test-agent")
+    s = store(insecure=False)
+    s._client(FakeTCMS, None)
+    assert FakeTCMS.last.args == ("https://kiwi.test/xml-rpc/", "svc", "s3cret") and s.user == "svc"

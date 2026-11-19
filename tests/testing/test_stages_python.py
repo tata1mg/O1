@@ -100,6 +100,92 @@ def test_a_missing_source_is_recorded_as_a_decision(ctx, tmp_path):
     assert {"API Contract", "Test Data", "Figma", "Implementation Plan"} == labels
 
 
+RFC_WITH_SECTIONS = """# RFC
+## 4. Design
+design text
+## 5. API contract
+### 5.1 svc `POST /v1/x`
+request and response
+## 6. Implementation plan
+### CHANGE-1 svc: add x
+- verify: call POST /v1/x
+## 7. Rollout
+not part of the plan
+"""
+
+
+def _rfc_run(tmp_path, rfc_text):
+    rfc_run = tmp_path / "rfc-run"
+    (rfc_run / "raw").mkdir(parents=True)
+    (rfc_run / "out").mkdir(parents=True)
+    (rfc_run / "raw" / "prd.md").write_text("# PRD\n")
+    (rfc_run / "out" / "rfc.md").write_text(rfc_text)
+    return rfc_run
+
+
+def test_the_contract_and_plan_come_from_the_rfc_when_the_run_has_no_files_for_them(ctx, tmp_path):
+    """rfc-agent now writes them as RFC sections 5 and 6, not out/contract.md and out/detail/plan.md. Reading
+    only the old paths left the contract "blocked" and every backend case `manual` (2026-11-02)."""
+    ctx.inputs["rfc_run_dir"] = str(_rfc_run(tmp_path, RFC_WITH_SECTIONS))
+    _, failures = run_stage(sources.STAGE, ctx)
+    assert failures == []
+    by_label = {r["label"]: r for r in json.loads(ctx.path("qa/sources.json").read_text())["sources"]}
+    contract, plan = by_label["API Contract"], by_label["Implementation Plan"]
+    assert contract["status"] == plan["status"] == "present"
+    assert contract["extracted_from"] == "RFC" and contract["path"].endswith("rfc.md#API contract")
+    copied = open(contract["local"]).read()
+    assert copied.startswith("## 5. API contract") and "POST /v1/x" in copied and "CHANGE-1" not in copied
+    assert "## 7. Rollout" not in open(plan["local"]).read()
+    lines = [json.loads(x) for x in ctx.path("logs/decisions.jsonl").read_text().splitlines()]
+    assert {x["label"] for x in lines if x["decision"] == "source_extracted"} == {
+        "API Contract", "Implementation Plan"}
+
+
+def test_a_contract_file_still_wins_over_the_rfc_section(ctx, tmp_path):
+    rfc_run = _rfc_run(tmp_path, RFC_WITH_SECTIONS)
+    (rfc_run / "out" / "contract.md").write_text("# The real contract\n")
+    ctx.inputs["rfc_run_dir"] = str(rfc_run)
+    run_stage(sources.STAGE, ctx)
+    row = next(r for r in json.loads(ctx.path("qa/sources.json").read_text())["sources"]
+               if r["label"] == "API Contract")
+    assert row["path"] == str(rfc_run / "out" / "contract.md") and "extracted_from" not in row
+
+
+def test_a_mistyped_contract_path_is_not_papered_over_by_the_rfc(ctx, tmp_path):
+    """An explicit --contract that does not exist is the operator's typo to see, not a cue to extract."""
+    ctx.inputs.update({"rfc_run_dir": str(_rfc_run(tmp_path, RFC_WITH_SECTIONS)),
+                       "contract": str(tmp_path / "typo.md")})
+    run_stage(sources.STAGE, ctx)
+    row = next(r for r in json.loads(ctx.path("qa/sources.json").read_text())["sources"]
+               if r["label"] == "API Contract")
+    assert row["status"] == "missing" and row["path"].endswith("typo.md")
+
+
+def test_an_rfc_without_the_section_leaves_the_contract_blocked(ctx, tmp_path):
+    ctx.inputs["rfc_run_dir"] = str(_rfc_run(tmp_path, "# RFC\n## 4. Design\ntext\n"))
+    run_stage(sources.STAGE, ctx)
+    row = next(r for r in json.loads(ctx.path("qa/sources.json").read_text())["sources"]
+               if r["label"] == "API Contract")
+    assert row["status"] == "blocked"
+
+
+def test_figma_accepts_the_index_rfc_agent_writes_now(ctx, tmp_path):
+    rfc_run = _rfc_run(tmp_path, "# RFC\n")
+    (rfc_run / "raw" / "figma_index.md").write_text("frame 1: Checkout\n")
+    ctx.inputs["rfc_run_dir"] = str(rfc_run)
+    run_stage(sources.STAGE, ctx)
+    row = next(r for r in json.loads(ctx.path("qa/sources.json").read_text())["sources"]
+               if r["label"] == "Figma")
+    assert row["status"] == "present" and row["path"].endswith("raw/figma_index.md")
+
+
+def test_the_testing_workflow_does_not_run_the_hook_canary_by_default():
+    """The canary proves rfc-agent's byte_budget pacing, which no testing stage is subject to."""
+    from workflows.testing import WORKFLOW
+
+    assert WORKFLOW.flag_defaults.get("hook_canary") is False
+
+
 # ---- store_cases -------------------------------------------------------------------------------------
 def test_store_cases_upserts_and_summarises(sourced_ctx, clean_cases):
     result, failures = run_stage(store_cases.STAGE, sourced_ctx)
@@ -114,7 +200,42 @@ def test_store_cases_is_idempotent(sourced_ctx, clean_cases):
     run_stage(store_cases.STAGE, sourced_ctx)
     run_stage(store_cases.STAGE, sourced_ctx)
     summary = json.loads(sourced_ctx.path("qa/store.json").read_text())
-    assert (summary["created"], summary["updated"]) == (0, len(clean_cases))
+    assert (summary["created"], summary["updated"], summary["unchanged"]) == (0, 0, len(clean_cases))
+
+
+def test_store_cases_stores_the_suite_proposed(sourced_ctx):
+    run_stage(store_cases.STAGE, sourced_ctx)
+    rows = json.loads((sourced_ctx.run_dir / "store" / "cases" / "RSE-1.json").read_text())
+    assert {r["status"] for r in rows.values()} == {"PROPOSED"}
+    assert json.loads(sourced_ctx.path("qa/store.json").read_text())["status"] == "PROPOSED"
+
+
+def test_a_regenerated_suite_updates_an_unreviewed_case(sourced_ctx, clean_cases):
+    from workflows.testing.stages import write_json
+
+    run_stage(store_cases.STAGE, sourced_ctx)
+    write_json(sourced_ctx.path("qa/cases.json"), [{**clean_cases[0], "title": "Renamed"}, *clean_cases[1:]])
+    run_stage(store_cases.STAGE, sourced_ctx)
+    summary = json.loads(sourced_ctx.path("qa/store.json").read_text())
+    assert (summary["updated"], summary["protected"]) == (1, 0)
+
+
+def test_a_regenerated_suite_never_overwrites_a_reviewed_case(sourced_ctx, clean_cases, approve):
+    from workflows.testing.stages import write_json
+
+    run_stage(store_cases.STAGE, sourced_ctx)
+    first = clean_cases[0]["id"]
+    approve(sourced_ctx.run_dir / "store", extids={first}, status="DISABLED")
+    write_json(sourced_ctx.path("qa/cases.json"), [{**clean_cases[0], "title": "Renamed"}, *clean_cases[1:]])
+    _, failures = run_stage(store_cases.STAGE, sourced_ctx)
+    assert failures == []
+    summary = json.loads(sourced_ctx.path("qa/store.json").read_text())
+    assert summary["protected_ids"] == [first]
+    row = json.loads((sourced_ctx.run_dir / "store" / "cases" / "RSE-1.json").read_text())[first]
+    assert row["status"] == "DISABLED" and row["case"]["title"] != "Renamed"
+    assert row["suggestions"][0]["case"]["title"] == "Renamed"
+    lines = [json.loads(x) for x in sourced_ctx.path("logs/decisions.jsonl").read_text().splitlines()]
+    assert any(x["decision"] == "case_kept_for_human" and x["extid"] == first for x in lines)
 
 
 def test_store_cases_records_the_upsert_decision(sourced_ctx):
@@ -141,7 +262,7 @@ def test_the_gate_catches_arithmetic_that_does_not_add_up(sourced_ctx):
     write_json(sourced_ctx.path("qa/store.json"),
                {"created": 2, "updated": 2, "total": 6, "backend": "json"})
     failures = store_cases.STAGE.gate(sourced_ctx)
-    assert any("created(2) + updated(2) != total(6)" in f for f in failures)
+    assert any("(4) != total(6)" in f for f in failures)
 
 
 def test_the_gate_catches_a_store_that_holds_fewer_cases_than_the_suite(sourced_ctx):
@@ -154,8 +275,9 @@ def test_the_gate_catches_a_store_that_holds_fewer_cases_than_the_suite(sourced_
 
 
 # ---- derive_spec -------------------------------------------------------------------------------------
-def test_derive_spec_transcribes_the_stored_http_cases(sourced_ctx):
+def test_derive_spec_transcribes_the_stored_http_cases(sourced_ctx, approve):
     run_stage(store_cases.STAGE, sourced_ctx)
+    approve(sourced_ctx.run_dir / "store")
     result, failures = run_stage(derive_spec.STAGE, sourced_ctx)
     assert failures == []
     spec = json.loads(sourced_ctx.path("qa/spec.json").read_text())
@@ -168,11 +290,12 @@ def test_derive_spec_transcribes_the_stored_http_cases(sourced_ctx):
     assert "derived 3/3" in result.final_text
 
 
-def test_derive_spec_drops_the_unparseable_case_and_records_why(sourced_ctx, sample_cases):
+def test_derive_spec_drops_the_unparseable_case_and_records_why(sourced_ctx, sample_cases, approve):
     from workflows.testing.stages import write_json
 
     write_json(sourced_ctx.path("qa/cases.json"), sample_cases)
     run_stage(store_cases.STAGE, sourced_ctx)
+    approve(sourced_ctx.run_dir / "store")
     _, failures = run_stage(derive_spec.STAGE, sourced_ctx)
     assert failures == []
     report = json.loads(sourced_ctx.path("qa/spec.report.json").read_text())
@@ -184,13 +307,14 @@ def test_derive_spec_drops_the_unparseable_case_and_records_why(sourced_ctx, sam
                for x in lines)
 
 
-def test_derive_spec_flags_a_status_only_case_as_weak(sourced_ctx, clean_cases):
+def test_derive_spec_flags_a_status_only_case_as_weak(sourced_ctx, clean_cases, approve):
     from workflows.testing.stages import write_json
 
     weak = {**clean_cases[0], "id": "TC-RSE-SLOT-FUNC-07", "scenario_id": "TS-RSE-SLOT-FUNC-07",
             "steps": "1. Send GET /x\n2. Assert status == 200"}
     write_json(sourced_ctx.path("qa/cases.json"), [weak])
     run_stage(store_cases.STAGE, sourced_ctx)
+    approve(sourced_ctx.run_dir / "store")
     run_stage(derive_spec.STAGE, sourced_ctx)
     report = json.loads(sourced_ctx.path("qa/spec.report.json").read_text())
     assert report["status_only"] == ["TC-RSE-SLOT-FUNC-07"]
@@ -210,7 +334,7 @@ def test_the_gate_says_to_fix_the_cases_not_the_parser(sourced_ctx):
     assert "Fix the cases in the suite, not the parser" in failures[0]
 
 
-def test_the_exec_tag_is_a_flag(tmp_path, ctx_factory, clean_cases):
+def test_the_exec_tag_is_a_flag(tmp_path, ctx_factory, clean_cases, approve):
     """The tag that marks a case machine-executable is a flag: selecting on another tag needs no code edit."""
     from workflows.testing.stages import write_json
 
@@ -218,6 +342,7 @@ def test_the_exec_tag_is_a_flag(tmp_path, ctx_factory, clean_cases):
                     flags={"testing.exec_tag": "exec:ui"})
     write_json(c.path("qa/cases.json"), clean_cases)
     run_stage(store_cases.STAGE, c)
+    approve(c.run_dir / "store")
     run_stage(derive_spec.STAGE, c)
     report = json.loads(c.path("qa/spec.report.json").read_text())
     assert report["total_http_cases"] == 2  # the two exec:ui cases in the clean suite

@@ -9,6 +9,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+import pytest
+
 from rfc_agent import figma_snapshot as fs
 from rfc_agent.scope import atlassian as at
 from rfc_agent.scope import confirm, figma, repos
@@ -278,6 +280,42 @@ def test_confirm_via_file_applies_selection(tmp_path):
     assert next(it for it in out if it.key == "torpedo").extra["branch"] == "feature/x"
 
 
+def _answer_no_design(tmp_path, proceed):
+    def answer():
+        prop = tmp_path / confirm.PROPOSAL
+        while not prop.exists():
+            time.sleep(0.01)
+        assert json.loads(prop.read_text())["no_design"] == "the PRD links no Figma design"
+        (tmp_path / confirm.ANSWERS).write_text(json.dumps({"selected": [1], "proceed_without_design": proceed}))
+
+    # The helper runs twice on the same folder. Without this, the second thread sees the FIRST call's proposal at
+    # once and can write its answers before via_file() clears the old answers file, which then deletes them and
+    # the call times out ("no selection arrived"): a race that failed on CI roughly once in forty runs.
+    for stale in (confirm.PROPOSAL, confirm.ANSWERS):
+        (tmp_path / stale).unlink(missing_ok=True)
+    t = threading.Thread(target=answer, daemon=True)
+    t.start()
+    return confirm.via_file(_items(), lambda n: confirm.Item("repo", n, n, extra={}), "hdr", tmp_path,
+                            timeout_s=10, no_design="the PRD links no Figma design")
+
+
+def test_confirm_via_file_without_design_goes_on_only_when_the_user_says_so(tmp_path):
+    out = _answer_no_design(tmp_path, True)
+    assert [it.key for it in out if it.include] == [_items()[0].key]
+    with pytest.raises(SystemExit, match="STOP: no design available"):
+        _answer_no_design(tmp_path, False)
+
+
+def test_confirm_ask_without_design_stops_on_no(monkeypatch):
+    monkeypatch.setattr(confirm.sys.stdin, "isatty", lambda: True)
+    replies = iter(["", "n"])  # Enter accepts the proposal, then "n" to going on without a design
+    monkeypatch.setattr("builtins.input", lambda *_: next(replies))
+    with pytest.raises(SystemExit, match="STOP: no design available"):
+        confirm.ask(_items(), None, "hdr", no_design="the PRD links no Figma design")
+    replies = iter(["", "y"])
+    assert confirm.ask(_items(), None, "hdr", no_design="the PRD links no Figma design")
+
+
 def test_plugin_code_synced_into_the_folder_figma_loads(tmp_path, monkeypatch):
     home = tmp_path / ".rfc-agent" / "figma_snapshot_plugin"
     monkeypatch.setattr(fs, "_INSTALL_DIR", home)
@@ -461,8 +499,9 @@ def test_a_pending_connector_is_waited_for_on_the_same_connection(tmp_path, monk
         '"name": "mcp__atlassian__getAccessibleAtlassianResources", "input": {}}]}}), flush=True)\n'
         '        print(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", '
         f'"tool_use_id": "t1", "content": {sites!r}}}]}}}}), flush=True)\n'
-        '    print(json.dumps({"type": "result", "subtype": "success", "result": "ok", "total_cost_usd": 0.001}), '
-        "flush=True)\n"
+        # the open session reports its running total, as real `claude -p` does: $0.001 per turn
+        '    print(json.dumps({"type": "result", "subtype": "success", "result": "ok", '
+        '"total_cost_usd": round(0.001 * turn, 6)}), flush=True)\n'
     )
     fake.chmod(0o755)
     with contextlib.ExitStack() as stack:
@@ -471,3 +510,40 @@ def test_a_pending_connector_is_waited_for_on_the_same_connection(tmp_path, monk
         assert s.cloud_id == "cloud-1" and s.connector_status == "connected"
     assert count.read_text() == "1", "one connection: it waited instead of starting over"
     assert cost == 0.004  # two pending checks, the turn that saw it connected, and the call
+
+
+def test_remote_template_prefers_the_configured_clone_address(tmp_path):
+    root, _ = _make_remote(tmp_path)
+    inferred = repos.remote_template(root)
+    assert inferred and "{repo}" in inferred
+    team = "git@bitbucket.org:team/{repo}.git"
+    assert repos.remote_template(root, team) == team                     # configured wins over the checkout
+    assert repos.remote_template(tmp_path / "no-checkouts-yet", team) == team   # and needs no checkout at all
+    assert repos.remote_template(root, "git@bitbucket.org:team/fixed.git") == inferred  # no {repo}: ignored
+    assert repos.remote_template(root, "") == inferred and repos.remote_template(root, None) == inferred
+
+
+def test_configured_remote_reads_git_repos_remote_from_config(monkeypatch):
+    class Cfg:
+        def __init__(self, value):
+            self.value = value
+
+        def get(self, dotted, default=None):
+            return self.value if dotted == "GIT_REPOS_REMOTE" else default
+
+    for value, want in (("git@bitbucket.org:team/{repo}.git", "git@bitbucket.org:team/{repo}.git"),
+                        ("  git@host:team/{repo}.git \n", "git@host:team/{repo}.git"),
+                        ("git@host:team/fixed.git", None), ("", None), (None, None)):
+        monkeypatch.setattr(repos, "get_config", lambda v=value: Cfg(v))
+        assert repos.configured_remote() == want
+
+    def no_config():
+        raise RuntimeError("config.json not found")
+
+    monkeypatch.setattr(repos, "get_config", no_config)
+    assert repos.configured_remote() is None
+
+
+def test_git_repos_remote_is_a_known_config_key():
+    from rfc_agent import config
+    assert "GIT_REPOS_REMOTE" not in config.unknown_sections({"GIT_REPOS_REMOTE": "git@h:t/{repo}.git"})
