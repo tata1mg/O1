@@ -603,3 +603,80 @@ def test_each_run_keeps_a_dated_copy_of_its_results(app_ctx, repo):
     run_stage(app_ctx, FakeAndroid(repo), AppAgent())
     folder = app_ctx.path(stage_mod.RESULTS_OUT).parent
     assert len(list(folder.glob("results.2*.json"))) == 1 and len(list(folder.glob("results.2*.md"))) == 1
+
+
+def test_a_failed_android_case_carries_its_screenshot_to_the_table_and_the_status(app_ctx, repo):
+    from workflows.testing import status
+
+    app_ctx.flags._v["testing.android_mode"] = "agent"
+    app_ctx.flags._v["testing.agent_confirm_fail"] = False
+    failing = agent_pass("TC-NEW-01") | {"status": "FAIL", "cause": "product", "reason": "no coupon widget"}
+    failing["parts"][0]["expected"][0] |= {"state": "not met", "observed": "nothing"}
+    res = run_stage(app_ctx, FakeAndroid(repo), AppAgent({"TC-NEW-01": failing}))
+    shot = by_id(res)["TC-NEW-01"]["screenshot"]
+    assert shot.endswith("/a.png") and Path(shot).is_file()
+    assert f"screenshot: `{shot}`" in app_ctx.path(stage_mod.TABLE_OUT).read_text()
+    assert status.results_summary(app_ctx.run_dir, stage_mod.RESULTS_OUT)["screenshots"][0]["path"] == shot
+    assert all(r["screenshot"] == "" for r in res["results"] if r["status"] == "PASS" and r["engine"] == "flow")
+
+
+# ---- setup: the maestro-automation checkout ----------------------------------------------------------------
+
+def test_setup_android_saves_a_checkout_it_is_given(repo, tmp_path):
+    from workflows.testing import preflight
+
+    (repo / "scripts" / "ensure_account.sh").write_text("#!/bin/sh\n")
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"TESTING": {"storage": "kiwi"}}))
+    res = preflight.setup_android(path=str(repo), config_path=cfg)
+    assert res["ok"] and not res["cloned"] and res["path"] == str(repo)
+    assert json.loads(cfg.read_text())["TESTING"] == {"storage": "kiwi", "maestro_repo": str(repo)}
+    bad = preflight.setup_android(path=str(tmp_path), config_path=cfg)
+    assert not bad["ok"] and "not a maestro-automation checkout" in bad["error"]
+
+
+def test_setup_android_clones_once_and_never_over_another_folder(tmp_path):
+    from types import SimpleNamespace
+
+    from workflows.testing import preflight
+
+    cfg, into, calls = tmp_path / "config.json", tmp_path / "repos" / "maestro-automation", []
+
+    def fake_git(cmd):
+        calls.append(cmd)
+        (into / ".maestro" / "flows").mkdir(parents=True)
+        (into / "scripts").mkdir()
+        (into / "scripts" / "ensure_account.sh").write_text("")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    url = "git@bitbucket.org:ws/maestro-automation.git"
+    res = preflight.setup_android(clone=True, into=str(into), url=url, config_path=cfg, run=fake_git)
+    assert res["ok"] and res["cloned"] and calls == [["git", "clone", url, str(into)]]
+    again = preflight.setup_android(clone=True, into=str(into), url=url, config_path=cfg, run=fake_git)
+    assert again["ok"] and not again["cloned"] and len(calls) == 1          # already there: used as it is
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "notes.txt").write_text("x")
+    clash = preflight.setup_android(clone=True, into=str(other), url=url, config_path=cfg, run=fake_git)
+    assert not clash["ok"] and "is not a maestro-automation checkout" in clash["error"] and len(calls) == 1
+
+
+def test_a_failed_clone_says_to_check_access(tmp_path):
+    from types import SimpleNamespace
+
+    from workflows.testing import preflight
+
+    res = preflight.setup_android(clone=True, into=str(tmp_path / "m"), url="git@bitbucket.org:ws/m.git",
+                                  config_path=tmp_path / "c.json",
+                                  run=lambda cmd: SimpleNamespace(returncode=128, stdout="",
+                                                                  stderr="Permission denied"))
+    assert not res["ok"] and "Permission denied" in res["error"] and "SSH access" in res["error"]
+    assert not (tmp_path / "c.json").exists()                               # nothing saved on a failure
+
+
+def test_android_with_no_checkout_configured_says_how_to_set_it_up(app_ctx, repo):
+    from harness.contracts import EngineFailure
+
+    app_ctx.flags._v["testing.maestro_repo"] = ""
+    with pytest.raises(EngineFailure, match=r"not set up.*rfc-agent:setup"):
+        run_stage(app_ctx, FakeAndroid(repo), AppAgent())

@@ -145,18 +145,37 @@ def test_each_confirmed_web_case_gets_an_agent_and_is_recorded(agent_ctx, clean_
         assert "playwright_status" not in stored["executions"][extid]["props"]
 
 
-def test_only_a_picture_of_what_was_wrong_or_of_a_pass_is_attached():
+def test_only_a_picture_of_what_was_wrong_or_of_a_pass_is_attached(tmp_path):
     header = {"environment": "e", "build": "b", "base_url": "https://web.test", "device": "desktop", "login": "none"}
-    ok = passing("X") | {"folder": "/f"}
-    assert [a["path"] for a in stage_mod._row(ok, header)["attachments"]] == ["/f/a.png"]
-    bad = failing("X") | {"folder": "/f"}
+    for name in ("a.png", "m.png"):
+        (tmp_path / name).write_bytes(b"png")
+    f = str(tmp_path)
+    ok = passing("X") | {"folder": f}
+    assert [a["path"] for a in stage_mod._row(ok, header)["attachments"]] == [f"{f}/a.png"]
+    bad = failing("X") | {"folder": f}
     bad["parts"][0]["expected"].append({"text": "t", "state": "met", "evidence": "m.png"})
-    assert [a["path"] for a in stage_mod._row(bad, header)["attachments"]] == ["/f/a.png"]
-    blocked = failing("X") | {"folder": "/f", "status": "BLOCKED"}
+    assert [a["path"] for a in stage_mod._row(bad, header)["attachments"]] == [f"{f}/a.png"]
+    assert stage_mod._shot(bad) == f"{f}/a.png"
+    blocked = failing("X") | {"folder": f, "status": "BLOCKED"}
     blocked["parts"][0]["expected"][0]["state"] = "met"
     assert stage_mod._row(blocked, header)["attachments"] == []
+    gone = failing("X") | {"folder": str(tmp_path / "nowhere")}
+    assert stage_mod._shot(gone) == ""                          # a path is only given for a file on disk
     row = stage_mod._row(ok, header)
     assert row["comment_on_pass"] and row["comment"].startswith("## X — PASS") and row["detail"].startswith("PASS")
+
+
+def test_a_failed_cases_screenshot_is_in_the_results_the_table_and_the_status(agent_ctx, monkeypatch):
+    from workflows.testing import status
+
+    given(monkeypatch, case(WEB))
+    agent_ctx.flags._v["testing.agent_confirm_fail"] = False
+    res = run(agent_ctx, AgentEngine({WEB: failing(WEB)}))
+    shot = by_id(res)[WEB]["screenshot"]
+    assert shot.endswith("/a.png") and Path(shot).is_file()
+    assert f"screenshot: `{shot}`" in agent_ctx.path(stage_mod.TABLE_OUT).read_text()
+    summary = status.results_summary(agent_ctx.run_dir, stage_mod.RESULTS_OUT)
+    assert summary["screenshots"] == [{"extid": WEB, "path": shot, "reason": by_id(res)[WEB]["reason"][:160]}]
 
 
 def test_an_agent_gets_its_own_browser_held_to_the_runs_address(agent_ctx, monkeypatch):

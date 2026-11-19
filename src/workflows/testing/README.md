@@ -268,6 +268,12 @@ they run (`--untagged web|android|both|skip`, flag `testing.kiwi_direct_surface`
 `execute_ui_agent` as above; Android is the `execute_app` stage (`testing.execute_app`), launched
 separately so one platform's failure never stops the other.
 
+**Setup.** Android runs need a clone of maestro-automation (its flows and scripts). `/rfc-agent:setup` asks
+whether you want Android runs and, on yes, clones it next to your other repos and saves the path in
+`TESTING.maestro_repo` (`python -m workflows.testing.preflight setup-android --clone`, or `--path <checkout>`
+for one you have; `--check` shows what is there). Nothing is assumed: with no path saved, Android runs stop and
+say how to set it up. Web and backend runs never need it.
+
 Per Android case (`app_agent.plan`, `maestro_index`):
 
 | Engine | When | Cost | Verdict |
@@ -370,7 +376,7 @@ drops `derive_spec` and `execute_be`, since both read from the store. The harnes
 | `testing.agent_forbid` | str | "" | `execute_ui_agent` / `execute_app` / `convert_flows`: a hand-written regex that replaces the forbidden-action list. Empty = every group of `ui_agent.FORBID_GROUPS` (neucoins, coupons, checkout, careplan, account, rx, logout) not named in `testing.agent_allow`. Refused by the guard; the clause becomes `not reached`. A tripwire on the agent's own description of the element, not a sandbox |
 | `testing.agent_allow` | str | "" | `execute_ui_agent` / `execute_app`: groups this run may touch (`--allow coupons,neucoins`); the agent is told to undo them. `neucoins` on a logged-in run needs `testing.agent_test_account` |
 | `testing.agent_read_only` | bool | `False` | `execute_ui_agent`: tell the agent to change nothing (`execute ui-agent --read-only`); an instruction, not a block |
-| `testing.agent_include_manual` | bool | `False` | `execute_ui_agent`: also take CONFIRMED web cases tagged `exec:manual` |
+| `testing.agent_include_manual` | bool | `False` | `execute_ui_agent` / `execute_app`: also take CONFIRMED cases tagged `exec:manual` with a `surface:web` / `surface:android` tag (`execute ui-agent --include-manual`) |
 | `testing.agent_code_context` | bool | `False` | `execute_ui_agent`: give the agent read-only code lookup (fleetlens), for finding a route only |
 | `testing.agent_browser` | str | `""` | `execute_ui_agent`: browser or channel for Playwright MCP; empty = its bundled Chromium |
 | `testing.production_base_url` | str | `""` | The live site's address, so "on prod" needs no typing. Only names the address: running there still needs `--production` |

@@ -118,6 +118,24 @@ def test_pending_for_ui_agent_counts_what_will_run(tmp_path, monkeypatch):
     assert out["error"] == "" and out["skipped_backend"] == 2
     assert out["no_expected_result"] == ["B"] and out["will_run"] == ["A"]
     assert seen["flags"].get("testing.kiwi_plan_id") == "42" and seen["flags"].get("testing.kiwi_direct") is True
+    assert out["manual_included"] is False and out["manual_left"] == []
+
+
+def test_pending_names_the_manual_cases_an_agent_could_run_and_takes_them_when_asked(tmp_path, monkeypatch):
+    from workflows.testing import preflight
+    from workflows.testing.store import Case
+
+    text = "**Steps**\n1. Open\n\n**Expected Result**\nIt shows\n"
+    store = _Store([Case(extid="M", text=text, tags=("exec:manual", "surface:web")),
+                    Case(extid="N", text=text, tags=("exec:manual",))])     # no surface: no agent can take it
+    monkeypatch.setattr(execute, "load_config", lambda: {})
+    monkeypatch.setattr(execute, "resolved_flags", lambda cfg=None: SimpleNamespace(get=lambda n, d=None: d))
+    monkeypatch.setattr(preflight, "store_for", lambda flags, run_dir: store)
+    run = execute.bootstrap_run(tmp_path, "F-9", "42")
+    left = execute.pending_agent(run)
+    assert left["will_run"] == [] and left["manual_left"] == ["M"] and left["manual_included"] is False
+    taken = execute.pending_agent(run, include_manual=True)
+    assert taken["will_run"] == ["M"] and taken["manual_left"] == [] and taken["manual_included"] is True
 
 
 def test_pending_for_ui_agent_reports_errors_not_raises(tmp_path, monkeypatch):
@@ -327,3 +345,11 @@ def test_production_and_sessions_flags_exist_with_their_defaults():
 def test_allow_reaches_the_agent_allow_flag(tmp_path):
     cmd = execute.command("ui-agent", _generated_run(tmp_path), allow="coupons,neucoins")
     assert "testing.agent_allow=coupons,neucoins" in cmd
+
+
+def test_include_manual_reaches_both_agents_and_nothing_else(tmp_path):
+    run = _generated_run(tmp_path)
+    for kind in ("ui-agent", "android"):
+        assert "testing.agent_include_manual" in execute.command(kind, run, env="e", build="b",
+                                                                 include_manual=True)
+    assert "testing.agent_include_manual" not in execute.command("ui-agent", run)

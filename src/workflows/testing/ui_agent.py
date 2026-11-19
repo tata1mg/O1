@@ -633,6 +633,12 @@ def took(seconds) -> str:
     return f"{minutes}m {secs:02d}s" if minutes else f"{secs}s"
 
 
+def shot_note(row: dict) -> str:
+    """" · screenshot: `<path>`" for a case that did not pass and has one (what the reader opens first), else ""."""
+    path = row.get("screenshot") or ""
+    return f" · screenshot: `{path}`" if path and row.get("status") != PASS else ""
+
+
 def results_table(results: list[dict], not_executed: list[dict] = (), unpriced: list[str] = ()) -> str:
     """The run's cases as a Markdown table: Case | Verdict | Time | Cost | What the agent found.
 
@@ -670,6 +676,7 @@ def results_table(results: list[dict], not_executed: list[dict] = (), unpriced: 
             tail.append(f"second run: {cell(row['confirmation'])[:120]}")
         if tail:
             found += f" ({'; '.join(tail)})"
+        found += shot_note(row)
         lines.append(f"| {cell(row.get('extid'))} | {status} | {took(row.get('duration_s'))} | {price} | {found} |")
     for row in not_executed or []:
         lines.append(f"| {cell(row.get('extid'))} | not executed | — | — | {cell(row.get('reason'))[:300]} |")

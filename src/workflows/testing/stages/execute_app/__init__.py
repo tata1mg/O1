@@ -284,7 +284,9 @@ def _engine(stage: Stage, ctx: RunContext) -> StageResult:
     t0, started = time.monotonic(), datetime.now(UTC)
     feature = feature_of(ctx)
     store = get_store(ctx)
-    repo = Path(str(ctx.flag("testing.maestro_repo", "~/o_1/maestro-automation"))).expanduser()
+    repo = devices.maestro_repo(str(ctx.flag("testing.maestro_repo", "") or ""))
+    if repo is None:
+        raise EngineFailure(f"execute_app: {devices.NOT_SET_UP}. Nothing was run.")
     android = Android(repo, str(ctx.flag("testing.app_variant", "dev-release") or "dev-release"))
     include_manual = bool(ctx.flag("testing.agent_include_manual", False))
     try:
@@ -387,7 +389,8 @@ def _engine(stage: Stage, ctx: RunContext) -> StageResult:
                 "summary": ui_agent.summary(verdict) if verdict["engine"] == app_agent.AGENT_ENGINE else
                 f"{verdict['status']} — {verdict['reason']}",
                 "parts_met": met, "parts": total, "recorded": verdict["extid"] in attached,
-                "execution_id": row.get("execution_id"), "record_error": verdict.get("record_error")})
+                "execution_id": row.get("execution_id"), "record_error": verdict.get("record_error"),
+                "screenshot": shot if shot and Path(shot).is_file() else ""})
             if verdict["status"] != ui_agent.PASS:
                 decisions.record(ctx, stage.name, "app_case_not_passed", why=results[-1]["summary"][:300],
                                  extid=verdict["extid"], engine=verdict["engine"])
@@ -589,6 +592,7 @@ def results_table(results: list[dict], not_run: list[dict] = ()) -> str:
         draft = (r.get("draft") or {}).get("state")
         if draft in ("ready", "rejected"):
             found += f" · draft flow {draft}"
+        found += ui_agent.shot_note(r)
         lines.append(f"| {cell(r.get('extid'))} | {engine} | {status} | {ui_agent.took(r.get('duration_s'))} | "
                      f"{'—' if cost is None else f'${cost:.2f}'} | {cell(found)} |")
     lines.append(f"| **Total** | | {len(results)} cases | {ui_agent.took(total_s)} | ${total_cost:.2f} | |")

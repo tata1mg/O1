@@ -16,6 +16,8 @@ turn into a checklist and a question, not six ad-hoc greps.
                                                    [--ui-login FILE] [--curl FILE] [--env E] [--build B]
                                                    [--production-base-url URL] [--sessions-dir DIR]
     python -m workflows.testing.preflight envs [--json]
+    python -m workflows.testing.preflight setup-android (--check | --path DIR | --clone [--into DIR] [--url URL])
+                                                       [--json]
 
 `check` exits 0 when nothing failed (warnings allowed), 1 when a check failed. Each check is
 {id, level: ok|info|warn|fail, msg, fix}. The Kiwi check is `fail` when Kiwi is unreachable: the command, not
@@ -49,6 +51,7 @@ KIWI_TIMEOUT_S = 15
 #: The non-secret `testing.*` flags `setup-kiwi` / `setup-web` may write. `ui_login` is a PATH to the
 #: credentials file, never its contents.
 KIWI_SETTINGS = ("storage", "kiwi_web", "product_prefix", "kiwi_user", "kiwi_url", "insecure_tls")
+ANDROID_SETTINGS = ("maestro_repo",)
 WEB_SETTINGS = ("environments", "base_url_template", "ui_login", "curl", "env", "build",
                 "production_base_url", "sessions_dir")
 
@@ -461,6 +464,83 @@ def setup_kiwi(values: dict, config_path: Path | None = None, allowed: tuple[str
     return path
 
 
+# ---- one-time Android setup ----------------------------------------------------------------------------
+
+
+def android_status(config_path: Path | None = None) -> dict:
+    """What Android runs need on this machine, and what is there. Prints no secret; changes nothing."""
+    from . import devices
+
+    flags = resolved_flags(load_config())
+    repo = devices.maestro_repo(str(flags.get("testing.maestro_repo") or ""))
+    return {"configured": repo is not None, "path": str(repo or ""),
+            "checkout_ok": bool(repo and devices.is_checkout(repo)),
+            "adb": bool(devices.adb_bin()), "maestro": bool(devices.maestro_bin()),
+            "suggested_path": str(_default_clone_dir())}
+
+
+def _default_clone_dir() -> Path:
+    """Next to the user's other checkouts (REPOS_ROOT, where the pipeline clones repos), else ~/repos."""
+    from . import devices
+
+    root = ""
+    with contextlib.suppress(Exception):
+        from rfc_agent.config import get_config
+        root = str(get_config().get("REPOS_ROOT") or "")
+    return Path(root or "~/repos").expanduser() / devices.MAESTRO_REPO_NAME
+
+
+def setup_android(path: str = "", clone: bool = False, into: str = "", url: str = "",
+                  config_path: Path | None = None, run=None) -> dict:
+    """Make Android runs usable: save the path of an existing checkout (`path`), or clone maestro-automation
+    (`clone`, into `into` or next to the user's other repos) and save that. A folder that already holds a
+    checkout is used as it is, never cloned over. -> {ok, path, cloned, saved_to, error}."""
+    import subprocess
+
+    from . import devices
+
+    run = run or (lambda cmd: subprocess.run(cmd, capture_output=True, text=True, timeout=600))
+    out = {"ok": False, "path": "", "cloned": False, "saved_to": "", "error": ""}
+    if path:
+        target = Path(path).expanduser()
+        if not devices.is_checkout(target):
+            out["error"] = (f"{target} is not a maestro-automation checkout (it needs .maestro/flows and "
+                            f"scripts/ensure_account.sh)")
+            return out
+    elif clone:
+        target = Path(into).expanduser() if into else _default_clone_dir()
+        if devices.is_checkout(target):
+            pass                                    # already cloned: use it as it is
+        elif target.exists() and any(target.iterdir()):
+            out["error"] = f"{target} exists and is not a maestro-automation checkout; pass --into <empty folder>"
+            return out
+        else:
+            if not url:
+                from rfc_agent.scope.repos import remote_template
+
+                template = remote_template(target.parent)
+                url = template.format(repo=devices.MAESTRO_REPO_NAME) if template else ""
+            if not url:
+                out["error"] = ("no clone URL: no git checkout next to it to take the Bitbucket workspace from; "
+                                "pass --url git@bitbucket.org:<workspace>/maestro-automation.git")
+                return out
+            target.parent.mkdir(parents=True, exist_ok=True)
+            done = run(["git", "clone", url, str(target)])
+            if done.returncode != 0 or not devices.is_checkout(target):
+                out["error"] = (f"git clone {url} failed (exit {done.returncode}): "
+                                f"{(done.stderr or done.stdout or '').strip()[-300:]} — check Bitbucket SSH access")
+                return out
+            out["cloned"] = True
+    else:
+        out["error"] = "say --path <checkout> or --clone"
+        return out
+    out["path"] = str(target)
+    out["saved_to"] = str(setup_kiwi({"maestro_repo": str(target)}, config_path, allowed=ANDROID_SETTINGS,
+                                     default_storage=False))
+    out["ok"] = True
+    return out
+
+
 # ---- CLI ------------------------------------------------------------------------------------------------
 
 _ICON = {"ok": "✅", "info": "ℹ️", "warn": "⚠️", "fail": "❌"}
@@ -510,6 +590,14 @@ def main(argv: list[str] | None = None) -> int:
                                           "offer by name (the folder, not the files' contents)")
     e = sub.add_parser("envs")
     e.add_argument("--json", action="store_true")
+    a = sub.add_parser("setup-android")
+    how = a.add_mutually_exclusive_group(required=True)
+    how.add_argument("--check", action="store_true", help="what Android runs need here, and what is there")
+    how.add_argument("--path", help="an existing maestro-automation checkout to use")
+    how.add_argument("--clone", action="store_true", help="clone maestro-automation and use that")
+    a.add_argument("--into", default="", help="--clone: the folder to clone into (default: next to REPOS_ROOT's repos)")
+    a.add_argument("--url", default="", help="--clone: the clone URL (default: from the Bitbucket workspace)")
+    a.add_argument("--json", action="store_true")
     s = sub.add_parser("setup-kiwi")
     s.add_argument("--kiwi-web", required=True)
     s.add_argument("--product-prefix", required=True)
@@ -547,6 +635,16 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(rows, indent=2) if args.json else
               "\n".join(f"{r['env']}  {r['base_url']}" for r in rows) or "no environments configured")
         return 0
+    if args.cmd == "setup-android":
+        res = android_status() if args.check else setup_android(args.path or "", args.clone, args.into, args.url)
+        if args.json:
+            print(json.dumps(res, indent=2))
+        elif args.check:
+            print("\n".join(f"{k}: {v}" for k, v in res.items()))
+        else:
+            print(f"maestro-automation: {res['path']} ({'cloned, ' if res['cloned'] else ''}saved to {res['saved_to']})"
+                  if res["ok"] else f"setup-android failed: {res['error']}")
+        return 0 if args.check or res["ok"] else 1
     if args.cmd == "setup-kiwi":
         path = setup_kiwi({"storage": "kiwi", "kiwi_web": args.kiwi_web, "product_prefix": args.product_prefix,
                            "kiwi_user": args.kiwi_user, "kiwi_url": args.kiwi_url,

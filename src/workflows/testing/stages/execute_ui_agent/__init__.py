@@ -381,17 +381,26 @@ def _merge_notes(ctx: RunContext, batch: list) -> str:
 
 def _row(verdict: dict, header: dict) -> dict:
     """A verdict as the row `ui_record.record_row` records: its own Kiwi comment, on a PASS too."""
-    clauses = [c for p in verdict.get("parts") or [] for c in p.get("expected") or [] if c.get("evidence")]
-    # the screenshot of what was WRONG; a picture of a clause that passed explains nothing on a case that did not
-    # pass, and was reported as misleading on a blocked one. Only a PASS shows what was met.
-    wanted = [ui_agent.NOT_MET] + ([ui_agent.MET] if verdict["status"] == ui_agent.PASS else [])
-    shot = next((c["evidence"] for state in wanted for c in clauses if c.get("state") == state), "")
+    shot = _shot(verdict)
     finished = datetime.fromisoformat(verdict["finished_at"]) if verdict.get("finished_at") else None
     return {"extid": verdict["extid"], "status": verdict["status"], "playwright_status": "agent",
             "detail": ui_agent.report(verdict), "comment": ui_agent.kiwi_comment(verdict, header),
             "comment_on_pass": True, "duration_s": verdict.get("duration_s", 0.0),
             "finished_at": finished,
-            "attachments": [{"name": "screenshot", "path": str(Path(verdict["folder"]) / shot)}] if shot else []}
+            "attachments": [{"name": "screenshot", "path": shot}] if shot else []}
+
+
+def _shot(verdict: dict) -> str:
+    """The one screenshot a case is shown by (Kiwi's attachment, the summary's preview), as a full path, or "".
+    The screenshot of what was WRONG: a picture of a clause that passed explains nothing on a case that did not
+    pass, and was reported as misleading on a blocked one. Only a PASS shows what was met."""
+    clauses = [c for p in verdict.get("parts") or [] for c in p.get("expected") or [] if c.get("evidence")]
+    wanted = [ui_agent.NOT_MET] + ([ui_agent.MET] if verdict["status"] == ui_agent.PASS else [])
+    name = next((c["evidence"] for state in wanted for c in clauses if c.get("state") == state), "")
+    if not name or not verdict.get("folder"):
+        return ""
+    path = Path(verdict["folder"]) / Path(name).name
+    return str(path) if path.is_file() else ""
 
 
 def _store_down(doing: str, exc: Exception) -> EngineFailure:
@@ -513,7 +522,7 @@ def _engine(stage: Stage, ctx: RunContext) -> StageResult:
             results.append({k: verdict.get(k) for k in (
                 "extid", "status", "cause", "reason", "blocked_on", "confirmation", "confirmed", "flaky",
                 "duration_s", "first_run_s", "second_run_s", "browser_calls", "browser_actions", "cost_usd",
-                "login")} | {
+                "login")} | {"screenshot": _shot(verdict),
                     "summary": ui_agent.summary(verdict), "parts_met": met, "parts": total,
                     "recorded": verdict["extid"] in attached})
             if verdict["status"] != ui_agent.PASS:

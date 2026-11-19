@@ -102,6 +102,23 @@ def accepts(role: str, profile: str) -> bool:
     return role == POOL or role == (profile or GUEST)
 
 
+#: The repo `preflight setup-android --clone` clones, by name, next to the user's other checkouts.
+MAESTRO_REPO_NAME = "maestro-automation"
+NOT_SET_UP = ("Android runs are not set up on this machine: no maestro-automation checkout is configured. Run "
+              "/rfc-agent:setup and answer yes to Android (it clones the repo and saves its path), or point at a "
+              "checkout you have: `python -m workflows.testing.preflight setup-android --path <checkout>`")
+
+
+def is_checkout(path: Path) -> bool:
+    """A maestro-automation checkout this workflow can use: its flows and the scripts it runs."""
+    return (path / ".maestro" / "flows").is_dir() and (path / "scripts" / "ensure_account.sh").is_file()
+
+
+def maestro_repo(value: str) -> Path | None:
+    """`testing.maestro_repo` as a path, or None when nothing is configured (Android not set up)."""
+    return Path(value).expanduser() if str(value or "").strip() else None
+
+
 def parse_adb_devices(text: str) -> list[str]:
     """Serials in `device` state from `adb devices` output (offline / unauthorized / booting are not ready)."""
     out = []
@@ -195,7 +212,8 @@ class Android:
         if not maestro_bin():
             return "the Maestro CLI is not installed (curl -Ls https://get.maestro.mobile.dev | bash)"
         if not (self.repo / ".maestro" / "flows").is_dir():
-            return f"no maestro-automation checkout at {self.repo} (set testing.maestro_repo)"
+            return (f"no maestro-automation checkout at {self.repo} (the path in testing.maestro_repo). Re-run "
+                    f"/rfc-agent:setup's Android step, or `preflight setup-android --path <checkout>`")
         if not self.app_id:
             return f"unknown app variant {self.variant!r} (debug, dev-release or prod)"
         return ""

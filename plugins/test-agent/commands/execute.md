@@ -1,6 +1,6 @@
 ---
 description: Execute the CONFIRMED cases of an existing testing run — web UI (Playwright), backend (HTTP), or both — recorded in Kiwi; run the already-written web tests at once, or write tests for newly confirmed cases first; or have an agent drive a browser through each web case and run each Android case on an emulator — its validated Maestro flow, else an agent through Maestro MCP (ui-agent --platform web|android|both|auto, by the cases' Kiwi surface tags), also straight from a Kiwi plan with no earlier run. Takes flags, or plain words such as "cart-sanity on prod, cases 173,172, logged in as careplan, show the browser"
-argument-hint: [web|backend|ui-agent|android|all] [--platform auto|web|android|both] [--untagged web|android|both|skip] [--android-mode auto|flow|agent] [--app-variant V] [--devices S,S] [--device-roles S=guest,S=care_plan_user] [--allow coupons,neucoins] [--only-existing] [--run-dir <testing run>] [--feature F --kiwi-plan ID] [--env E] [--build B] [--base-url U] [--ui-auth FILE] [--hosts H] [--production] [--headed] [--cases TC-…,TC-…] [--curl FILE]  — or plain words: "cart-sanity on prod, cases 173,172, logged in as careplan, show the browser"
+argument-hint: [web|backend|ui-agent|android|all] [--platform auto|web|android|both] [--untagged web|android|both|skip] [--android-mode auto|flow|agent] [--app-variant V] [--devices S,S] [--device-roles S=guest,S=care_plan_user] [--allow coupons,neucoins] [--include-manual] [--only-existing] [--run-dir <testing run>] [--feature F --kiwi-plan ID] [--env E] [--build B] [--base-url U] [--ui-auth FILE] [--hosts H] [--production] [--headed] [--cases TC-…,TC-…] [--curl FILE]  — or plain words: "cart-sanity on prod, cases 173,172, logged in as careplan, show the browser"
 ---
 
 Execute cases for: `$ARGUMENTS`
@@ -44,7 +44,8 @@ Execute cases for: `$ARGUMENTS`
      only the no-account ones). Not said → the maestro repo's `.maestro/devices.yaml` when 2+ devices are up.
    - **How.** "show the browser", "headed", "watch", "visible" → `--headed`; "N at a time", "in parallel" →
      `--parallel N` (not with `--headed`: say a visible browser runs one case at a time); "read only",
-     "don't change anything" → `--read-only`.
+     "don't change anything" → `--read-only`; "include manual cases", "manual too", "run the manual ones" →
+     `--include-manual`.
    - **Build and browser.** `--build <today>` unless one is given; `--browser <defaults.browser>` when set,
      otherwise `--browser chrome`.
    - Words that map to nothing → say so; do not guess a flag.
@@ -69,10 +70,15 @@ Execute cases for: `$ARGUMENTS`
 2a. **`ui-agent`: what will run.** When the kind is `ui-agent`, skip step 2 and run
    `… execute ui-agent --pending [--run-dir R | --feature F [--kiwi-plan ID]]` (it reads Kiwi). Then:
    - `error` set → Kiwi is unreachable, or the plan id does not exist; say so and stop.
-   - `will_run` empty → no CONFIRMED web case with an expected result; say so and stop.
+   - `will_run` empty → no CONFIRMED web case with an expected result. If `manual_left` is non-empty, ask the
+     `--include-manual` question below first; otherwise say so and stop.
    - Otherwise post one line: `<len(will_run)>` cases an agent will execute in a browser, in batches of 5;
      and, when non-empty, the `no_expected_result` ids — these are not executed and stay IDLE in the Kiwi run
      until someone writes what they expect.
+   - `manual_left` non-empty (web or `android.manual_left`) → these CONFIRMED manual cases have a surface tag
+     and an agent could run them, but `--include-manual` was not given. Ask once: `Include them` (add
+     `--include-manual` and re-run `--pending`) or `Leave them for a person`. `manual_included` true → say how
+     many of `will_run` are manual. Never add `--include-manual` yourself.
    - `needs_session` non-empty and no `--ui-auth` → say these cases need a logged-in user (their
      Precondition, or an `auth:user` tag) and will be BLOCKED with no session started; offer to add
      `--ui-auth`. Guest cases (Precondition says guest / not logged in, or `auth:guest`) run without the
@@ -120,6 +126,10 @@ Execute cases for: `$ARGUMENTS`
      Maestro CLI is not installed` / `no maestro-automation checkout` (Android only) → post the message as it
      is: the web half still runs; the Android half needs that machine set up. Never try to install or boot
      anything.
+   - `ENGINE FAILURE execute_app: Android runs are not set up on this machine` (or `android.error` saying so in
+     `--pending`) → ask (AskUserQuestion) **"Android isn't set up here: clone maestro-automation now?"** with
+     `Clone it` (run `… preflight setup-android --clone --json`, then re-run), `I have a checkout` (ask for the
+     folder; `… preflight setup-android --path <folder> --json`) and `Web only` (drop the Android half).
    - `ENGINE FAILURE execute_app: <serial> has the <variant> build …, not the <other> build` → the device
      carries another build of the app. Ask (AskUserQuestion) `Use the <variant> build` (re-run with
      `--app-variant <variant>`; `prod` also needs `--production`) or `Stop`.
@@ -177,6 +187,13 @@ agent's own sentence about what it saw, then the parts met and, when it did not 
 it came with the parts figure, never by softening the status. A FAIL was run twice: say when the second
 run did not repeat it (flaky). ERROR means the agent returned no usable verdict (the harness's, not the
 product's). The full verdict and screenshots of a case are in `<run dir>/qa/agent/<case id>/`.
+
+**Screenshots of the failures.** A row that did not pass ends with `screenshot: <path>` when the case has one
+(the screenshot of the expected result that was not met). After the table(s), when `results_agent.screenshots`
+or `results_android.screenshots` is non-empty, send those files with ONE SendUserFile call (`display:
+"render"`, `status: "normal"`), web first, at most 6 — caption: one line per file, `<case id> — <reason>` —
+so each FAIL can be seen in this window. Say how many more there are when there are over 6; their paths are in
+the table. No screenshots → say nothing about them. A PASS or a BLOCKED case is never previewed.
 
 Every web run records into the same Kiwi test run (`<feature> · <env> · <build>`), every Android run into
 `<feature> · android-<env> · <app version>`; a re-run overwrites each execution's status. `--cases TC-…,…` narrows a run to those ids.

@@ -178,7 +178,7 @@ From `… status <R> --kiwi --json`, post ONE message, in this order:
 6. **What to do now:** *"Review the cases in Kiwi and set the ones you approve to **CONFIRMED** (reject with
    DISABLED). Only CONFIRMED cases run: `http` cases against the API, web `ui` cases in a browser
    (Playwright), app `ui` cases from a Maestro run on your device. `manual` cases are yours to run by hand
-   in the Kiwi test run."*
+   in the Kiwi test run — or an agent can run the ones tagged `surface:web` / `surface:android` (`--include-manual`)."*
 
 Send the files with SendUserFile (one call): the `xlsx`, `qa/prerequisites.md`, `qa/test_data.template.yaml`.
 
@@ -200,13 +200,19 @@ in the SAME Kiwi test run, `<feature> · <env> · <build>`:
 | Backend | `exec:http` | derive_spec → execute_be | a captured curl |
 | Web UI | `exec:ui` + `surface:web` | derive_ui (an agent writes one Playwright test per case, locators cited from the RFC's repo snapshot) → execute_web | the web app's base URL, a recorded login |
 | App UI | `exec:ui` + `surface:android`/`ios` | publish_app (records a Maestro run you did on a device) | the Maestro JUnit report, the flows folder |
+| Manual, by an agent | `exec:manual` + `surface:web`/`android` | `/test-agent:execute ui-agent --include-manual` (an agent drives a browser or the emulator through the case) | the same as the web / Android agent |
 
 1. **Gate.** `… status <R> --kiwi --json`. If `kiwi.error`: Kiwi is unreachable — every kind needs it. Say so
    and stop; offer `Retry` once. If `kiwi.by_status` has a `conflict` exec tag: those cases carry two
    `exec:` tags from an older upload; re-running the upload (section 4b) fixes the ones nobody reviewed.
    Post one line per kind: `backend: <confirmed_http> of <http_total> CONFIRMED · web UI:
-   <confirmed_web_ui> CONFIRMED · app UI: <confirmed_app_ui> CONFIRMED`. If all three are 0, nothing would
-   run: say how many are still PROPOSED and go back to the question in section 5.
+   <confirmed_web_ui> CONFIRMED · app UI: <confirmed_app_ui> CONFIRMED · manual an agent can run:
+   <confirmed_manual_agent>`. If all four are 0, nothing would run: say how many are still PROPOSED and go
+   back to the question in section 5. If only `confirmed_manual_agent` is above 0, do not stop: ask
+   **"The confirmed cases are manual. Run them with an agent, or leave them for a person?"** with
+   `Run with an agent` (hand over to `/test-agent:execute ui-agent --include-manual --run-dir <R>`, which asks
+   for the environment and login itself) and `Leave them` (stop; they are in the Kiwi test run to do by hand).
+   A manual case with no `surface:` tag cannot be picked up: say to tag it `surface:web` or `surface:android`.
 2. **Which kinds.** One AskUserQuestion, `multiSelect: true`, one option per kind with a CONFIRMED count above
    0 (description = the count and what it needs). Then one more AskUserQuestion with two questions:
    - the **environment**: run `… preflight envs --json` and offer up to 4 of its `env` names (description =

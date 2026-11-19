@@ -146,7 +146,12 @@ def results_summary(run_dir: Path, rel: str = RESULTS["backend"]) -> dict | None
             "drafts": [r.get("extid") for r in res.get("drafts") or []],
             "skipped_unconfirmed": len(res.get("skipped_unconfirmed") or []),
             "skipped_wrong_execution": len(res.get("skipped_wrong_execution") or []),
-            "not_passing": failing[:20]}
+            "not_passing": failing[:20],
+            # the screenshot of each FAILED case, to show under the table (the command previews these)
+            "screenshots": [{"extid": r.get("extid"), "path": r["screenshot"],
+                             "reason": str(r.get("reason") or "")[:160]}
+                            for r in res.get("results") or []
+                            if r.get("status") == "FAIL" and r.get("screenshot") and Path(r["screenshot"]).is_file()]}
 
 
 def _agent_table(res: dict) -> str | None:
@@ -289,11 +294,15 @@ def kiwi_counts(feature: str, run_dir: Path) -> dict:
                 t in c.tags for t in ("surface:android", "surface:ios")) else None
             if kind:
                 ui[kind] = ui.get(kind, 0) + 1
+        if c.status == "CONFIRMED" and exec_ == "manual" and any(
+                t in c.tags for t in ("surface:web", "surface:android")):
+            ui["manual"] = ui.get("manual", 0) + 1  # what an agent can take with --include-manual
         out.setdefault(c.status, {}).setdefault(exec_, 0)
         out[c.status][exec_] += 1
     return {"by_status": out, "confirmed_http": out.get("CONFIRMED", {}).get("http", 0),
             "http_total": sum(v.get("http", 0) for v in out.values()),
             "confirmed_web_ui": ui.get("web", 0), "confirmed_app_ui": ui.get("app", 0),
+            "confirmed_manual_agent": ui.get("manual", 0),
             "not_in_kiwi": len(suite) - sum(sum(v.values()) for v in out.values()) if suite else 0,
             "stale": stale}
 

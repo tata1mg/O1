@@ -206,7 +206,8 @@ NAMES = (
        "or profile edit, no form submitted. A clause that needs one is `not reached`. An instruction to the "
        "agent, not a block: for a run somewhere a change would matter."),
     _f("agent_include_manual", bool, False,
-       "execute_ui_agent: also hand the agent CONFIRMED web cases tagged exec:manual. The agent needs no "
+       "execute_ui_agent / execute_app (`execute ui-agent --include-manual`): also hand the agent CONFIRMED "
+       "cases tagged exec:manual with a surface:web / surface:android tag. The agent needs no "
        "source code, so a case a script could not be written for may still be one a browser can verify."),
     _f("agent_code_context", bool, False,
        "execute_ui_agent: give the agent the fleetlens MCP server (read-only code lookup), to find where a "
@@ -236,9 +237,11 @@ NAMES = (
        "Run the execute_app stage: each CONFIRMED Android UI case runs on an emulator — as its VALIDATED "
        "Maestro flow when one covers it, otherwise an agent drives the app through Maestro MCP. OFF by default: "
        "it acts on a device as a real user and records results."),
-    _f("maestro_repo", str, "~/o_1/maestro-automation",
-       "The maestro-automation checkout: its .maestro/flows (which case each flow covers, and whether it is "
-       "VALIDATED), scripts/ (app_id.sh, ensure_account.sh, maestro_report.py) and .maestro/devices.yaml."),
+    _f("maestro_repo", str, "",
+       "The maestro-automation checkout, written by `/rfc-agent:setup` (Android step) / `preflight "
+       "setup-android`. Empty = Android runs are not set up. The checkout supplies its .maestro/flows "
+       "(which case each flow covers, and whether it is VALIDATED), scripts/ (app_id.sh, ensure_account.sh, "
+       "maestro_report.py) and .maestro/devices.yaml."),
     _f("android_mode", str, "auto",
        "execute_app: auto = a case's VALIDATED flow when it has one, else the agent; flow = flows only (cases "
        "with none are listed, not run); agent = the agent for every case.", choices=("auto", "flow", "agent")),

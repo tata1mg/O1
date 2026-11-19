@@ -214,7 +214,31 @@ uv run --project "$PROJ" python -c "from rfc_agent.scope import figma; missing, 
   re-check. If it still says `NOT imported` but the user sees the entry, accept it and note "confirmed by the
   user" (Figma may write its settings file later).
 
-## 10. Report
+## 10. Android test runs (test-agent) — OPTIONAL
+
+`/test-agent:execute` can run CONFIRMED cases on the Android app: each case's validated Maestro flow, else an
+agent on an emulator. The flows live in another team's repo, **maestro-automation**, which needs a real git
+clone on this machine (its flows change daily; `convert-flows` writes branches back to it). Web and backend
+runs never need it.
+
+**Check:** `uv run --project "$PROJ" python -m workflows.testing.preflight setup-android --check --json` →
+`configured` and `checkout_ok` true = ✅, say the path and move on.
+
+**Otherwise ask first** (AskUserQuestion): **"Do you want to run test cases on Android too? It needs the
+maestro-automation repo on this machine."**
+- `Yes, clone it (Recommended)` → `… preflight setup-android --clone --json`. It clones into
+  `suggested_path` (next to the user's other repos, from the same Bitbucket workspace) and saves the path in
+  `CFG` (`TESTING.maestro_repo`). A failure names the cause: no SSH access to the repo → ask a teammate for
+  access to `maestro-automation`, then re-run; no workspace to take the URL from → ask for the URL and pass
+  `--url`.
+- `I already have it` → ask for the folder (Other = path), then `… preflight setup-android --path <folder> --json`.
+- `No, web only` → mark `skipped`: "Android runs are off; run /rfc-agent:setup again to add them".
+
+Then report `adb` and `maestro` from the check: either missing is a note, not a block ("Android runs need the
+Android SDK platform-tools and the Maestro CLI, and a booted emulator with the app"). Never install the SDK,
+an emulator or an APK from here.
+
+## 11. Report
 
 One table, one row per step: ✅ / ❌ / skipped, plus a short note (versions, resolved paths, the clone URL
 template, what's skipped and why). End with exactly one of:

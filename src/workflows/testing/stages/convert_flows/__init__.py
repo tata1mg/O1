@@ -34,7 +34,7 @@ from pathlib import Path
 
 from harness.contracts import EngineFailure, RunContext, Stage, StageResult
 
-from ... import app_agent, maestro
+from ... import app_agent, devices, maestro
 from ...devices import Android, DeviceLock
 from ...store import get_store
 from .. import feature_of, forbid_of, only_cases, read_json, read_json_gated, write_json
@@ -200,7 +200,9 @@ def _engine(stage: Stage, ctx: RunContext) -> StageResult:
         return StageResult(final_text="no draft flow is ready — nothing to convert", engine_desc="python")
     if ctx.engine is None:
         raise EngineFailure("convert_flows needs a model engine for its fix rounds — run it through the harness CLI.")
-    repo = Path(str(ctx.flag("testing.maestro_repo", "~/o_1/maestro-automation"))).expanduser()
+    repo = devices.maestro_repo(str(ctx.flag("testing.maestro_repo", "") or ""))
+    if repo is None:
+        raise EngineFailure(f"convert_flows: {devices.NOT_SET_UP}. Nothing was run.")
     android = Android(repo, str(app.get("variant") or ctx.flag("testing.app_variant", "dev-release")))
     problem = android.problem()
     if problem:
@@ -332,10 +334,15 @@ def main(argv: list[str] | None = None) -> int:
                                  description="promote: copy a run's green flows onto a maestro-automation branch")
     ap.add_argument("action", choices=("promote",))
     ap.add_argument("run_dir")
-    ap.add_argument("--repo", default="~/o_1/maestro-automation")
+    ap.add_argument("--repo", default="", help="the maestro-automation checkout (default: testing.maestro_repo)")
     ap.add_argument("--folder", required=True, help="flows sub-folder for this feature, e.g. cart")
     ap.add_argument("--apply", action="store_true", help="create the worktree branch and copy (default: show only)")
     args = ap.parse_args(sys.argv[1:] if argv is None else argv)
-    print(json.dumps(promote(Path(args.run_dir), Path(args.repo), feature_folder=args.folder, apply=args.apply),
+    from ...preflight import load_config, resolved_flags
+
+    repo = devices.maestro_repo(args.repo or str(resolved_flags(load_config()).get("testing.maestro_repo") or ""))
+    if repo is None:
+        raise SystemExit(f"convert_flows: {devices.NOT_SET_UP}")
+    print(json.dumps(promote(Path(args.run_dir), repo, feature_folder=args.folder, apply=args.apply),
                      indent=2))
     return 0

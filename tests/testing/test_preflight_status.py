@@ -249,6 +249,19 @@ def test_kiwi_counts_this_suite_only_and_flags_conflicting_tags(tmp_path, monkey
     assert counts["not_in_kiwi"] == 1
 
 
+def test_kiwi_counts_the_manual_cases_an_agent_can_run(tmp_path, monkeypatch):
+    (tmp_path / "qa").mkdir()
+    (tmp_path / "qa/cases.json").write_text(json.dumps([{"id": f"TC-M-{i}"} for i in range(3)]))
+    kiwi = [Case("TC-M-0", "", "CONFIRMED", ("exec:manual", "surface:web")),
+            Case("TC-M-1", "", "CONFIRMED", ("exec:manual",)),                      # no surface: by hand only
+            Case("TC-M-2", "", "PROPOSED", ("exec:manual", "surface:android"))]
+    monkeypatch.setattr(preflight, "load_config", lambda: None)
+    monkeypatch.setattr(preflight, "resolved_flags", lambda cfg: flags_with())
+    monkeypatch.setattr(preflight, "store_for", lambda *a: SimpleNamespace(list_cases=lambda feature: kiwi))
+    counts = status.kiwi_counts("F-1", tmp_path)
+    assert counts["confirmed_manual_agent"] == 1 and counts["by_status"]["CONFIRMED"] == {"manual": 2}
+
+
 def test_kiwi_counts_report_an_unreachable_store(tmp_path, monkeypatch):
     def boom(*a):
         raise ConnectionRefusedError("refused")
