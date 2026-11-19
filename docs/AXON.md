@@ -111,7 +111,7 @@ on Axon unless you pass `--engine`. Details: [src/workflows/testing/README.md](.
 
 `/test-agent:execute ui-agent|android` and `/test-agent:convert-flows` have no Axon form yet: their browser and
 device guards are Claude Code hooks, so those stages refuse any other engine, and `/test execute ui-agent|android`
-says so before running anything. Setting up testing on Axon: [AXON_INSTALL.md](AXON_INSTALL.md#testing-on-axon).
+says so before running anything. Setting up testing on Axon: [AXON_INSTALL.md](AXON_INSTALL.md#step-9--testing-kiwi-and-playwright--critical-for-testing).
 
 ## 3. Run from a terminal or Claude Code
 
