@@ -48,6 +48,33 @@ check("a granted MCP tool passes the guard without a policy call", !v.block, v);
 const v2 = g.decide({ tool: "mcp__fleetlens__get_symbol", input: {}, policy, call: () => ({ decision: "ask" }) });
 check("an ungranted MCP tool is still default-denied", v2.block, v2);
 
+// codemode (issue #16): grantable by exact name only, and only when the stage granted it
+check("codemode granted by name", g.isGranted("codemode", ["mcp__fleetlens__*", "codemode"]), null);
+check("codemode not granted unless listed", !g.isGranted("codemode", ["mcp__fleetlens__*"]), null);
+check("no wildcard reaches codemode", !g.isGranted("codemode", ["*", "code*"]), null);
+check("granting codemode does not grant bash", !g.isGranted("bash", ["codemode", "bash"]), null);
+const cm = g.decide({ tool: "codemode", input: { code: "x" }, policy: { ...policy, granted_tools: ["codemode"] },
+                      call: () => { throw new Error("no"); } });
+check("a granted codemode passes the guard", !cm.block, cm);
+const cm2 = g.decide({ tool: "codemode", input: {}, policy, call: () => ({ decision: "ask" }) });
+check("an ungranted codemode is default-denied", cm2.block, cm2);
+
+// hook notes of calls a codemode script made go to the script's own result, once each
+const pend = new Map();
+const inner = t.liftNotes(pend, { toolCallId: "p/1", parentToolCallId: "p", content: [{ type: "text", text: "{}" }] }, "12 calls used");
+check("an inner result is left untouched", inner === undefined, inner);
+t.liftNotes(pend, { toolCallId: "p/2", parentToolCallId: "p" }, "12 calls used");
+t.liftNotes(pend, { toolCallId: "p/3", parentToolCallId: "p" }, "");
+t.liftNotes(pend, { toolCallId: "q/1", parentToolCallId: "q" }, "other script");
+const outer = t.liftNotes(pend, { toolCallId: "p", content: [{ type: "text", text: "Script completed" }] }, "");
+const text = outer && outer.content.map((b) => b.text).join("");
+check("the script's result carries its inner notes, each once",
+  outer && outer.content.length === 2 && text.split("12 calls used").length === 2 && !/other script/.test(text), outer);
+check("a delivered script's notes are cleared", !pend.has("p") && pend.has("q"), [...pend.keys()]);
+const plain = t.liftNotes(pend, { toolCallId: "r", content: [] }, "own note");
+check("a direct call still gets its own note", plain && /own note/.test(plain.content[0].text), plain);
+check("no note = unchanged", t.liftNotes(pend, { toolCallId: "s", content: [] }, "") === undefined, null);
+
 // the real hook.py, end to end: the same allow-list as on Claude
 mkdirSync(path.join(runDir, "out"), { recursive: true });
 process.env.INVESTIGATE_RUN_DIR = runDir;

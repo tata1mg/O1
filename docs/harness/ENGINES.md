@@ -285,6 +285,7 @@ The rfc-agent pipeline uses the same pieces through its own agent seam (`rfc_age
 | private `PI_CODING_AGENT_DIR` | none | Axon ignores the override; auth is Axon's encrypted session |
 | `PI_OFFLINE=1` | unset | gateway model discovery is a startup network call |
 | MCP refused | registered per session by `pi_ext/rfc-tools.js` (`pi.registerMcpServer`, `direct` exposure) | Pi 1.4 has built-in MCP; nothing is written to `~/.axon/pi/mcp.json` |
+| operator's own same-name server | read (never written) by `axon_agent.context_access()`; a `codemode` entry gets the `codemode` tool granted, and calls made from scripts are counted (D-25) | a file-configured server wins over an extension's registration |
 | MCP tool names dropped | kept in `--tools`; listed as `granted_tools` for the guard | the guard otherwise default-denies them ("no policy rule") |
 | `--model` as given | Claude ids mapped to gateway ids by tier (flag `axon.models`) | the gateway serves no Claude models |
 | compaction off via settings | Axon's **threshold** compaction cancelled by `rfc-tools.js` (flag `axon.threshold_compaction`) | Axon enables early compaction for every session |

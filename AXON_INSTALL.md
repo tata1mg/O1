@@ -265,6 +265,9 @@ The fleetlens token is a secret. **User:** open `CFG` for them and ask them to s
 `MCP.mcpServers.fleetlens.headers` to `{"Authorization": "Bearer <token from the vault>"}`. It is verified in
 Step 11 (`/rfc doctor`, VPN on). Every field is described in [CONFIG.md](CONFIG.md).
 
+If the user has also added fleetlens to Axon themselves (`axon pi mcp list` shows `fleetlens`), leave it: their
+entry is used on Axon, with `direct` or `codemode` exposure, and `/rfc doctor` checks that one and says which.
+
 ### Step 7 — Atlassian (RFCs) — CRITICAL for Confluence and Jira PRDs
 
 A local `--prd file.md` doesn't need it.

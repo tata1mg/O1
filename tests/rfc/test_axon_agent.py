@@ -27,7 +27,9 @@ class Cfg:
 
 
 @pytest.fixture(autouse=True)
-def _clean_engine_env(monkeypatch):
+def _clean_engine_env(monkeypatch, tmp_path):
+    # never the developer's own Axon mcp.json: a fleetlens entry there would change which tools agents get
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(tmp_path / "no-axon-home"))
     # setenv first so monkeypatch records the original state and restores it, even after apply_engine_args
     # (which writes os.environ directly, as the CLIs do) — otherwise an engine choice leaks into later tests
     for var in (ax.ENGINE_ENV, ax.STAGE_ENGINES_ENV):
@@ -490,3 +492,146 @@ def test_the_default_engine_never_touches_axon(tmp_path, monkeypatch):
     argv = json.loads(calls.read_text().splitlines()[0])
     assert argv[1:4] == ["-p", "--output-format", "stream-json"]
     assert not (run / "logs" / "pi-sessions").exists()
+
+
+# ---- the context layer behind codemode (issue #16) ------------------------------------------------------
+
+
+def _axon_home(tmp_path, monkeypatch, entry: dict | None) -> Path:
+    """An Axon user dir whose mcp.json has (or lacks) the operator's own fleetlens entry."""
+    home = tmp_path / "axon-home"
+    home.mkdir(exist_ok=True)
+    servers = {"atlassian": {"url": "https://mcp.atlassian.com/v1/mcp"}}
+    if entry is not None:
+        servers["fleetlens"] = entry
+    (home / "mcp.json").write_text(json.dumps({"mcpServers": servers}))
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(home))
+    return home
+
+
+_O1 = Cfg(**{"MCP": {"mcpServers": {"fleetlens": FLEETLENS}}})
+_THEIRS = {"url": "https://theirs.example/mcp", "headers": {"Authorization": "Bearer theirs"}}
+
+
+def test_without_an_axon_entry_o1s_own_registration_is_used_direct(tmp_path, monkeypatch):
+    _axon_home(tmp_path, monkeypatch, None)
+    a = ax.context_access(_O1)
+    assert a["mode"] == "direct" and a["source"] == "o1" and a["spec"] == FLEETLENS
+    assert ax.context_access(Cfg())["mode"] == "off"  # nothing configured anywhere
+
+
+@pytest.mark.parametrize("extra, mode", [
+    ({}, "codemode"),                                   # Pi's default exposure
+    ({"exposure": "codemode-deferred"}, "codemode"),    # Pi's alias
+    ({"exposure": "deferred"}, "codemode"),             # codemode scripts reach deferred tools too
+    ({"exposure": "direct"}, "direct"),
+    ({"exposure": "direct", "toolExposure": {"get_*": "codemode"}}, "codemode"),
+    ({"exposure": "hidden"}, "off"),
+    ({"exposure": "hidden", "toolExposure": {"find_symbol": "direct"}}, "direct"),
+    ({"exposure": "direct", "enabled": False}, "off"),
+    ({"exposure": "weird"}, "off"),
+])
+def test_an_axon_entry_wins_and_its_exposure_decides(tmp_path, monkeypatch, extra, mode):
+    _axon_home(tmp_path, monkeypatch, {**_THEIRS, **extra})
+    a = ax.context_access(_O1)
+    assert a["mode"] == mode and a["source"] == "axon"
+    assert a["spec"] == _THEIRS  # the server the agent will really use is the one to health-check
+    if mode == "off":
+        assert "replaces O1's" in a["note"] or "does not support" in a["note"]
+
+
+@pytest.mark.parametrize("headers", [{"Authorization": "Bearer ${FLEETLENS_TOKEN}"}, {"Authorization": "!pass x"}])
+def test_headers_pi_must_resolve_are_not_sent_by_python(tmp_path, monkeypatch, headers):
+    _axon_home(tmp_path, monkeypatch, {"url": "https://theirs.example/mcp", "headers": headers})
+    assert ax.context_access(_O1)["spec"] is None
+    ok, why = ax.context_health(_O1, health=lambda s: (True, f"ok via {s['url']}"),
+                                spec_of=lambda cfg: FLEETLENS)
+    assert ok and "fleetlens.example" in why and "checked O1's config" in why
+
+
+def test_context_health_checks_the_server_the_agent_will_use(tmp_path, monkeypatch):
+    _axon_home(tmp_path, monkeypatch, dict(_THEIRS))
+    seen = []
+    ok, why = ax.context_health(_O1, health=lambda s: (seen.append(s["url"]) or True, "ok · 15/15 tools"),
+                                spec_of=lambda cfg: FLEETLENS)
+    assert ok and seen == ["https://theirs.example/mcp"] and "agent access: through codemode" in why
+    _axon_home(tmp_path, monkeypatch, {**_THEIRS, "exposure": "hidden"})
+    ok, why = ax.context_health(_O1, health=lambda s: (True, "ok"), spec_of=lambda cfg: FLEETLENS)
+    assert not ok and "hides every tool" in why  # reachable is not usable
+
+
+def test_a_codemode_entry_grants_the_script_runner_and_says_how(tmp_path, monkeypatch):
+    _axon_home(tmp_path, monkeypatch, dict(_THEIRS))
+    exe = _fake(tmp_path, monkeypatch)
+    run = tmp_path / "run"
+    run.mkdir()
+    cfg = Cfg(**{"AGENT.ENGINE": "axon", "AGENT.AXON": {"BIN": str(exe)},
+                 "MCP": {"mcpServers": {"fleetlens": FLEETLENS}}})
+    res = ag.run(_spec(), "the prompt", run, cfg, stage="scope", step="run")
+    assert res.ok, res.error
+    dumped = json.loads((tmp_path / "argv.json").read_text())
+    tools = dumped["argv"][dumped["argv"].index("--tools") + 1].split(",")
+    assert "codemode" in tools and "mcp__fleetlens__find_symbol" in tools and "bash" not in tools
+    policy = json.loads(dumped["env"]["HARNESS_POLICY_JSON"])
+    assert "codemode" in policy["granted_tools"]
+    assert dumped["prompt"].startswith("the prompt") and "tools.mcp__fleetlens__" in dumped["prompt"]
+
+
+def test_a_direct_setup_is_unchanged(tmp_path, monkeypatch):
+    _axon_home(tmp_path, monkeypatch, None)
+    exe = _fake(tmp_path, monkeypatch)
+    run = tmp_path / "run"
+    run.mkdir()
+    cfg = Cfg(**{"AGENT.ENGINE": "axon", "AGENT.AXON": {"BIN": str(exe)},
+                 "MCP": {"mcpServers": {"fleetlens": FLEETLENS}}})
+    assert ag.run(_spec(), "the prompt", run, cfg, stage="scope", step="run").ok
+    dumped = json.loads((tmp_path / "argv.json").read_text())
+    assert "codemode" not in dumped["argv"][dumped["argv"].index("--tools") + 1].split(",")
+    assert dumped["prompt"] == "the prompt"
+
+
+def test_an_unusable_entry_grants_no_context_tools(tmp_path, monkeypatch):
+    _axon_home(tmp_path, monkeypatch, {**_THEIRS, "enabled": False})
+    exe = _fake(tmp_path, monkeypatch)
+    run = tmp_path / "run"
+    run.mkdir()
+    cfg = Cfg(**{"AGENT.ENGINE": "axon", "AGENT.AXON": {"BIN": str(exe)},
+                 "MCP": {"mcpServers": {"fleetlens": FLEETLENS}}})
+    ag.run(_spec(), "the prompt", run, cfg, stage="scope", step="run")
+    dumped = json.loads((tmp_path / "argv.json").read_text())
+    tools = dumped["argv"][dumped["argv"].index("--tools") + 1].split(",")
+    assert not any(t.startswith("mcp__") or t == "codemode" for t in tools)
+
+
+def test_calls_a_codemode_script_made_become_their_own_tool_calls(tmp_path):
+    shim, out = _convert("pi.codemode.jsonl", tmp_path)
+    uses = [b for ev in out if ev["type"] == "assistant" for b in ev["message"]["content"] if b["type"] == "tool_use"]
+    assert [u["name"] for u in uses] == ["codemode", "mcp__fleetlens__get_service_graph",
+                                         "mcp__fleetlens__find_symbol"]
+    nested = [ev for ev in out if ev.get("parent_tool_use_id") == "cm1"]
+    assert len(nested) == 4  # two tool_use + two tool_result, each marked with the script's call
+    results = {b["tool_use_id"]: b for ev in out if ev["type"] == "user" for b in ev["message"]["content"]}
+    assert results["cm1/1"]["content"] == "graph" and not results["cm1/1"]["is_error"]
+    assert results["cm1/2"]["is_error"] and results["cm1"]["content"] == "Script completed"
+    assert shim.turns == 2  # the script's calls are not model turns
+    assert shim.result()["result"] == "done."
+
+
+def test_run_metrics_and_discovery_count_calls_made_from_a_script(tmp_path):
+    from rfc_agent import run_metrics
+    from rfc_agent.scope import context
+
+    _, out = _convert("pi.codemode.jsonl", tmp_path)
+    stream = tmp_path / "s.stream.jsonl"
+    stream.write_text("\n".join(json.dumps(e) for e in out) + "\n")
+    calls: dict = {}
+    for ev in out:
+        for b in (ev.get("message") or {}).get("content") or []:
+            if b.get("type") == "tool_use":
+                calls[b["id"]] = {"name": b["name"]}
+            elif b.get("type") == "tool_result" and b["tool_use_id"] in calls:
+                calls[b["tool_use_id"]].update(output=b["content"], is_error=b["is_error"])
+    assert context.successful_lookups(calls) == 1  # the failed find_symbol and the codemode call don't count
+    text = stream.read_text()
+    assert text.count('"mcp__fleetlens__') == 2
+    assert run_metrics.CONTEXT_SERVER == "fleetlens"

@@ -300,6 +300,49 @@ registered `/rfc` from `package-entry.js`, and `/rfc help` answered, so the proj
 and the read-only tools came up as in D-23. Not yet tried: an `axon pi install git:…` from GitHub, because the
 branch with this isn't pushed.
 
+## D-25 fleetlens works through codemode too; health means usable (issue #16)
+
+**Problem.** D-09 assumed the agents always see `mcp__fleetlens__*` as direct tools. But a file-configured server
+with the same name wins over an extension's registration (Pi `mcp.md`, "Register MCP servers from extensions"),
+the same rule D-22 met for Atlassian. An operator who added fleetlens to Axon for their own use got THEIR entry,
+with Pi's default `codemode` exposure. The agents had no `codemode` tool, so they saw no fleetlens tool at all.
+The health check (only `initialize`) still said ok, and discovery named eight repos from the PRD's words, none
+of which existed.
+
+**Decision.**
+- `axon_agent.context_access()` reads (never writes) the operator's `~/.axon/pi/mcp.json` before each agent
+  starts and decides how the agent will reach fleetlens: `direct` (O1's registration, or their direct entry),
+  `codemode` (their entry with `codemode`, `codemode-deferred` or `deferred` exposure, server-wide or per tool),
+  or `off` (disabled, hidden, or an exposure O1 does not know).
+- `codemode`: the stage gets the `codemode` tool in `--tools` and in the guard's `granted_tools` (the guard
+  grants it by exact name only, `GRANTABLE_BUILTINS`), and the prompt gets one paragraph on calling the tools
+  from a script. Nothing changes for `direct`.
+- Calls a script makes are in Pi's json stream only as `tool_execution_start/end` with a `parentToolCallId`.
+  `PiToClaude` writes each one out as its own `tool_use` / `tool_result` pair (with `parent_tool_use_id`), so
+  the discovery check, `run_metrics` and the trace count them like direct calls.
+- A hook note on an inner call reaches only the script. `rfc-tools.js` leaves the inner result untouched (a
+  script may parse it) and adds the notes, each once, to the codemode result the model reads.
+- `scope.context.health()` checks three layers: `initialize` (a 401/403 is named as a refused token, not "VPN
+  off?"), `tools/list` has the agents' read tools, and one `get_index_info` call succeeds. On Axon,
+  `context_health()` checks the server the agents will really use (their entry when it wins, unless its headers
+  need Pi to resolve them) and adds the agent's access to the line.
+- `scope.context.discover()` fails when there was no successful fleetlens lookup: services named without one
+  are guesses, and Scope sends the operator to the manual `+repo` path instead. Both engines.
+
+**Measured before building (Axon 1.1.0, Pi 1.6.0).** A codemode script's calls fire the extensions'
+`tool_call` and `tool_result` with a `parentToolCallId`. `--tools` bounds the script: `bash`, `write`, `read`
+and an unlisted fleetlens tool all came back "does not exist" (Pi's `mcp.md:228` reads otherwise; measured
+wins). A note appended to an inner result appeared only in the script's output.
+
+**Verified (2026-11-25, Axon 1.1.0).** With a `fleetlens` entry (no exposure, so codemode) in
+`~/.axon/pi/mcp.json`, the issue's own setup: the preflight said `ok · 15/15 tools · get_index_info answered ·
+agent access: through codemode`. Scope discovery on the PDP-enrichment PRD made 22 `codemode` calls, whose scripts
+made 139 fleetlens calls (135 successful), no guard denials. It proposed 5 repos, all real and all among the 7
+the earlier run scoped; the other two (`unified-admin-app`, `dexter`) it listed as "maybe". 214 s, $0.89.
+
+**Not done.** `deferred` gets the codemode route, not `tool_search`. Mind1 through the LiteLLM gateway (issue
+#24) is the same mechanism with another server and tool names; not built here.
+
 ## Live verification (2026-10-28, Axon 0.2.6 / Pi 1.4.0)
 
 All runs used copies of the finished Claude run `prd-5672665111` (Upload Report optimisation), with Langfuse off.

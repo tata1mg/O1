@@ -240,13 +240,35 @@ export default function (pi) {
     return { block: true, reason: guarded.reason };
   });
 
+  // Notes for calls a codemode script made, held until the script's own result. A note appended to an inner
+  // result reaches only the script (measured), which may parse that result as JSON: so the inner result is
+  // left as the tool returned it and the notes go on the codemode result, which the model reads.
+  const pending = new Map();
+
   pi.on("tool_result", async (event, ctx) => {
     if (!cfg) return undefined;
     const cwd = (ctx && ctx.cwd) || process.cwd();
     const extra = [postFeedback(cfg.hook, event.toolName, event.input, event.isError, cwd),
                    writeCheck(cfg.write_checks, event.toolName, event.input, event.isError, cwd)]
       .filter(Boolean).join("\n\n");
-    if (!extra) return undefined;
-    return { content: [...(event.content || []), { type: "text", text: `\n\n${extra}` }] };
+    return liftNotes(pending, event, extra);
   });
+}
+
+/**
+ * Where a tool's extra text goes. An inner call (parentToolCallId) parks it under its parent and changes
+ * nothing; any other call gets its own text plus every note parked under it, each distinct note once (the
+ * call-budget nudge repeats per call). Returns the tool_result handler's answer: undefined = unchanged.
+ */
+export function liftNotes(pending, event, extra) {
+  const parent = event.parentToolCallId;
+  if (parent) {
+    if (extra) pending.set(parent, [...(pending.get(parent) || []), extra]);
+    return undefined;
+  }
+  const parked = pending.get(event.toolCallId) || [];
+  pending.delete(event.toolCallId);
+  const notes = [...new Set([...parked, extra].filter(Boolean))];
+  if (!notes.length) return undefined;
+  return { content: [...(event.content || []), { type: "text", text: `\n\n${notes.join("\n\n")}` }] };
 }

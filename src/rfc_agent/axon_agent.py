@@ -222,6 +222,8 @@ class PiToClaude:
                 out.append({"type": "user", "message": {"role": "user", "content": [{
                     "type": "tool_result", "tool_use_id": msg.get("toolCallId"),
                     "content": _text_of(msg.get("content")), "is_error": bool(msg.get("isError"))}]}})
+        elif t in ("tool_execution_start", "tool_execution_end") and ev.get("parentToolCallId"):
+            out.extend(self._nested(ev))
         elif t == "auto_retry_end" and ev.get("success") is False:
             self._terminal_error = f"provider retries exhausted: {str(ev.get('finalError') or '')[:300]}"
         elif t == "agent_settled":
@@ -229,6 +231,24 @@ class PiToClaude:
             if ev.get("aborted"):
                 self._terminal_error = self._terminal_error or "the agent was aborted"
         return out
+
+    def _nested(self, ev: dict) -> list[dict]:
+        """A tool a codemode script called. Pi's json stream has it only as tool_execution_start/end with a
+        parentToolCallId (no message of its own: the model saw the script's output, not this call). Written
+        out as its own tool_use / tool_result pair, marked with the parent, so every reader that counts
+        `mcp__fleetlens__*` calls — the discovery check, run_metrics, the trace — sees it as on Claude."""
+        name = str(ev.get("toolName") or "")
+        parent = ev.get("parentToolCallId")
+        if ev.get("type") == "tool_execution_start":
+            return [{"type": "assistant", "parent_tool_use_id": parent, "message": {
+                "model": self.model, "content": [{
+                    "type": "tool_use", "id": ev.get("toolCallId"), "name": PI_TO_CLAUDE_TOOL.get(name, name),
+                    "input": claude_tool_input(name, ev.get("args"), self.cwd)}]}}]
+        result = ev.get("result")
+        content = result.get("content") if isinstance(result, dict) else result
+        return [{"type": "user", "parent_tool_use_id": parent, "message": {"role": "user", "content": [{
+            "type": "tool_result", "tool_use_id": ev.get("toolCallId"), "content": _text_of(content),
+            "is_error": bool(ev.get("isError"))}]}}]
 
     def _assistant(self, msg: dict) -> list[dict]:
         self.turns += 1
@@ -272,6 +292,98 @@ class PiToClaude:
                 "is_error": bool(err), "session_id": self.session_id, "engine": "axon", "model": self.model,
                 "total_cost_usd": round(self.cost if cost is None else cost, 6), "num_turns": self.turns,
                 "result": err or self.final_text, "usage": dict(self.usage)}
+
+
+# ---- the context layer as the agent will see it ---------------------------------------------------------
+
+#: exposures whose tools the model reaches only through a codemode script (`deferred` too: codemode scripts
+#: call deferred tools as well, mcp.md "Control tool exposure"). Pi accepts `codemode-deferred` as an alias.
+_CODEMODE_EXPOSURES = {"codemode", "codemode-deferred", "deferred"}
+
+CODEMODE_NOTE = (
+    "\n\nHow to call {server}: its tools are reached through the `codemode` tool, not called by name. Write a "
+    "short script that calls them as `await tools.mcp__{server}__<tool>({{...}})` (for example "
+    "`tools.mcp__{server}__find_symbol({{query: \"...\"}})`) and `return` only what you need from the results. "
+    "Several calls may go in one script. Everything above that names an `mcp__{server}__*` tool means this."
+)
+
+
+def _user_mcp_entry(server: str) -> dict | None:
+    """The operator's own `server` entry in Axon's user-level mcp.json, or None. Read-only: never written."""
+    path = axon_agent_dir() / "mcp.json"
+    try:
+        entry = (json.loads(path.read_text(encoding="utf-8")).get("mcpServers") or {}).get(server)
+    except (OSError, ValueError, AttributeError):
+        return None
+    return entry if isinstance(entry, dict) else None
+
+
+def _literal_headers(headers) -> dict | None:
+    """Headers Python can send as they stand: plain strings with no `$VAR` / `!command` for Pi to resolve."""
+    if headers is None:
+        return {}
+    if not isinstance(headers, dict) or not all(isinstance(v, str) for v in headers.values()):
+        return None
+    if any(v.startswith("!") or "$" in v for v in headers.values()):
+        return None
+    return dict(headers)
+
+
+def context_access(cfg) -> dict:
+    """How the stage's agents will reach the context layer (fleetlens) on Axon, before one is started.
+
+    O1 registers fleetlens for each session with `direct` exposure (rfc-tools.js), but Pi lets a
+    file-configured server of the same name win over an extension's registration (mcp.md "Register MCP
+    servers from extensions"). So an operator who added fleetlens to Axon for their own use gets THEIR entry,
+    with its exposure — `codemode` when unset — and its URL and token (issue #16).
+
+    → {mode: "direct" | "codemode" | "off", source: "o1" | "axon", exposure, spec, note}. `spec` is the server
+    the agent will actually talk to, for the health check ({url, headers}); None when Python cannot send its
+    headers as they stand (or it is not an HTTP server), in which case O1's own config is checked instead.
+    """
+    from .scope.context import SERVER, spec_of
+
+    o1 = spec_of(cfg)
+    entry = _user_mcp_entry(SERVER)
+    where = str(axon_agent_dir() / "mcp.json")
+    if entry is None:
+        return {"mode": "direct" if o1 else "off", "source": "o1", "exposure": "direct", "spec": o1,
+                "note": "" if o1 else f"not configured (config.json MCP.mcpServers.{SERVER})"}
+    exposure = str(entry.get("exposure") or "codemode")
+    per_tool = {str(v) for v in (entry.get("toolExposure") or {}).values()} if isinstance(
+        entry.get("toolExposure"), dict) else set()
+    headers = _literal_headers(entry.get("headers"))
+    spec = {"url": entry["url"], "headers": headers} if entry.get("url") and headers is not None else None
+    base = {"source": "axon", "exposure": exposure, "spec": spec}
+    if entry.get("enabled") is False:
+        return {**base, "mode": "off", "note": f"your Axon entry for {SERVER} ({where}) is disabled, and it "
+                                               f"replaces O1's — enable it, or remove it so O1's is used"}
+    if exposure == "hidden" and not (per_tool - {"hidden"}):
+        return {**base, "mode": "off", "note": f"your Axon entry for {SERVER} ({where}) hides every tool, and "
+                                               f"it replaces O1's — change its exposure, or remove it"}
+    if exposure in _CODEMODE_EXPOSURES or per_tool & _CODEMODE_EXPOSURES:
+        return {**base, "mode": "codemode", "note": f"through codemode (your {where} entry)"}
+    if exposure == "direct":
+        return {**base, "mode": "direct", "note": f"direct (your {where} entry)"}
+    if exposure == "hidden" and "direct" in per_tool:
+        return {**base, "mode": "direct", "note": f"direct, only the tools your {where} entry shows"}
+    return {**base, "mode": "off", "note": f"your Axon entry for {SERVER} has exposure {exposure!r}, which O1 "
+                                           f"does not support — use direct or codemode"}
+
+
+def context_health(cfg, health=None, spec_of=None) -> tuple[bool, str]:
+    """The Scope/doctor health check on Axon: the server the agents will ACTUALLY talk to (the operator's own
+    entry when it wins over O1's), plus whether they can reach its tools at all, in one line."""
+    if health is None or spec_of is None:
+        from .scope.context import health, spec_of
+    access = context_access(cfg)
+    if access["mode"] == "off":
+        return False, access["note"]
+    checked = access["spec"] or spec_of(cfg)
+    ok, why = health(checked)
+    if access["source"] == "axon" and access["spec"] is None:
+        why += " (checked O1's config: your Axon entry's headers need Pi to resolve them)"
+    return ok, f"{why} · agent access: {access['note'] or 'direct'}" if ok else why
 
 
 # ---- one agent ---------------------------------------------------------------------------------------
@@ -390,7 +502,16 @@ def _run_once(spec, prompt: str, run_dir: Path, cfg, *, resume: str | None = Non
     from .scope.context import spec_of
 
     mcp_spec = spec_of(cfg) if spec.use_context else None
-    granted = [f"mcp__{ag.SERVER}__{t}" for t in ag.CONTEXT_TOOLS] if mcp_spec else []
+    access = context_access(cfg) if spec.use_context else {"mode": "off"}
+    reachable = access["mode"] in ("direct", "codemode") and (mcp_spec or access["source"] == "axon")
+    granted = [f"mcp__{ag.SERVER}__{t}" for t in ag.CONTEXT_TOOLS] if reachable else []
+    if reachable and access["mode"] == "codemode":
+        # the operator's own entry hides the tools behind codemode: grant the script runner too. `--tools`
+        # still bounds it — a script can call only the tools listed there (measured: anything else "does
+        # not exist"), and every call it makes passes the guard and the hooks with a parentToolCallId.
+        granted.append("codemode")
+        if not resume:  # a resumed session already has it
+            prompt = prompt + CODEMODE_NOTE.format(server=ag.SERVER)
     tools_cfg = write_tools_config(
         logs / f"{base}.rfc-tools.json",
         mcp={ag.SERVER: mcp_spec} if mcp_spec else {},
@@ -582,7 +703,7 @@ def doctor(cfg, *, atlassian: bool = True) -> list[str]:
             if m not in models:
                 problems.append(f"model {m!r} is not on the gateway (available: {', '.join(sorted(models))}) — "
                                 f"set config AGENT.AXON.MODELS to one of those")
-    ok, why = health(spec_of(cfg))
+    ok, why = context_health(cfg, health, spec_of)
     if not ok:
         problems.append(f"fleetlens (the context layer): {why}")
     if atlassian:

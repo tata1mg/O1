@@ -132,7 +132,10 @@ Figma always runs the latest version. Scope then asks you to press one shortcut 
 | `unknown key(s) [...] are ignored` | A typo, or a key left from an older version | Fix or delete it |
 | Scope stops: `ATLASSIAN.SITE is not set` | Team values missing | Add them to your `config.json` (ask a teammate), or re-run the install guide |
 | Scope says Atlassian is not connected | No signed-in Atlassian server | Section 5, then re-run |
-| `context layer unavailable` | fleetlens unreachable or the token is wrong | VPN on; check `url` and `headers` in `config.json` |
+| `context layer unavailable: … did not answer` | fleetlens unreachable | VPN on; check `url` in `config.json` |
+| `context layer unavailable: … refused the token (HTTP 401)` / `a get_index_info call failed` | The token is wrong or expired | Check `headers` in `config.json` (or in your own Axon `fleetlens` entry, which wins on Axon) |
+| `context layer unavailable: your Axon entry for fleetlens …` | Your own `fleetlens` in `~/.axon/pi/mcp.json` is disabled, hidden, or has an exposure O1 doesn't support. It replaces O1's on Axon | Use `direct` or `codemode` exposure, or remove the entry |
+| `repo discovery failed (0 successful fleetlens lookups …)` | The discovery agent never got an answer from fleetlens, so it proposes nothing | Add repos on the confirm screen (`+name`); run `/rfc doctor` to see why |
 | Run refuses to start: Langfuse keys missing | Tracing is required | Add the keys from the vault |
 | `~/.tcms.conf is missing` / `testing.storage is 'json'` | Kiwi is not set up on this machine | Re-run the install guide for testing. You write `~/.tcms.conf` yourself |
 | `Kiwi … is unreachable` | VPN off, a wrong Kiwi URL or login, or Kiwi itself is down (a 502 or 503) | Check your Kiwi setup: the VPN is on, `kiwi_web` and `kiwi_user` in `TESTING` are right, and `~/.tcms.conf` has your url, username and password. Run `python -m workflows.testing.preflight testing` to see which check fails, then retry |
