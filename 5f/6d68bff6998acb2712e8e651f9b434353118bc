@@ -1,0 +1,44 @@
+src/harness/engines/pi_ext/rfc-tools.js
+  s_80bfd6a247c7f7::t_cb211a24704e45 243-247,254,257-273
+  s_80bfd6a247c7f7::t_0fa68fad66f1a4 274
+tests/fixtures/axon/rfc_tools_cases.mjs
+  s_80bfd6a247c7f7::t_cb211a24704e45 51-77
+src/rfc_agent/scope/context.py
+  s_80bfd6a247c7f7::t_cb211a24704e45 44-67,69-72,76-78,80,84,87-113,177-178,181,229-233,242,250-257,424-425
+src/rfc_agent/scope/cli.py
+  s_80bfd6a247c7f7::t_cb211a24704e45 206-211,360-361,393
+tests/rfc/test_scope_discovery.py
+  s_80bfd6a247c7f7::t_cb211a24704e45 25-27,33-34,234-306
+decisions.md
+  s_80bfd6a247c7f7::t_cb211a24704e45 303-345
+docs/harness/ENGINES.md
+  s_80bfd6a247c7f7::t_cb211a24704e45 288
+src/harness/engines/pi_ext/harness-guard.js
+  s_80bfd6a247c7f7::t_cb211a24704e45 177-184,186
+tests/fixtures/axon/pi.codemode.jsonl
+  s_80bfd6a247c7f7::t_cb211a24704e45 1-18
+src/rfc_agent/axon_agent.py
+  s_80bfd6a247c7f7::t_cb211a24704e45 225-226,235-252,297-388,505-514,706
+tests/rfc/test_axon_agent.py
+  s_80bfd6a247c7f7::t_cb211a24704e45 30-32,495-637
+CONFIG.md
+  s_80bfd6a247c7f7::t_cb211a24704e45 135-138
+AXON_INSTALL.md
+  s_80bfd6a247c7f7::t_cb211a24704e45 268-270
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5f6d68bff6998acb2712e8e651f9b434353118bc",
+  "prompts": {},
+  "sessions": {
+    "s_80bfd6a247c7f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b9b36d41-accd-4cc4-a73c-19fc135fb3f4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Prabhashish S.Wasu <prabhashish.wasu@1mg.com>"
+    }
+  }
+}
