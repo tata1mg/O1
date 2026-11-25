@@ -331,14 +331,14 @@ Go through the rows that aren't `ok`:
 - **`kiwi_client` "tcms-api is not installed"** — the second `uv sync` of Step 2 (`--extra testing`).
 - **`kiwi` unreachable** — the VPN is off, or Kiwi is down. Say which; it stays BLOCKED until it answers.
 - **`playwright` or `agent_browser`** — needs Node 18+ (`node -v`; if missing, **User:** install Node 22 from
-  nodejs.org). Say first that this downloads browsers (about 150 MB each), then run, one at a time:
+  nodejs.org). Say first that this downloads Chromium (about 290 MB), then run, one at a time:
   ```bash
   npm --prefix ~/.axon/pi/git/github.com/tata1mg/O1/tools/ui-runner ci
   ```
   ```bash
   npm --prefix ~/.axon/pi/git/github.com/tata1mg/O1/tools/ui-runner exec playwright install chromium
   ```
-  Then whatever the `agent_browser` row's `fix` names (Playwright MCP's own Chromium build).
+  That one install serves both the `playwright` and `agent_browser` rows.
 
 Run the check again until every row is `ok`, or only notes are left.
 

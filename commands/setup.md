@@ -287,8 +287,7 @@ drives a browser through Playwright MCP.
 - **`kiwi` unreachable** — VPN off, or the Kiwi server is down. Say which; it stays BLOCKED until it answers.
 - **`playwright` or `agent_browser`** — needs Node 18+ (`node -v`; if missing, ask the user to install Node 22
   from nodejs.org: no Homebrew assumed). Then run `cd "$PROJ/tools/ui-runner" && npm ci && npx playwright install
-  chromium`, then whatever the `agent_browser` row's `fix` names (Playwright MCP's own Chromium build). Both
-  download browsers (~150 MB each): say so in one line first. Re-check. They stay a note, not a block, only if
+  chromium`; that one install serves both rows. It downloads Chromium (~290 MB): say so in one line first. Re-check. They stay a note, not a block, only if
   the user runs backend cases alone.
 - **`claude`** — step 2.
 
