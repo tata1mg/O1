@@ -1,0 +1,25 @@
+src/rfc_agent/observe.py
+  s_318115e84dad26::t_5a5c6d6b1a000b 261
+  s_318115e84dad26::t_fbffabecbfbc60 263,266
+  s_318115e84dad26::t_abd8fbc86a6abc 391-392
+tests/rfc/test_observe.py
+  s_318115e84dad26::t_fec1a58e6bf984 13
+  s_318115e84dad26::t_9a5be07d9bc55f 238-239,242-243,246-262
+  s_318115e84dad26::t_6ebec02d12d071 240-241,244-245
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "59d3d598ff9aa0d4bac1d14b2a355f12ca849e4d",
+  "prompts": {},
+  "sessions": {
+    "s_318115e84dad26": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ed543044-8b85-4986-b85f-997d82cb8899",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Prabhashish S.Wasu <prabhashish.wasu@1mg.com>"
+    }
+  }
+}
