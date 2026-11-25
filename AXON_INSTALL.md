@@ -298,7 +298,9 @@ from manifest…** and pick the `manifest:` path that was printed. **Plugins →
 
 ### Step 9 — Testing: Kiwi and Playwright — CRITICAL for testing
 
-**Check** (needs no feature or RFC run, prints no secret). Each row has `id`, `level`, `msg` and `fix`:
+**Check** (needs no feature or RFC run, prints no secret). Each row has `id`, `level`, `msg` and `fix`; a failing
+row also has `kind`: `setup` (not done yet) or `error` (broken). The JSON's `summary` has `ready`, `to_set_up`,
+`errors`, `notes` and `next`:
 
 ```bash
 uv run --project ~/.axon/pi/git/github.com/tata1mg/O1 python -m workflows.testing.preflight testing --engine axon --json
@@ -340,7 +342,10 @@ Go through the rows that aren't `ok`:
   ```
   That one install serves both the `playwright` and `agent_browser` rows.
 
-Run the check again until every row is `ok`, or only notes are left.
+Run the check again until every row is `ok`, or only notes are left. After each re-check, tell the user in one line what the `summary` says: what is done (`ready`), what is still
+to set up (`to_set_up`, shown ⏳: the normal state mid-setup, not a failure), any `errors` (shown ❌: set up but
+broken now), and the `next` step. Never repeat "not ready" on its own. `notes` (Android not set up, a browser
+warning) are not problems.
 
 **Web logins — don't create them here.** Runs against a logged-in page take a recorded session (`--ui-auth <file>`)
 or a test-account file, made per environment the first time `/test` needs one; `/test` walks through it. Only say
@@ -379,7 +384,8 @@ the user.
 - RFCs: `uv run --project ~/.axon/pi/git/github.com/tata1mg/O1 python -m rfc_agent.axon_agent doctor` ends
   `axon: READY`. It checks the Axon sign-in, the managed Pi version, the gateway models, fleetlens (VPN on) and the
   Atlassian sign-in; each problem is one `FAIL` line with its fix. (`/rfc doctor` in the session runs the same.)
-- Testing: the Step 9 check, without `--json`, ends `TESTING READY`.
+- Testing: the Step 9 check, without `--json`, ends with a line starting `TESTING READY`. Anything left in
+  `to_set_up` or `errors` at the end is what BLOCKED names.
 
 End with **READY**, or **BLOCKED** plus the one thing to fix. Then tell the user, in this order:
 

@@ -20,8 +20,11 @@ turn into a checklist and a question, not six ad-hoc greps.
                                                        [--json]
 
 `check` exits 0 when nothing failed (warnings allowed), 1 when a check failed. Each check is
-{id, level: ok|info|warn|fail, msg, fix}. The Kiwi check is `fail` when Kiwi is unreachable: the command, not
-this module, decides whether the user may go on without it (generate now, store later).
+{id, level: ok|info|warn|fail, msg, fix}, and a `fail` also has `kind`: `setup` (not done yet — shown ⏳) or
+`error` (broken now — shown ❌). `testing` adds a `summary` {ready, to_set_up, errors, notes, next} and ends with a
+footer built from it, so a re-run mid-setup says what is left rather than only NOT READY. The Kiwi check is
+`fail` when Kiwi is unreachable: the command, not this module, decides whether the user may go on without it
+(generate now, store later).
 
 `setup-kiwi` writes the NON-secret Kiwi settings to `TESTING` in ~/.config/rfc-agent/config.json, the
 config layer `workflows.testing.config_get` reads, so every later invocation — a resume, the execute
@@ -98,8 +101,13 @@ def store_for(flags, run_dir: Path):
 # ---- checks ------------------------------------------------------------------------------------------
 
 
-def _check(id_: str, level: str, msg: str, fix: str = "") -> dict:
-    return {"id": id_, "level": level, "msg": msg, "fix": fix}
+def _check(id_: str, level: str, msg: str, fix: str = "", kind: str = "") -> dict:
+    """One row. A `fail` row also says which kind (issue #21): `setup` — not done yet on this machine, the
+    normal state while installing — or `error` — set up, but broken right now. Untagged fails count as errors."""
+    row = {"id": id_, "level": level, "msg": msg, "fix": fix}
+    if level == "fail":
+        row["kind"] = kind if kind in ("setup", "error") else "error"
+    return row
 
 
 def _source(key: str, explicit: str | None, rfc_run: Path | None) -> tuple[str, str]:
@@ -157,7 +165,7 @@ def check_kiwi(flags, *, network: bool = True) -> list[dict]:
     if storage != "kiwi":
         return [_check("kiwi", "fail", f"testing.storage is {storage!r}: cases would stay in a local JSON "
                        "store, with no Kiwi review and nothing to confirm",
-                       "run `preflight setup-kiwi` once (writes TESTING in config.json)")]
+                       "run `preflight setup-kiwi` once (writes TESTING in config.json)", kind="setup")]
     out = []
     web = flags.get("testing.kiwi_web")
     explicit = all(flags.get(f"testing.{k}") for k in ("kiwi_url", "kiwi_user", "kiwi_password"))
@@ -165,7 +173,8 @@ def check_kiwi(flags, *, network: bool = True) -> list[dict]:
         conf = Path("~/.tcms.conf").expanduser()
         if not conf.is_file():
             return [_check("kiwi_conf", "fail", "~/.tcms.conf is missing: there is no Kiwi login",
-                           "create it yourself with [tcms] url/username/password, then chmod 600 ~/.tcms.conf")]
+                           "create it yourself with [tcms] url/username/password, then chmod 600 ~/.tcms.conf",
+                           kind="setup")]
         if conf.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO):
             out.append(_check("kiwi_conf", "warn", "~/.tcms.conf is readable by other users",
                               "chmod 600 ~/.tcms.conf"))
@@ -175,7 +184,7 @@ def check_kiwi(flags, *, network: bool = True) -> list[dict]:
         import tcms_api  # noqa: F401
     except ImportError:
         return out + [_check("kiwi_client", "fail", "tcms-api is not installed",
-                             "uv sync --extra testing (in the plugin folder)")]
+                             "uv sync --extra testing (in the plugin folder)", kind="setup")]
     if not network:
         return out + [_check("kiwi", "warn", f"Kiwi at {web} not probed (--no-network)")]
     previous = socket.getdefaulttimeout()
@@ -192,7 +201,7 @@ def check_kiwi(flags, *, network: bool = True) -> list[dict]:
            re.search(r"\b50[234]\b|Service Unavailable|Bad Gateway", error) else
            "connect the VPN and retry")
     return out + [_check("kiwi", "fail", f"Kiwi at {web} is unreachable: {error}",
-                         f"{fix}; or generate now and store in Kiwi later")]
+                         f"{fix}; or generate now and store in Kiwi later", kind="error")]
 
 
 def check_langfuse() -> list[dict]:
@@ -204,14 +213,16 @@ def check_langfuse() -> list[dict]:
     text = buf.getvalue().strip()
     if code == 0:
         return [_check("langfuse", "ok", text.splitlines()[0] if text else "langfuse ok")]
-    return [_check("langfuse", "fail", text, "add LANGFUSE keys to config.json, or pass --langfuse false")]
+    return [_check("langfuse", "fail", text, "add LANGFUSE keys to config.json, or pass --langfuse false",
+                   kind="setup" if code == observe.EXIT_NO_KEYS else "error")]
 
 
 def check_claude(cfg) -> list[dict]:
     binary = (cfg.get("AGENT.CLAUDE_BIN") if cfg else None) or "claude"
     if shutil.which(str(Path(binary).expanduser())) or Path(binary).expanduser().is_file():
         return [_check("claude", "ok", f"claude CLI: {binary}")]
-    return [_check("claude", "fail", f"claude CLI not found ({binary})", "set AGENT.CLAUDE_BIN in config.json")]
+    return [_check("claude", "fail", f"claude CLI not found ({binary})", "set AGENT.CLAUDE_BIN in config.json",
+                   kind="setup")]
 
 
 def check_executors() -> list[dict]:
@@ -476,7 +487,8 @@ def testing_setup(*, network: bool = True, engine: str = "") -> dict:
     cfg = load_config()
     checks = []
     if cfg is None:
-        checks.append(_check("config", "fail", "~/.config/rfc-agent/config.json not found", "run /rfc-agent:setup"))
+        checks.append(_check("config", "fail", "~/.config/rfc-agent/config.json not found", "run /rfc-agent:setup",
+                             kind="setup"))
     if engine and engine != "claude-code":
         checks.append(_check("engine", "info", f"agents run on {engine}"))
     else:
@@ -499,7 +511,60 @@ def testing_setup(*, network: bool = True, engine: str = "") -> dict:
     else:
         checks.append(_check("android", "info", "Android runs are not set up (optional)",
                              "preflight setup-android --clone, or --path <your maestro-automation checkout>"))
-    return {"ok": not any(c["level"] == "fail" for c in checks), "checks": checks}
+    ok = not any(c["level"] == "fail" for c in checks)
+    return {"ok": ok, "checks": checks, "summary": summarize(checks)}
+
+
+#: what each row is about, in the words the summary uses
+_LABEL = {"config": "config.json", "claude": "claude CLI", "engine": "engine", "kiwi": "Kiwi", "kiwi_conf": "Kiwi",
+          "kiwi_client": "Kiwi", "langfuse": "Langfuse keys", "playwright": "Playwright (web runs)",
+          "agent_browser": "ui-agent browser", "android": "Android", "maestro": "Maestro"}
+
+
+def summarize(checks: list[dict]) -> dict:
+    """What a person re-running the check mid-setup needs (issue #21): what is ready, what is still to set up,
+    what is broken, what is only a note, and the one next step — the first error's fix, else the first
+    setup step's. Kiwi's three rows count as one item."""
+    def names(rows):
+        out: list[str] = []
+        for r in rows:
+            label = _LABEL.get(r["id"], r["id"])
+            if label not in out:
+                out.append(label)
+        return out
+
+    fails = [c for c in checks if c["level"] == "fail"]
+    errors = [c for c in fails if c.get("kind") != "setup"]
+    setup = [c for c in fails if c.get("kind") == "setup"]
+    notes = [c for c in checks if c["level"] in ("warn", "info") and c["id"] != "engine"]
+    blocked = set(names(fails)) | set(names([c for c in checks if c["level"] == "warn"]))
+    ready = [n for n in names([c for c in checks if c["level"] == "ok"]) if n not in blocked]
+    first = (errors or setup or [None])[0]
+    return {"ready": ready, "to_set_up": names(setup), "errors": names(errors),
+            "notes": [f"{_LABEL.get(c['id'], c['id'])}: {c['msg']}" for c in notes],
+            "next": (first["fix"] or first["msg"]) if first else ""}
+
+
+def footer(verdict: dict) -> str:
+    """The last line of `preflight testing`. Starts with TESTING READY / TESTING NOT READY as before (the install
+    guides look for it), then says what is done, what is left, and the next step."""
+    s = verdict.get("summary") or summarize(verdict["checks"])
+    head = "TESTING READY" if verdict["ok"] else "TESTING NOT READY"
+    parts = [f"{len(s['ready'])} ready"] if s["ready"] else []
+    if s["errors"]:
+        parts.append(f"error: {', '.join(s['errors'])}")
+    if s["to_set_up"]:
+        parts.append(f"still to set up: {', '.join(s['to_set_up'])}")
+    if verdict["ok"] and s["notes"]:
+        parts.append(f"notes: {', '.join(n.split(':')[0] for n in s['notes'])}")
+    line = f"{head} — {' · '.join(parts)}" if parts else head
+    return f"{line}\n  next: {s['next']}" if s["next"] and not verdict["ok"] else line
+
+
+def row_line(row: dict) -> str:
+    """One printed row: a setup step not done yet is ⏳, not ❌ — it is pending, not broken."""
+    icon = "⏳" if row.get("kind") == "setup" else _ICON[row["level"]]
+    return f"{icon} {row['msg']}" + (f"  → {row['fix']}" if row["fix"] else "")
 
 
 # ---- one-time Android setup ----------------------------------------------------------------------------
@@ -700,8 +765,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(verdict, indent=2))
         else:
             for row in verdict["checks"]:
-                print(f"{_ICON[row['level']]} {row['msg']}" + (f"  → {row['fix']}" if row["fix"] else ""))
-            print("TESTING READY" if verdict["ok"] else "TESTING NOT READY")
+                print(row_line(row))
+            print(footer(verdict))
         return 0 if verdict["ok"] else 1
     overrides = {k: getattr(args, k) for k in ("prd", "rfc", "contract", "plan", "figma", "test_data", "ui_login")}
     verdict = check(args.feature, args.rfc_run_dir, overrides, network=not args.no_network, engine=args.engine)
@@ -709,7 +774,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(verdict, indent=2))
     else:
         for row in verdict["checks"]:
-            print(f"{_ICON[row['level']]} {row['msg']}" + (f"  → {row['fix']}" if row["fix"] else ""))
+            print(row_line(row))
         print("PREFLIGHT OK" if verdict["ok"] else "PREFLIGHT FAILED")
     return 0 if verdict["ok"] else 1
 

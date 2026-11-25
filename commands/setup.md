@@ -264,7 +264,11 @@ drives a browser through Playwright MCP.
 **Check** (no feature or RFC run needed; prints no secret):
 `uv run --project "$TP" python -m workflows.testing.preflight testing --json` (through `TP`, the folder
 `/test-agent:*` really run from, so a missing package shows up now and not on the first test). Each row has `id`,
-`level`, `msg`, `fix`. Go through the rows that aren't `ok`:
+`level`, `msg`, `fix`; a failing row also has `kind`: `setup` (not done yet) or `error` (broken). After each re-check, tell the user in one line what the `summary` says: what is done (`ready`), what is still
+to set up (`to_set_up`, shown ⏳: the normal state mid-setup, not a failure), any `errors` (shown ❌: set up but
+broken now), and the `next` step. Never repeat "not ready" on its own. `notes` (Android not set up, a browser
+warning) are not problems.
+Go through the rows that aren't `ok`:
 
 - **`kiwi` with "testing.storage is …"** — Kiwi isn't set up here. Ask (AskUserQuestion; team values, not
   secrets) for the Kiwi web URL, the product prefix (e.g. `Sandbox / `) and the Kiwi username the agent records

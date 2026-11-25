@@ -480,3 +480,84 @@ def test_the_testing_machine_check_on_axon_skips_the_claude_cli(monkeypatch):
     assert v["checks"][0]["id"] == "engine"
     android = v["checks"][-1]
     assert android["level"] == "info" and "maestro not found" in android["msg"]
+
+
+# ---- pending setup vs failure (issue #21) -----------------------------------------------------------
+
+
+def _row(id_, level, kind=""):
+    return preflight._check(id_, level, f"{id_} msg", f"fix {id_}", kind=kind)
+
+
+def test_a_fail_row_says_whether_it_is_pending_setup_or_broken():
+    assert preflight._check("kiwi", "fail", "m", kind="setup")["kind"] == "setup"
+    assert preflight._check("kiwi", "fail", "m")["kind"] == "error"  # untagged = an error, never hidden
+    assert "kind" not in preflight._check("kiwi", "warn", "m")
+
+
+def test_kiwi_not_set_up_is_pending_but_unreachable_is_an_error(monkeypatch, tmp_path):
+    rows = preflight.check_kiwi({"testing.storage": "json"})
+    assert rows[0]["level"] == "fail" and rows[0]["kind"] == "setup"
+    monkeypatch.setenv("HOME", str(tmp_path))  # no ~/.tcms.conf
+    rows = preflight.check_kiwi({"testing.storage": "kiwi"})
+    assert rows[0]["id"] == "kiwi_conf" and rows[0]["kind"] == "setup"
+    pytest.importorskip("tcms_api")
+    conf = tmp_path / ".tcms.conf"
+    conf.write_text("[tcms]\n")
+    conf.chmod(0o600)
+    monkeypatch.setattr(preflight, "store_for", lambda flags, run_dir: SimpleNamespace(
+        health=lambda: {"ok": False, "error": "timed out"}))
+    rows = preflight.check_kiwi({"testing.storage": "kiwi", "testing.kiwi_web": "https://kiwi.test"})
+    assert rows[-1]["id"] == "kiwi" and rows[-1]["kind"] == "error" and "unreachable" in rows[-1]["msg"]
+
+
+def test_missing_langfuse_keys_are_pending_setup(monkeypatch):
+    from rfc_agent import observe
+
+    monkeypatch.setattr(observe, "preflight", lambda: observe.EXIT_NO_KEYS)
+    assert preflight.check_langfuse()[0]["kind"] == "setup"
+    monkeypatch.setattr(observe, "preflight", lambda: 1)
+    assert preflight.check_langfuse()[0]["kind"] == "error"
+
+
+def test_the_issue_21_sequence_says_what_is_left_each_time():
+    """The reporter's three re-runs: each said only TESTING NOT READY. Now each says what is done and what is left."""
+    run1 = [_row("kiwi", "fail", "setup"), _row("langfuse", "fail", "setup"), _row("playwright", "warn"),
+            _row("android", "info")]
+    run3 = [_row("kiwi", "fail", "setup"), _row("langfuse", "ok"), _row("playwright", "ok"),
+            _row("agent_browser", "ok"), _row("android", "info")]
+    s1, s3 = preflight.summarize(run1), preflight.summarize(run3)
+    assert s1["to_set_up"] == ["Kiwi", "Langfuse keys"] and s1["errors"] == [] and s1["next"] == "fix kiwi"
+    assert s3 == {"ready": ["Langfuse keys", "Playwright (web runs)", "ui-agent browser"], "to_set_up": ["Kiwi"],
+                  "errors": [], "notes": ["Android: android msg"], "next": "fix kiwi"}
+    line = preflight.footer({"ok": False, "checks": run3})
+    assert line.startswith("TESTING NOT READY — 3 ready · still to set up: Kiwi") and "next: fix kiwi" in line
+    assert "Android" not in line  # optional: a note, never a blocker
+
+
+def test_an_error_comes_first_and_is_the_next_step():
+    rows = [_row("langfuse", "fail", "setup"), _row("kiwi", "fail", "error"), _row("playwright", "ok")]
+    s = preflight.summarize(rows)
+    assert s["errors"] == ["Kiwi"] and s["to_set_up"] == ["Langfuse keys"] and s["next"] == "fix kiwi"
+    assert "error: Kiwi · still to set up: Langfuse keys" in preflight.footer({"ok": False, "checks": rows})
+
+
+def test_kiwis_three_rows_are_one_item_and_a_warning_is_not_ready():
+    rows = [_row("kiwi_conf", "ok"), _row("kiwi", "warn"), _row("langfuse", "ok")]
+    s = preflight.summarize(rows)
+    assert s["ready"] == ["Langfuse keys"]  # Kiwi present but not probed: not counted ready
+    assert preflight.footer({"ok": True, "checks": rows}) == "TESTING READY — 1 ready · notes: Kiwi"
+
+
+def test_the_printed_check_marks_pending_rows_and_keeps_exit_codes(monkeypatch, capsys):
+    _machine(monkeypatch, kiwi="fail")
+    monkeypatch.setattr(preflight, "check_kiwi", lambda flags, network=True: [_row("kiwi", "fail", "setup")])
+    assert preflight.main(["testing"]) == 1  # strict exit codes stay: setup still pending is not ready
+    out = capsys.readouterr().out
+    assert "⏳ kiwi msg" in out and "❌" not in out
+    assert "TESTING NOT READY — " in out and "still to set up: Kiwi" in out
+    _machine(monkeypatch)
+    assert preflight.main(["testing"]) == 0
+    assert capsys.readouterr().out.splitlines()[-1].startswith("TESTING READY")
+    v = json.loads((preflight.main(["testing", "--json"]), capsys.readouterr().out)[1])
+    assert v["ok"] and set(v["summary"]) == {"ready", "to_set_up", "errors", "notes", "next"}
