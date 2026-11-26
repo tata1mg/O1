@@ -1,7 +1,7 @@
 {
   "name": "test-agent",
   "description": "Runs the harness `testing` workflow from chat: preflight, QA suite generation from an RFC run, upload to Kiwi for review, a prerequisites checklist, then backend, web UI (Playwright) and app UI (Maestro flows, or an agent on an emulator) execution once you have confirmed the cases in Kiwi. Commands: /test-agent:test (the whole flow), /test-agent:execute (run the CONFIRMED cases of an existing run), /test-agent:evaluate (score a suite on demand), /test-agent:convert-flows (turn Android agent passes into validated Maestro flows). Needs the rfc-agent plugin from the same marketplace (it runs that plugin's harness).",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "author": {
     "name": "Tata 1mg - O1"
   }
