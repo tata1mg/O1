@@ -117,6 +117,25 @@ def runner_problem() -> str:
     return ""
 
 
+def browser_problem() -> str:
+    """Why the runner's own Chromium build is not installed, or "" when it is (or cannot be told).
+
+    runner_problem() checks only the packages: `playwright test` runs headless, which needs the headless shell
+    of the build @playwright/test resolves. Checked before a run (and by the preflight's `playwright` row) so a
+    missing download is named up front instead of failing every test (PR #31 review)."""
+    from .ui_agent import _chromium_revision, browser_cache
+
+    revision = _chromium_revision(RUNNER_DIR / "node_modules" / "@playwright" / "test")
+    if not revision:
+        return ""  # a package layout we do not recognise: let Playwright speak for itself
+    cache = browser_cache()
+    missing = [n for n in ("chromium", "chromium_headless_shell") if not (cache / f"{n}-{revision}").is_dir()]
+    if not missing:
+        return ""
+    return (f"Chromium build {revision} for the test runner is not installed ({', '.join(missing)}): run "
+            f"`npm --prefix {RUNNER_DIR} exec playwright install chromium` (about 290 MB)")
+
+
 def prepare(ui: Path) -> None:
     """Write the config and link the runner's node_modules into a run's qa/ui."""
     (ui / TESTS_DIR).mkdir(parents=True, exist_ok=True)

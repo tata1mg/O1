@@ -167,6 +167,7 @@ class SpecEngine:
 
 def test_derive_ui_gives_the_model_the_confirmed_web_cases_and_the_snapshot(ui_ctx, monkeypatch):
     monkeypatch.setattr(ui_web, "runner_problem", lambda: "")
+    monkeypatch.setattr(ui_web, "browser_problem", lambda: "")
     monkeypatch.setattr(ui_web, "prepare", lambda ui: (ui / ui_web.TESTS_DIR).mkdir(parents=True, exist_ok=True))
     engine = SpecEngine()
     ui_ctx.engine = engine
@@ -182,6 +183,7 @@ def test_derive_ui_gives_the_model_the_confirmed_web_cases_and_the_snapshot(ui_c
 
 def test_derive_ui_grants_the_snapshot_through_add_dir_and_needs_one(ui_ctx, monkeypatch, tmp_path):
     monkeypatch.setattr(ui_web, "runner_problem", lambda: "")
+    monkeypatch.setattr(ui_web, "browser_problem", lambda: "")
     monkeypatch.setattr(ui_web, "prepare", lambda ui: (ui / ui_web.TESTS_DIR).mkdir(parents=True, exist_ok=True))
     ui_ctx.engine = SpecEngine()
     derive_ui.STAGE.engine(derive_ui.STAGE, ui_ctx)
@@ -196,6 +198,7 @@ def test_derive_ui_grants_the_snapshot_through_add_dir_and_needs_one(ui_ctx, mon
 
 def test_derive_ui_with_nothing_confirmed_calls_no_model(ui_ctx, approve, monkeypatch):
     monkeypatch.setattr(ui_web, "runner_problem", lambda: "")
+    monkeypatch.setattr(ui_web, "browser_problem", lambda: "")
     monkeypatch.setattr(ui_web, "prepare", lambda ui: ui.mkdir(parents=True, exist_ok=True))
     approve(ui_ctx.run_dir / "store", status="PROPOSED")
     ui_ctx.engine = None                                          # would raise if it were used
@@ -231,6 +234,8 @@ def test_execute_web_records_each_case_and_attaches_the_evidence(ui_ctx, monkeyp
         return report, ""
 
     monkeypatch.setattr(ui_web, "runner_problem", lambda: "")
+
+    monkeypatch.setattr(ui_web, "browser_problem", lambda: "")
     monkeypatch.setattr(ui_web, "run", fake_run)
     execute_web.STAGE.engine(execute_web.STAGE, ui_ctx)
     res = json.loads(ui_ctx.path(execute_web.RESULTS_OUT).read_text())
@@ -267,6 +272,7 @@ def test_the_evidence_comment_names_the_failed_requests(tmp_path):
 def test_execute_web_names_a_missing_input(ui_ctx, monkeypatch, change, match):
     write_json(ui_ctx.path(ui_web.UI_DIR) / ui_web.PLAN, {"tests": [{"extid": WEB}], "skipped": []})
     monkeypatch.setattr(ui_web, "runner_problem", lambda: "")
+    monkeypatch.setattr(ui_web, "browser_problem", lambda: "")
     ui_ctx.inputs.update(change)
     with pytest.raises(EngineFailure, match=match):
         execute_web.STAGE.engine(execute_web.STAGE, ui_ctx)
@@ -500,6 +506,8 @@ def test_execute_web_reads_the_login_file_and_hands_it_to_playwright_only(ui_ctx
         return pw_report((WEB, "failed", "Error: typed 4321 into the box", [], [])), ""
 
     monkeypatch.setattr(ui_web, "runner_problem", lambda: "")
+
+    monkeypatch.setattr(ui_web, "browser_problem", lambda: "")
     monkeypatch.setattr(ui_web, "run", fake_run)
     execute_web.STAGE.engine(execute_web.STAGE, ui_ctx)
     assert seen["login"] == {"phone": "9000000001", "otp": "4321"}
@@ -516,6 +524,7 @@ def test_a_bad_login_file_is_named(ui_ctx, monkeypatch, tmp_path, content, match
     creds.write_text(content)
     ui_ctx.inputs["ui_login"] = str(creds)
     monkeypatch.setattr(ui_web, "runner_problem", lambda: "")
+    monkeypatch.setattr(ui_web, "browser_problem", lambda: "")
     with pytest.raises(EngineFailure, match=match):
         execute_web.STAGE.engine(execute_web.STAGE, ui_ctx)
 
@@ -551,6 +560,7 @@ def test_execute_web_takes_the_base_url_from_the_environment(ui_ctx, monkeypatch
     ui_ctx.flags._v.update({"testing.base_url_template": "https://{env}.1mg.com", "testing.ui_headed": True})
     seen = {}
     monkeypatch.setattr(ui_web, "runner_problem", lambda: "")
+    monkeypatch.setattr(ui_web, "browser_problem", lambda: "")
     report = pw_report((WEB, "passed", "", [], []))
     monkeypatch.setattr(ui_web, "run", lambda ui_, **kw: (seen.update(kw), (report, ""))[1])
     execute_web.STAGE.engine(execute_web.STAGE, ui_ctx)
@@ -559,6 +569,7 @@ def test_execute_web_takes_the_base_url_from_the_environment(ui_ctx, monkeypatch
 
 def test_testing_cases_narrows_derive_ui_to_the_named_case(ui_ctx, monkeypatch):
     monkeypatch.setattr(ui_web, "runner_problem", lambda: "")
+    monkeypatch.setattr(ui_web, "browser_problem", lambda: "")
     monkeypatch.setattr(ui_web, "prepare", lambda ui: (ui / ui_web.TESTS_DIR).mkdir(parents=True, exist_ok=True))
     ui_ctx.flags._v["testing.cases"] = WEB
     ui_ctx.engine = SpecEngine()
@@ -618,6 +629,7 @@ def test_only_existing_needs_a_written_plan(tmp_path):
 
 def test_derive_ui_only_new_keeps_existing_tests_and_asks_for_the_rest(ui_ctx, monkeypatch):
     monkeypatch.setattr(ui_web, "runner_problem", lambda: "")
+    monkeypatch.setattr(ui_web, "browser_problem", lambda: "")
     monkeypatch.setattr(ui_web, "prepare", lambda ui: (ui / ui_web.TESTS_DIR).mkdir(parents=True, exist_ok=True))
     ui = ui_ctx.path(ui_web.UI_DIR)
     write_specs(ui, {"tests": [{"extid": WEB}]})
@@ -634,6 +646,7 @@ def test_derive_ui_only_new_keeps_existing_tests_and_asks_for_the_rest(ui_ctx, m
 
 def test_derive_ui_only_new_with_nothing_new_calls_no_model(ui_ctx, monkeypatch):
     monkeypatch.setattr(ui_web, "runner_problem", lambda: "")
+    monkeypatch.setattr(ui_web, "browser_problem", lambda: "")
     monkeypatch.setattr(ui_web, "prepare", lambda ui: (ui / ui_web.TESTS_DIR).mkdir(parents=True, exist_ok=True))
     write_json(ui_ctx.path(ui_web.UI_DIR) / ui_web.PLAN,
                {"tests": [{"extid": WEB}], "skipped": [{"extid": WEB2, "reason": "r"}]})
@@ -671,3 +684,18 @@ def test_execute_passes_the_engine_only_when_asked(tmp_path):
     write_json(run / "qa/ui/results.json", {"environment": "jupiter", "build": "b7"})
     assert "--engine" not in execute.command("web", run)
     assert " ".join(execute.command("web", run, engine="axon")).endswith("--engine axon")
+
+
+def test_the_runner_check_names_a_missing_browser_build(tmp_path, monkeypatch):
+    """PR #31 review: the `playwright` row checked the packages only, never the runner's Chromium download."""
+    from workflows.testing import ui_agent
+
+    monkeypatch.setattr(ui_agent, "_chromium_revision", lambda package: "1255")
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
+    problem = ui_web.browser_problem()
+    assert "Chromium build 1255" in problem and "chromium_headless_shell" in problem and "install chromium" in problem
+    (tmp_path / "chromium-1255").mkdir()
+    (tmp_path / "chromium_headless_shell-1255").mkdir()
+    assert ui_web.browser_problem() == ""
+    monkeypatch.setattr(ui_agent, "_chromium_revision", lambda package: "")
+    assert ui_web.browser_problem() == ""  # an unknown layout is left to Playwright

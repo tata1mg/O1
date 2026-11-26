@@ -230,7 +230,7 @@ def check_executors() -> list[dict]:
     from . import ui_web
 
     out = []
-    problem = ui_web.runner_problem()
+    problem = ui_web.runner_problem() or ui_web.browser_problem()
     out.append(_check("playwright", "warn", f"web UI cases cannot run: {problem}",
                       f"cd {ui_web.RUNNER_DIR} && npm ci && npx playwright install chromium") if problem else
                _check("playwright", "ok", f"Playwright ready ({ui_web.RUNNER_DIR})"))

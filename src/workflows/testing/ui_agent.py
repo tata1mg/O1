@@ -376,6 +376,15 @@ def _chromium_revision(package: Path) -> str:
     return ""
 
 
+def browser_cache() -> Path:
+    """Where Playwright keeps downloaded browsers: PLAYWRIGHT_BROWSERS_PATH, else the platform default."""
+    import os
+    import sys
+
+    return Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or (
+        "~/Library/Caches/ms-playwright" if sys.platform == "darwin" else "~/.cache/ms-playwright")).expanduser()
+
+
 def browser_problem(browser: str = "") -> str:
     """Why the browser server cannot be started, or "" when it can.
 
@@ -385,9 +394,7 @@ def browser_problem(browser: str = "") -> str:
     checked here because the alternative is a paid session per case that each discover the browser will not
     start.
     """
-    import os
     import shutil
-    import sys
 
     if not shutil.which("node"):
         return "node is not installed (Playwright MCP needs Node 18+)"
@@ -398,9 +405,7 @@ def browser_problem(browser: str = "") -> str:
     revision = _chromium_revision(MCP_CLI.parent)
     if not revision:
         return ""  # a package layout we do not recognise: let the server speak for itself
-    cache = os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or (
-        "~/Library/Caches/ms-playwright" if sys.platform == "darwin" else "~/.cache/ms-playwright")
-    if (Path(cache).expanduser() / f"chromium-{revision}").is_dir():
+    if (browser_cache() / f"chromium-{revision}").is_dir():
         return ""
     runner = _chromium_revision(RUNNER_DIR / "node_modules" / "@playwright" / "test")
     own = MCP_CLI.parent / "node_modules" / "playwright" / "cli.js"
