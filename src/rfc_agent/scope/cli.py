@@ -203,7 +203,12 @@ def main(argv: list[str] | None = None) -> int:
     layer: dict = {}
 
     def _health() -> None:
-        layer["ok"], layer["why"] = context.health(spec)
+        if context._on_axon(cfg):  # the server and exposure the Axon agents will really get (issue #16)
+            from .. import axon_agent
+
+            layer["ok"], layer["why"] = axon_agent.context_health(cfg)
+        else:
+            layer["ok"], layer["why"] = context.health(spec)
 
     t_layer = threading.Thread(target=_health, daemon=True)
     t_layer.start()
@@ -352,7 +357,8 @@ def main(argv: list[str] | None = None) -> int:
             d = disc["discovery"]
             n_maybe = sum(1 for x in d["services"] if x.get("tier") == "maybe")
             _say(f"context layer: {len(d['services']) - n_maybe} service(s) that change + {n_maybe} maybe (unticked) "
-                 f"from {d['tool_calls']} fleetlens lookups ({d['seconds']:.0f}s, ${d['cost_usd']:.2f})")
+                 f"from {d.get('lookups', d['tool_calls'])} fleetlens lookups "
+                 f"({d['seconds']:.0f}s, ${d['cost_usd']:.2f})")
 
         # 4 — the one confirm screen
         def repo_item(name: str, why: list[str] | None = None, info: repos.RemoteInfo | None = None,
@@ -384,7 +390,7 @@ def main(argv: list[str] | None = None) -> int:
                 items.append(confirm.Item("figma", f"{xi}:{s['name']}", f"{s['name']} ({len(s['frames'])} screens)",
                                           note=f"PRD overlap {s['overlap']}", include=s["include"]))
         header = (f"── Scope · confirm ── PRD: {scope.get('prd_title') or prd_path.name}\n"
-                  f"  context layer: {'ok' if layer.get('ok') else 'UNAVAILABLE — ' + str(layer.get('why'))}")
+                  f"  context layer: {'' if layer.get('ok') else 'UNAVAILABLE — '}{layer.get('why')}")
         # no design to read (and Figma not skipped on purpose): the operator decides whether to go on
         no_design = None
         if not args.no_figma and not any(it.kind == "figma" for it in items):

@@ -174,8 +174,16 @@ export function decide({ tool, input, policy, call = callPolicy }) {
   };
 }
 
-/** Is `native` one of the explicitly granted MCP tools? Only `mcp__` names can be granted this way. */
+/**
+ * Built-in tools a stage may grant by exact name. `codemode` is the one: it runs a script whose every tool
+ * call fires its own tool_call (with a parentToolCallId) and is judged here like any other call, and `--tools`
+ * bounds what the script can reach at all. Nothing else that is not `mcp__` can be granted this way.
+ */
+export const GRANTABLE_BUILTINS = Object.freeze(new Set(["codemode"]));
+
+/** Is `native` one of the explicitly granted MCP tools (or a grantable built-in, by exact name)? */
 export function isGranted(native, granted) {
+  if (GRANTABLE_BUILTINS.has(native)) return (granted || []).includes(native);
   if (!native.startsWith("mcp__")) return false;
   return (granted || []).some((g) => (g.endsWith("*") ? native.startsWith(g.slice(0, -1)) : native === g));
 }

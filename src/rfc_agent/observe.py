@@ -258,12 +258,12 @@ def _end(handle, **update) -> None:
 
 
 class _IdCtx:
-    """The two fields identity.load reads off a RunContext."""
+    """The fields identity.load and obs._user_id read off a RunContext."""
 
-    def __init__(self, run_dir: Path, jira: str | None) -> None:
+    def __init__(self, run_dir: Path, jira: str | None, config=None) -> None:
         self.run_dir = run_dir
         self.inputs = {"jira": jira} if jira else {}
-        self.config = None
+        self.config = config
 
 
 def _arg(argv: list[str], flag: str) -> str | None:
@@ -388,7 +388,8 @@ def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
         md = {k: v for k, v in md.items() if v is not None}
         prop = propagate_attributes(
             session_id=session,
-            user_id=_user_id(_IdCtx(run_dir or Path("."), None)),
+            # with the config, or OBS.USER_ID is never seen and every trace falls back to git email / $USER
+            user_id=_user_id(_IdCtx(run_dir or Path("."), None, cfg)),
             trace_name="rfc-run",
             tags=tags or None,
             metadata={k: str(v) for k, v in md.items()},

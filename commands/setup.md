@@ -264,7 +264,11 @@ drives a browser through Playwright MCP.
 **Check** (no feature or RFC run needed; prints no secret):
 `uv run --project "$TP" python -m workflows.testing.preflight testing --json` (through `TP`, the folder
 `/test-agent:*` really run from, so a missing package shows up now and not on the first test). Each row has `id`,
-`level`, `msg`, `fix`. Go through the rows that aren't `ok`:
+`level`, `msg`, `fix`; a failing row also has `kind`: `setup` (not done yet) or `error` (broken). After each re-check, tell the user in one line what the `summary` says: what is done (`ready`), what is still
+to set up (`to_set_up`, shown ⏳: the normal state mid-setup, not a failure), any `errors` (shown ❌: set up but
+broken now), and the `next` step. Never repeat "not ready" on its own. `notes` (Android not set up, a browser
+warning) are not problems.
+Go through the rows that aren't `ok`:
 
 - **`kiwi` with "testing.storage is …"** — Kiwi isn't set up here. Ask (AskUserQuestion; team values, not
   secrets) for the Kiwi web URL, the product prefix (e.g. `Sandbox / `) and the Kiwi username the agent records
@@ -287,8 +291,7 @@ drives a browser through Playwright MCP.
 - **`kiwi` unreachable** — VPN off, or the Kiwi server is down. Say which; it stays BLOCKED until it answers.
 - **`playwright` or `agent_browser`** — needs Node 18+ (`node -v`; if missing, ask the user to install Node 22
   from nodejs.org: no Homebrew assumed). Then run `cd "$PROJ/tools/ui-runner" && npm ci && npx playwright install
-  chromium`, then whatever the `agent_browser` row's `fix` names (Playwright MCP's own Chromium build). Both
-  download browsers (~150 MB each): say so in one line first. Re-check. They stay a note, not a block, only if
+  chromium`; that one install serves both rows. It downloads Chromium (~290 MB): say so in one line first. Re-check. They stay a note, not a block, only if
   the user runs backend cases alone.
 - **`claude`** — step 2.
 

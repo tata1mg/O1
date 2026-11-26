@@ -362,18 +362,39 @@ RUNNER_DIR = Path(__file__).resolve().parents[3] / "tools" / "ui-runner"
 MCP_CLI = RUNNER_DIR / "node_modules" / "@playwright" / "mcp" / "cli.js"
 
 
+def _chromium_revision(package: Path) -> str:
+    """The Chromium build the Playwright that `package` resolves wants, or "" when it cannot be read.
+    npm puts a package's own playwright-core beside it when two versions are needed, else shares the top one."""
+    import json
+
+    for core in (package / "node_modules" / "playwright-core", RUNNER_DIR / "node_modules" / "playwright-core"):
+        try:
+            listed = json.loads((core / "browsers.json").read_text())["browsers"]
+            return next(b["revision"] for b in listed if b["name"] == "chromium")
+        except (OSError, ValueError, KeyError, StopIteration):
+            continue
+    return ""
+
+
+def browser_cache() -> Path:
+    """Where Playwright keeps downloaded browsers: PLAYWRIGHT_BROWSERS_PATH, else the platform default."""
+    import os
+    import sys
+
+    return Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or (
+        "~/Library/Caches/ms-playwright" if sys.platform == "darwin" else "~/.cache/ms-playwright")).expanduser()
+
+
 def browser_problem(browser: str = "") -> str:
     """Why the browser server cannot be started, or "" when it can.
 
-    `browser` is `testing.agent_browser`. Empty means the server's bundled Chromium, and that build is
-    its OWN: @playwright/mcp carries a newer Playwright than the runner's, so `npx playwright install` in
-    tools/ui-runner installs a different revision. Checked here because the alternative is a paid session
-    per case that each discover the browser will not start.
+    `browser` is `testing.agent_browser`. Empty means the server's bundled Chromium. The pins in
+    tools/ui-runner/package.json keep that build the same as the test runner's, so one
+    `playwright install chromium` serves both; if they ever drift apart a second build is needed, and it is
+    checked here because the alternative is a paid session per case that each discover the browser will not
+    start.
     """
-    import json
-    import os
     import shutil
-    import sys
 
     if not shutil.which("node"):
         return "node is not installed (Playwright MCP needs Node 18+)"
@@ -381,19 +402,21 @@ def browser_problem(browser: str = "") -> str:
         return f"Playwright MCP is not installed: run `npm ci` in {RUNNER_DIR}"
     if browser:
         return ""
-    nested = MCP_CLI.parent / "node_modules"
-    try:
-        listed = json.loads((nested / "playwright-core" / "browsers.json").read_text())["browsers"]
-        revision = next(b["revision"] for b in listed if b["name"] == "chromium")
-    except (OSError, ValueError, KeyError, StopIteration):
+    revision = _chromium_revision(MCP_CLI.parent)
+    if not revision:
         return ""  # a package layout we do not recognise: let the server speak for itself
-    cache = os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or (
-        "~/Library/Caches/ms-playwright" if sys.platform == "darwin" else "~/.cache/ms-playwright")
-    if (Path(cache).expanduser() / f"chromium-{revision}").is_dir():
+    if (browser_cache() / f"chromium-{revision}").is_dir():
         return ""
+    runner = _chromium_revision(RUNNER_DIR / "node_modules" / "@playwright" / "test")
+    own = MCP_CLI.parent / "node_modules" / "playwright" / "cli.js"
+    command = f"node {own}" if own.is_file() else f"npm --prefix {RUNNER_DIR} exec playwright"
+    command += " install chromium"
+    if runner and runner != revision:
+        return (f"Playwright MCP needs Chromium build {revision}, but the test runner uses build {runner}: "
+                f"two builds are needed, and this one is a second download of about 290 MB. Run `{command}`, "
+                f"or use an installed browser with --set testing.agent_browser=chrome.")
     return (f"Playwright MCP needs Chromium build {revision}, which is not installed. Either run "
-            f"`node {nested / 'playwright' / 'cli.js'} install chromium`, or use an installed browser with "
-            f"--set testing.agent_browser=chrome.")
+            f"`{command}` (about 290 MB), or use an installed browser with --set testing.agent_browser=chrome.")
 
 
 _RE_SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,120}")

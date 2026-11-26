@@ -604,6 +604,26 @@ def test_a_missing_browser_build_is_named_before_any_session(agent_ctx, monkeypa
     assert by_id(run(agent_ctx, engine))[WEB]["status"] == "PASS"
 
 
+def test_the_runner_and_playwright_mcp_want_the_same_browser_builds():
+    """One `playwright install chromium` must serve both, or every machine downloads a second build."""
+    modules = ui_agent.RUNNER_DIR / "node_modules"
+    if not modules.is_dir():
+        pytest.skip("tools/ui-runner is not installed")
+
+    def builds(package: str) -> dict:
+        # npm nests a package's own playwright-core only when two versions are needed; else the top one is shared.
+        for core in (modules / package / "node_modules" / "playwright-core", modules / "playwright-core"):
+            if (core / "browsers.json").is_file():
+                listed = json.loads((core / "browsers.json").read_text())["browsers"]
+                return {b["name"]: b["revision"] for b in listed
+                        if b["name"] in ("chromium", "chromium-headless-shell")}
+        pytest.skip(f"no playwright-core found for {package}")
+
+    runner, mcp = builds("@playwright/test"), builds("@playwright/mcp")
+    assert runner.keys() == mcp.keys() == {"chromium", "chromium-headless-shell"}
+    assert runner == mcp, "bump @playwright/test and @playwright/mcp together, to versions on one Chromium build"
+
+
 def test_a_login_file_is_ignored_and_the_cases_run_logged_out(agent_ctx, monkeypatch):
     agent_ctx.inputs["ui_login"] = "/some/login.json"
     given(monkeypatch, case(WEB))

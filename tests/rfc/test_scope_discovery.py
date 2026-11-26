@@ -22,13 +22,16 @@ if "stream-json" in sys.argv:  # the discovery agent
     use = {"type": "assistant", "message": {"content": [
         {"type": "tool_use", "id": "t1", "name": "mcp__fleetlens__get_service_graph", "input": {}}]}}
     res = {"type": "user", "message": {"content": [
-        {"type": "tool_result", "tool_use_id": "t1", "content": "graph", "is_error": False}]}}
+        {"type": "tool_result", "tool_use_id": "t1", "content": "graph", "is_error": mode == "failedlookups"}]}}
+    if mode == "nolookups":  # the #16 run: no tool reachable, services guessed from the PRD
+        use = res = {"type": "assistant", "message": {"content": [{"type": "text", "text": "No tools here."}]}}
     services = {"services": [{"service": "ns_gateway", "tier": "maybe", "why": "may need a template"},
                              {"service": "service:API-Gateway", "tier": "changes", "why": "routes the new endpoint"},
                              {"service": "svc_a", "tier": "CHANGES", "why": "  owns the order\n patient name "},
                              {"service": "svc_a_admin_service", "why": "same repo"}]}
     draft = json.dumps({"services": [{"service": "draft"}]})
-    text = {"ok": f"Looked around. {draft} then {json.dumps(services)}", "nojson": "I could not decide."}.get(mode, "")
+    answer = f"Looked around. {draft} then {json.dumps(services)}"
+    text = {"nojson": "I could not decide.", "limit": ""}.get(mode, answer)
     final = {"type": "result", "result": text, "total_cost_usd": 0.42, "is_error": mode == "limit",
              "usage": {"input_tokens": 9}}
     if mode == "limit":
@@ -228,3 +231,154 @@ def test_plus_name_rejects_path_like_names():
     assert err and "../x" in err and [it.key for it in items] == ["svc_a"], "nothing is added when one name is bad"
     assert confirm.apply(items, "+fine", lambda n: confirm.Item("repo", n, n)) is None
     assert [it.key for it in items] == ["svc_a", "fine"]
+
+
+@pytest.mark.parametrize("mode, calls", [("nolookups", 0), ("failedlookups", 1)])
+def test_services_named_without_a_successful_lookup_are_not_discovery(tmp_path, monkeypatch, mode, calls):
+    """Issue #16: the agent could reach no fleetlens tool and named eight repos from the PRD's words alone,
+    none of which existed. Such an answer is a failed discovery, never a list of candidates."""
+    cfg = _fake(tmp_path, monkeypatch, mode)
+    d = c.discover(PRD, cfg, {"url": "u"}, log_dir=tmp_path)
+    assert not d["ok"] and d["services"] == [] and d["lookups"] == 0 and d["tool_calls"] == calls
+    assert "0 successful fleetlens lookups" in d["error"]
+    meta: dict = {}
+    got = c.gather(cfg, {"url": "u"}, True, PRD, tmp_path, [], meta=meta, log_dir=tmp_path)
+    assert got == [] and "0 successful" in meta["discovery_error"]
+
+
+def test_a_successful_lookup_is_counted(tmp_path, monkeypatch):
+    d = c.discover(PRD, _fake(tmp_path, monkeypatch), {"url": "u"}, log_dir=tmp_path)
+    assert d["ok"] and d["lookups"] == 1
+
+
+# ---- health: usable, not just reachable ------------------------------------------------------------
+
+
+class FakeMcp:
+    """steering._mcp_call stand-in: answers by method, per scenario."""
+
+    def __init__(self, init=True, tools=None, probe=None):
+        self.init, self.tools, self.probe = init, tools, probe
+        self.methods: list[str] = []
+        self.timeouts: list = []
+
+    def __call__(self, url, headers, method, params, session=None, timeout=None):
+        self.methods.append(method)
+        self.timeouts.append(timeout)
+        if method == "initialize":
+            return ({"serverInfo": {}} if self.init else None), "sid"
+        if method == "tools/list":
+            return ({"tools": [{"name": n} for n in self.tools]} if self.tools is not None else None), "sid"
+        if method == "tools/call":
+            return self.probe, "sid"
+        return {}, "sid"
+
+
+ALL = list(c.READONLY_TOOLS["fleetlens"])
+SPEC = {"url": "http://fl.example:9995/mcp", "headers": {"Authorization": "Bearer t"}}
+
+
+@pytest.mark.parametrize("fake, ok, words", [
+    (FakeMcp(tools=ALL, probe={"content": [{"type": "text", "text": "{}"}]}), True,
+     "15/15 tools · get_index_info answered"),
+    (FakeMcp(tools=ALL[1:], probe={"content": []}), True, "missing: get_service_graph"),
+    (FakeMcp(tools=None), False, "lists no tools"),
+    (FakeMcp(tools=["something_else"]), False, "none of the 15 read tools"),
+    (FakeMcp(tools=[t for t in ALL if t != "get_index_info"]), False, "no get_index_info tool"),
+    (FakeMcp(tools=ALL, probe=None), False, "get_index_info call failed"),
+    (FakeMcp(tools=ALL, probe={"isError": True, "content": [{"type": "text", "text": "unauthorized"}]}), False,
+     "call failed: unauthorized"),
+])
+def test_health_proves_the_tools_work(monkeypatch, fake, ok, words):
+    from rfc_agent import steering
+
+    monkeypatch.setattr(steering, "_mcp_call", fake)
+    got_ok, why = c.health(SPEC, attempts=1)
+    assert got_ok is ok and words in why, why
+
+
+@pytest.mark.parametrize("probe, words", [
+    ((401, ""), "refused the token (HTTP 401)"), ((404, ""), "HTTP 404"),
+    ((None, "no answer"), "did not answer within 30s (VPN off?)"),
+    ((None, "TLS failed: certificate verify failed"), "fl.example:9995: TLS failed: certificate verify failed"),
+    ((None, "bad URL: unknown url type"), "bad URL"),
+])
+def test_health_says_why_the_server_did_not_greet(monkeypatch, probe, words):
+    from rfc_agent import steering
+
+    monkeypatch.setattr(steering, "_mcp_call", FakeMcp(init=False))
+    monkeypatch.setattr(c, "_http_status", lambda url, headers, timeout=5: probe)
+    ok, why = c.health(SPEC, attempts=1)
+    assert not ok and words in why
+    if probe[1].startswith(("TLS", "bad URL")):
+        assert "VPN" not in why  # not misreported as an outage
+
+
+def test_health_has_one_overall_deadline(monkeypatch):
+    """A host that swallows packets: each step gets only what is left of one deadline, not a full timeout each."""
+    from rfc_agent import steering
+
+    fake = FakeMcp(init=False)
+    clock = {"t": 0.0}
+
+    def slow(*a, **kw):  # every initialize burns its whole timeout
+        clock["t"] += kw.get("timeout") or 12
+        return fake(*a, **kw)
+
+    monkeypatch.setattr(steering, "_mcp_call", slow)
+    monkeypatch.setattr(c.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(c.time, "sleep", lambda s: clock.__setitem__("t", clock["t"] + s))
+    seen = []
+    def status(url, headers, timeout=5):
+        seen.append(timeout)
+        return None, "no answer"
+
+    monkeypatch.setattr(c, "_http_status", status)
+    ok, why = c.health(SPEC, attempts=3, deadline_s=30)
+    assert not ok and clock["t"] <= 31 and seen and seen[0] <= 5
+    assert all(t <= 12 for t in fake.timeouts)
+
+
+@pytest.mark.parametrize("raised, want", [
+    ("http401", (401, "")), ("tls", (None, "TLS failed")), ("refused", (None, "no answer")),
+    ("timeout", (None, "no answer")), ("badurl", (None, "bad URL")),
+])
+def test_http_status_names_the_failure(monkeypatch, raised, want):
+    import ssl
+    import urllib.error
+    import urllib.request
+
+    def boom(req, timeout):
+        if raised == "http401":
+            raise urllib.error.HTTPError(req.full_url, 401, "no", {}, None)
+        if raised == "tls":
+            raise urllib.error.URLError(ssl.SSLError("certificate verify failed"))
+        if raised == "refused":
+            raise urllib.error.URLError(ConnectionRefusedError("refused"))
+        if raised == "timeout":
+            raise TimeoutError("timed out")
+        raise ValueError("unknown url type")
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    status, why = c._http_status("http://fl.example/mcp", {})
+    assert status == want[0] and why.startswith(want[1])
+
+
+def test_an_axon_only_setup_still_runs_discovery(tmp_path, monkeypatch):
+    """PR #31 review: no fleetlens in O1's config, the operator's own Axon entry in effect — the health check
+    said ok, and discovery was skipped because it was gated on O1's config alone."""
+    from rfc_agent import axon_agent
+
+    monkeypatch.setattr(c, "_on_axon", lambda cfg: True)
+    monkeypatch.setattr(axon_agent, "context_access", lambda cfg: {"mode": "codemode"})
+    ran = []
+    monkeypatch.setattr(c, "discover", lambda prd, cfg, spec, log_dir=None: ran.append(spec) or {
+        "ok": False, "services": [], "error": "x", "tool_calls": 0, "lookups": 0, "seconds": 0, "cost_usd": 0})
+    c.gather(Cfg(), None, True, PRD, tmp_path, [], meta={}, log_dir=tmp_path)
+    assert ran == [None]
+    monkeypatch.setattr(axon_agent, "context_access", lambda cfg: {"mode": "off"})
+    c.gather(Cfg(), None, True, PRD, tmp_path, [], meta={}, log_dir=tmp_path)
+    assert ran == [None]  # nothing usable: no discovery
+    monkeypatch.setattr(c, "_on_axon", lambda cfg: False)
+    c.gather(Cfg(), None, True, PRD, tmp_path, [], meta={}, log_dir=tmp_path)
+    assert ran == [None]  # Claude still needs O1's config

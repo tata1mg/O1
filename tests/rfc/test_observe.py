@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from rfc_agent import observe
+from rfc_agent.obs import _user_id as REAL_USER_ID  # taken before the `traced` fixture stubs it
 
 # ---- a fake Langfuse client ---------------------------------------------------------------------------------
 
@@ -232,6 +233,31 @@ def test_standalone_stage_gets_its_own_trace(traced, tmp_path):
     assert root.updates["output"] == {"exit": 0} and root.updates["input"]["entry"] == "review"
     assert c.flushed == 2  # the spans before the run's numbers are counted, then everything at the end
     assert (tmp_path / "identity.json").exists()  # the session id outlives this invocation
+
+
+def test_the_trace_user_is_looked_up_with_the_config(traced, tmp_path, monkeypatch):
+    """OBS.USER_ID lives in the config: the root trace's user lookup must be given it (issue #25)."""
+    import langfuse
+
+    from rfc_agent import obs
+
+    monkeypatch.setattr(obs, "_user_id", REAL_USER_ID)  # the fixture stubs it; this test needs the real one
+    monkeypatch.setattr(obs, "_git_email", "git@example.com")  # what it would fall back to
+    seen = {}
+
+    def record(**kw):
+        seen.update(kw)
+        return contextlib.nullcontext()
+
+    monkeypatch.setattr(langfuse, "propagate_attributes", record)
+    traced["cfg"] = Cfg(**{"OBS.USER_ID": "ci-bot@example.com"})
+
+    @observe.entry("review")
+    def main(argv=None):
+        return 0
+
+    assert main(["--run-dir", str(tmp_path)]) == 0
+    assert seen["user_id"] == "ci-bot@example.com"
 
 
 def test_whole_run_one_trace_with_a_span_per_stage(traced, tmp_path):

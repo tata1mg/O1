@@ -265,6 +265,9 @@ The fleetlens token is a secret. **User:** open `CFG` for them and ask them to s
 `MCP.mcpServers.fleetlens.headers` to `{"Authorization": "Bearer <token from the vault>"}`. It is verified in
 Step 11 (`/rfc doctor`, VPN on). Every field is described in [CONFIG.md](CONFIG.md).
 
+If the user has also added fleetlens to Axon themselves (`axon pi mcp list` shows `fleetlens`), leave it: their
+entry is used on Axon, with `direct` or `codemode` exposure, and `/rfc doctor` checks that one and says which.
+
 ### Step 7 — Atlassian (RFCs) — CRITICAL for Confluence and Jira PRDs
 
 A local `--prd file.md` doesn't need it.
@@ -295,7 +298,9 @@ from manifest…** and pick the `manifest:` path that was printed. **Plugins →
 
 ### Step 9 — Testing: Kiwi and Playwright — CRITICAL for testing
 
-**Check** (needs no feature or RFC run, prints no secret). Each row has `id`, `level`, `msg` and `fix`:
+**Check** (needs no feature or RFC run, prints no secret). Each row has `id`, `level`, `msg` and `fix`; a failing
+row also has `kind`: `setup` (not done yet) or `error` (broken). The JSON's `summary` has `ready`, `to_set_up`,
+`errors`, `notes` and `next`:
 
 ```bash
 uv run --project ~/.axon/pi/git/github.com/tata1mg/O1 python -m workflows.testing.preflight testing --engine axon --json
@@ -328,16 +333,19 @@ Go through the rows that aren't `ok`:
 - **`kiwi_client` "tcms-api is not installed"** — the second `uv sync` of Step 2 (`--extra testing`).
 - **`kiwi` unreachable** — the VPN is off, or Kiwi is down. Say which; it stays BLOCKED until it answers.
 - **`playwright` or `agent_browser`** — needs Node 18+ (`node -v`; if missing, **User:** install Node 22 from
-  nodejs.org). Say first that this downloads browsers (about 150 MB each), then run, one at a time:
+  nodejs.org). Say first that this downloads Chromium (about 290 MB), then run, one at a time:
   ```bash
   npm --prefix ~/.axon/pi/git/github.com/tata1mg/O1/tools/ui-runner ci
   ```
   ```bash
   npm --prefix ~/.axon/pi/git/github.com/tata1mg/O1/tools/ui-runner exec playwright install chromium
   ```
-  Then whatever the `agent_browser` row's `fix` names (Playwright MCP's own Chromium build).
+  That one install serves both the `playwright` and `agent_browser` rows.
 
-Run the check again until every row is `ok`, or only notes are left.
+Run the check again until every row is `ok`, or only notes are left. After each re-check, tell the user in one line what the `summary` says: what is done (`ready`), what is still
+to set up (`to_set_up`, shown ⏳: the normal state mid-setup, not a failure), any `errors` (shown ❌: set up but
+broken now), and the `next` step. Never repeat "not ready" on its own. `notes` (Android not set up, a browser
+warning) are not problems.
 
 **Web logins — don't create them here.** Runs against a logged-in page take a recorded session (`--ui-auth <file>`)
 or a test-account file, made per environment the first time `/test` needs one; `/test` walks through it. Only say
@@ -376,7 +384,8 @@ the user.
 - RFCs: `uv run --project ~/.axon/pi/git/github.com/tata1mg/O1 python -m rfc_agent.axon_agent doctor` ends
   `axon: READY`. It checks the Axon sign-in, the managed Pi version, the gateway models, fleetlens (VPN on) and the
   Atlassian sign-in; each problem is one `FAIL` line with its fix. (`/rfc doctor` in the session runs the same.)
-- Testing: the Step 9 check, without `--json`, ends `TESTING READY`.
+- Testing: the Step 9 check, without `--json`, ends with a line starting `TESTING READY`. Anything left in
+  `to_set_up` or `errors` at the end is what BLOCKED names.
 
 End with **READY**, or **BLOCKED** plus the one thing to fix. Then tell the user, in this order:
 

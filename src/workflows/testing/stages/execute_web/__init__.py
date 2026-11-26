@@ -61,7 +61,7 @@ def _run(stage: Stage, ctx: RunContext) -> str:
     if auth and not Path(auth).expanduser().is_file():
         raise EngineFailure(f"--ui-auth {auth} does not exist. Record it with `npx playwright codegen "
                             f"--save-storage=<file> <base url>` and log in.")
-    problem = ui_web.runner_problem()
+    problem = ui_web.runner_problem() or ui_web.browser_problem()
     if problem:
         raise EngineFailure(f"execute_web: {problem}")
 
