@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -318,15 +319,44 @@ def _user_mcp_entry(server: str) -> dict | None:
     return entry if isinstance(entry, dict) else None
 
 
-def _literal_headers(headers) -> dict | None:
-    """Headers Python can send as they stand: plain strings with no `$VAR` / `!command` for Pi to resolve."""
+_RE_ENV = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _resolve_headers(headers) -> tuple[dict | None, str]:
+    """(headers as Pi will send them, "") — or (None, why) when Python cannot know them.
+
+    Pi resolves `${NAME}` from the environment, and a value that is wholly `!command` by running it (mcp.md,
+    "MCP servers"). The first is resolved here the same way; a command is not run: O1 does not execute what
+    an operator's config names, so that server is reported as not verified rather than guessed at."""
     if headers is None:
-        return {}
+        return {}, ""
     if not isinstance(headers, dict) or not all(isinstance(v, str) for v in headers.values()):
-        return None
-    if any(v.startswith("!") or "$" in v for v in headers.values()):
-        return None
-    return dict(headers)
+        return None, "its headers are not plain strings"
+    out = {}
+    for key, value in headers.items():
+        if value.startswith("!"):
+            return None, f"its {key} header runs a command (`!…`), which O1 does not run"
+        missing = [n for n in _RE_ENV.findall(value) if n not in os.environ]
+        if missing:
+            return None, f"its {key} header needs ${{{missing[0]}}}, which is not set here"
+        out[key] = _RE_ENV.sub(lambda m: os.environ[m.group(1)], value)
+    return out, ""
+
+
+def _tool_exposures(entry: dict, tools) -> dict[str, str]:
+    """Each tool's exposure under an mcp.json entry, as Pi decides it: an exact `toolExposure` key, else the
+    first matching pattern (`*` = any characters), else the server's `exposure` (default `codemode`)."""
+    server = str(entry.get("exposure") or "codemode")
+    rules = entry.get("toolExposure") if isinstance(entry.get("toolExposure"), dict) else {}
+    patterns = [(re.compile("^" + ".*".join(map(re.escape, str(k).split("*"))) + "$"), str(v))
+                for k, v in rules.items() if "*" in str(k)]
+    out = {}
+    for t in tools:
+        if t in rules:
+            out[t] = str(rules[t])
+        else:
+            out[t] = next((v for rx, v in patterns if rx.match(t)), server)
+    return out
 
 
 def context_access(cfg) -> dict:
@@ -337,52 +367,60 @@ def context_access(cfg) -> dict:
     servers from extensions"). So an operator who added fleetlens to Axon for their own use gets THEIR entry,
     with its exposure — `codemode` when unset — and its URL and token (issue #16).
 
-    → {mode: "direct" | "codemode" | "off", source: "o1" | "axon", exposure, spec, note}. `spec` is the server
-    the agent will actually talk to, for the health check ({url, headers}); None when Python cannot send its
-    headers as they stand (or it is not an HTTP server), in which case O1's own config is checked instead.
+    → {mode: "direct" | "codemode" | "off", source: "o1" | "axon", tools, spec, unverified, note}. `tools` are
+    the read tools the agent can reach (those the entry does not hide) — the only ones to grant. `spec` is the
+    server the agent will talk to, for the health check; None with `unverified` saying why when Python cannot
+    know its headers (or it is not an HTTP server).
     """
+    from .investigate.agent import CONTEXT_TOOLS
     from .scope.context import SERVER, spec_of
 
     o1 = spec_of(cfg)
     entry = _user_mcp_entry(SERVER)
     where = str(axon_agent_dir() / "mcp.json")
     if entry is None:
-        return {"mode": "direct" if o1 else "off", "source": "o1", "exposure": "direct", "spec": o1,
+        return {"mode": "direct" if o1 else "off", "source": "o1", "tools": list(CONTEXT_TOOLS) if o1 else [],
+                "spec": o1, "unverified": "",
                 "note": "" if o1 else f"not configured (config.json MCP.mcpServers.{SERVER})"}
-    exposure = str(entry.get("exposure") or "codemode")
-    per_tool = {str(v) for v in (entry.get("toolExposure") or {}).values()} if isinstance(
-        entry.get("toolExposure"), dict) else set()
-    headers = _literal_headers(entry.get("headers"))
+    headers, why = _resolve_headers(entry.get("headers"))
+    if not entry.get("url"):
+        why = why or "it is not an HTTP server"
     spec = {"url": entry["url"], "headers": headers} if entry.get("url") and headers is not None else None
-    base = {"source": "axon", "exposure": exposure, "spec": spec}
+    base = {"source": "axon", "spec": spec, "unverified": "" if spec else why, "tools": []}
     if entry.get("enabled") is False:
         return {**base, "mode": "off", "note": f"your Axon entry for {SERVER} ({where}) is disabled, and it "
                                                f"replaces O1's — enable it, or remove it so O1's is used"}
-    if exposure == "hidden" and not (per_tool - {"hidden"}):
+    exposures = _tool_exposures(entry, CONTEXT_TOOLS)
+    shown = {t: e for t, e in exposures.items() if e != "hidden"}
+    if not shown:
         return {**base, "mode": "off", "note": f"your Axon entry for {SERVER} ({where}) hides every tool, and "
                                                f"it replaces O1's — change its exposure, or remove it"}
-    if exposure in _CODEMODE_EXPOSURES or per_tool & _CODEMODE_EXPOSURES:
-        return {**base, "mode": "codemode", "note": f"through codemode (your {where} entry)"}
-    if exposure == "direct":
-        return {**base, "mode": "direct", "note": f"direct (your {where} entry)"}
-    if exposure == "hidden" and "direct" in per_tool:
-        return {**base, "mode": "direct", "note": f"direct, only the tools your {where} entry shows"}
-    return {**base, "mode": "off", "note": f"your Axon entry for {SERVER} has exposure {exposure!r}, which O1 "
-                                           f"does not support — use direct or codemode"}
+    odd = sorted({e for e in shown.values() if e != "direct" and e not in _CODEMODE_EXPOSURES})
+    if odd:
+        return {**base, "mode": "off", "note": f"your Axon entry for {SERVER} has exposure {odd[0]!r}, which O1 "
+                                               f"does not support — use direct or codemode"}
+    mode = "codemode" if any(e in _CODEMODE_EXPOSURES for e in shown.values()) else "direct"
+    some = "" if len(shown) == len(exposures) else f", {len(shown)} of {len(exposures)} tools"
+    how = "through codemode" if mode == "codemode" else "direct"
+    return {**base, "mode": mode, "tools": list(shown), "note": f"{how} (your {where} entry{some})"}
 
 
-def context_health(cfg, health=None, spec_of=None) -> tuple[bool, str]:
+def context_health(cfg, health=None, spec_of=None, *, strict: bool = False) -> tuple[bool, str]:
     """The Scope/doctor health check on Axon: the server the agents will ACTUALLY talk to (the operator's own
-    entry when it wins over O1's), plus whether they can reach its tools at all, in one line."""
+    entry when it wins over O1's), plus whether they can reach its tools at all, in one line.
+
+    When Python cannot know that entry's headers it never checks O1's server in its place (that would vouch
+    for a server the agents do not use). `strict` (doctor) reports it as a problem to look at; Scope goes on,
+    saying it is not verified — the discovery agent's zero-lookup check still catches a layer that is down."""
     if health is None or spec_of is None:
         from .scope.context import health, spec_of
     access = context_access(cfg)
     if access["mode"] == "off":
         return False, access["note"]
-    checked = access["spec"] or spec_of(cfg)
-    ok, why = health(checked)
-    if access["source"] == "axon" and access["spec"] is None:
-        why += " (checked O1's config: your Axon entry's headers need Pi to resolve them)"
+    if access["spec"] is None:
+        why = f"your Axon entry for fleetlens could not be checked: {access['unverified']}"
+        return (False, why) if strict else (True, f"not verified ({why}) · agent access: {access['note']}")
+    ok, why = health(access["spec"])
     return ok, f"{why} · agent access: {access['note'] or 'direct'}" if ok else why
 
 
@@ -504,7 +542,8 @@ def _run_once(spec, prompt: str, run_dir: Path, cfg, *, resume: str | None = Non
     mcp_spec = spec_of(cfg) if spec.use_context else None
     access = context_access(cfg) if spec.use_context else {"mode": "off"}
     reachable = access["mode"] in ("direct", "codemode") and (mcp_spec or access["source"] == "axon")
-    granted = [f"mcp__{ag.SERVER}__{t}" for t in ag.CONTEXT_TOOLS] if reachable else []
+    # only the tools the entry in effect shows: a tool it hides is not the agent's to call
+    granted = [f"mcp__{ag.SERVER}__{t}" for t in access.get("tools") or []] if reachable else []
     if reachable and access["mode"] == "codemode":
         # the operator's own entry hides the tools behind codemode: grant the script runner too. `--tools`
         # still bounds it — a script can call only the tools listed there (measured: anything else "does
@@ -703,7 +742,7 @@ def doctor(cfg, *, atlassian: bool = True) -> list[str]:
             if m not in models:
                 problems.append(f"model {m!r} is not on the gateway (available: {', '.join(sorted(models))}) — "
                                 f"set config AGENT.AXON.MODELS to one of those")
-    ok, why = context_health(cfg, health, spec_of)
+    ok, why = context_health(cfg, health, spec_of, strict=True)
     if not ok:
         problems.append(f"fleetlens (the context layer): {why}")
     if atlassian:

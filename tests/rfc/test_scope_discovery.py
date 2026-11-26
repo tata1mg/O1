@@ -260,9 +260,11 @@ class FakeMcp:
     def __init__(self, init=True, tools=None, probe=None):
         self.init, self.tools, self.probe = init, tools, probe
         self.methods: list[str] = []
+        self.timeouts: list = []
 
-    def __call__(self, url, headers, method, params, session=None):
+    def __call__(self, url, headers, method, params, session=None, timeout=None):
         self.methods.append(method)
+        self.timeouts.append(timeout)
         if method == "initialize":
             return ({"serverInfo": {}} if self.init else None), "sid"
         if method == "tools/list":
@@ -295,12 +297,88 @@ def test_health_proves_the_tools_work(monkeypatch, fake, ok, words):
     assert got_ok is ok and words in why, why
 
 
-@pytest.mark.parametrize("status, words", [(401, "refused the token (HTTP 401)"), (404, "HTTP 404"),
-                                           (None, "did not answer after 1 attempts (VPN off?)")])
-def test_health_says_why_the_server_did_not_greet(monkeypatch, status, words):
+@pytest.mark.parametrize("probe, words", [
+    ((401, ""), "refused the token (HTTP 401)"), ((404, ""), "HTTP 404"),
+    ((None, "no answer"), "did not answer within 30s (VPN off?)"),
+    ((None, "TLS failed: certificate verify failed"), "fl.example:9995: TLS failed: certificate verify failed"),
+    ((None, "bad URL: unknown url type"), "bad URL"),
+])
+def test_health_says_why_the_server_did_not_greet(monkeypatch, probe, words):
     from rfc_agent import steering
 
     monkeypatch.setattr(steering, "_mcp_call", FakeMcp(init=False))
-    monkeypatch.setattr(c, "_http_status", lambda url, headers: status)
+    monkeypatch.setattr(c, "_http_status", lambda url, headers, timeout=5: probe)
     ok, why = c.health(SPEC, attempts=1)
     assert not ok and words in why
+    if probe[1].startswith(("TLS", "bad URL")):
+        assert "VPN" not in why  # not misreported as an outage
+
+
+def test_health_has_one_overall_deadline(monkeypatch):
+    """A host that swallows packets: each step gets only what is left of one deadline, not a full timeout each."""
+    from rfc_agent import steering
+
+    fake = FakeMcp(init=False)
+    clock = {"t": 0.0}
+
+    def slow(*a, **kw):  # every initialize burns its whole timeout
+        clock["t"] += kw.get("timeout") or 12
+        return fake(*a, **kw)
+
+    monkeypatch.setattr(steering, "_mcp_call", slow)
+    monkeypatch.setattr(c.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(c.time, "sleep", lambda s: clock.__setitem__("t", clock["t"] + s))
+    seen = []
+    def status(url, headers, timeout=5):
+        seen.append(timeout)
+        return None, "no answer"
+
+    monkeypatch.setattr(c, "_http_status", status)
+    ok, why = c.health(SPEC, attempts=3, deadline_s=30)
+    assert not ok and clock["t"] <= 31 and seen and seen[0] <= 5
+    assert all(t <= 12 for t in fake.timeouts)
+
+
+@pytest.mark.parametrize("raised, want", [
+    ("http401", (401, "")), ("tls", (None, "TLS failed")), ("refused", (None, "no answer")),
+    ("timeout", (None, "no answer")), ("badurl", (None, "bad URL")),
+])
+def test_http_status_names_the_failure(monkeypatch, raised, want):
+    import ssl
+    import urllib.error
+    import urllib.request
+
+    def boom(req, timeout):
+        if raised == "http401":
+            raise urllib.error.HTTPError(req.full_url, 401, "no", {}, None)
+        if raised == "tls":
+            raise urllib.error.URLError(ssl.SSLError("certificate verify failed"))
+        if raised == "refused":
+            raise urllib.error.URLError(ConnectionRefusedError("refused"))
+        if raised == "timeout":
+            raise TimeoutError("timed out")
+        raise ValueError("unknown url type")
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    status, why = c._http_status("http://fl.example/mcp", {})
+    assert status == want[0] and why.startswith(want[1])
+
+
+def test_an_axon_only_setup_still_runs_discovery(tmp_path, monkeypatch):
+    """PR #31 review: no fleetlens in O1's config, the operator's own Axon entry in effect — the health check
+    said ok, and discovery was skipped because it was gated on O1's config alone."""
+    from rfc_agent import axon_agent
+
+    monkeypatch.setattr(c, "_on_axon", lambda cfg: True)
+    monkeypatch.setattr(axon_agent, "context_access", lambda cfg: {"mode": "codemode"})
+    ran = []
+    monkeypatch.setattr(c, "discover", lambda prd, cfg, spec, log_dir=None: ran.append(spec) or {
+        "ok": False, "services": [], "error": "x", "tool_calls": 0, "lookups": 0, "seconds": 0, "cost_usd": 0})
+    c.gather(Cfg(), None, True, PRD, tmp_path, [], meta={}, log_dir=tmp_path)
+    assert ran == [None]
+    monkeypatch.setattr(axon_agent, "context_access", lambda cfg: {"mode": "off"})
+    c.gather(Cfg(), None, True, PRD, tmp_path, [], meta={}, log_dir=tmp_path)
+    assert ran == [None]  # nothing usable: no discovery
+    monkeypatch.setattr(c, "_on_axon", lambda cfg: False)
+    c.gather(Cfg(), None, True, PRD, tmp_path, [], meta={}, log_dir=tmp_path)
+    assert ran == [None]  # Claude still needs O1's config

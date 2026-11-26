@@ -133,7 +133,10 @@ Figma always runs the latest version. Scope then asks you to press one shortcut 
 | Scope stops: `ATLASSIAN.SITE is not set` | Team values missing | Add them to your `config.json` (ask a teammate), or re-run the install guide |
 | Scope says Atlassian is not connected | No signed-in Atlassian server | Section 5, then re-run |
 | `context layer unavailable: … did not answer` | fleetlens unreachable | VPN on; check `url` in `config.json` |
-| `context layer unavailable: … refused the token (HTTP 401)` / `a get_index_info call failed` | The token is wrong or expired | Check `headers` in `config.json` (or in your own Axon `fleetlens` entry, which wins on Axon) |
+| `context layer unavailable: … refused the token (HTTP 401/403)` | The token is wrong or expired | Check `headers` in `config.json` (or in your own Axon `fleetlens` entry, which wins on Axon) |
+| `context layer unavailable: … a get_index_info call failed: <error>` | The server answered but the probe call did not work: the tool, a permission, the server, or authentication | Read the error after the colon; check the server, that it offers `get_index_info`, the URL and the headers |
+| `context layer unavailable: … TLS failed` / `bad URL` | A certificate problem, or a malformed `url` | Fix the URL or the server's certificate; the VPN is not the cause |
+| `fleetlens: your Axon entry for fleetlens could not be checked` (doctor) | Your own Axon entry's headers use `!command`, or a `${VAR}` that isn't set | Set the variable, or check that entry yourself; Scope still runs and fails discovery if it can't reach fleetlens |
 | `context layer unavailable: your Axon entry for fleetlens …` | Your own `fleetlens` in `~/.axon/pi/mcp.json` is disabled, hidden, or has an exposure O1 doesn't support. It replaces O1's on Axon | Use `direct` or `codemode` exposure, or remove the entry |
 | `repo discovery failed (0 successful fleetlens lookups …)` | The discovery agent never got an answer from fleetlens, so it proposes nothing | Add repos on the confirm screen (`+name`); run `/rfc doctor` to see why |
 | Run refuses to start: Langfuse keys missing | Tracing is required | Add the keys from the vault |

@@ -540,13 +540,28 @@ def test_an_axon_entry_wins_and_its_exposure_decides(tmp_path, monkeypatch, extr
         assert "replaces O1's" in a["note"] or "does not support" in a["note"]
 
 
-@pytest.mark.parametrize("headers", [{"Authorization": "Bearer ${FLEETLENS_TOKEN}"}, {"Authorization": "!pass x"}])
-def test_headers_pi_must_resolve_are_not_sent_by_python(tmp_path, monkeypatch, headers):
+def test_env_headers_are_resolved_like_pi_does(tmp_path, monkeypatch):
+    _axon_home(tmp_path, monkeypatch, {"url": "https://theirs.example/mcp",
+                                       "headers": {"Authorization": "Bearer ${FL_TOKEN}"}})
+    monkeypatch.setenv("FL_TOKEN", "abc")
+    a = ax.context_access(_O1)
+    assert a["spec"] == {"url": "https://theirs.example/mcp", "headers": {"Authorization": "Bearer abc"}}
+    monkeypatch.delenv("FL_TOKEN")
+    a = ax.context_access(_O1)
+    assert a["spec"] is None and "${FL_TOKEN}" in a["unverified"]
+
+
+@pytest.mark.parametrize("headers", [{"Authorization": "!pass show fleetlens"}, {"Authorization": "Bearer ${NOPE_X}"}])
+def test_headers_python_cannot_know_are_never_checked_against_o1s_server(tmp_path, monkeypatch, headers):
+    """PR #31 review: checking O1's server in place of the one the agent will use vouches for the wrong one."""
+    monkeypatch.delenv("NOPE_X", raising=False)
     _axon_home(tmp_path, monkeypatch, {"url": "https://theirs.example/mcp", "headers": headers})
-    assert ax.context_access(_O1)["spec"] is None
-    ok, why = ax.context_health(_O1, health=lambda s: (True, f"ok via {s['url']}"),
-                                spec_of=lambda cfg: FLEETLENS)
-    assert ok and "fleetlens.example" in why and "checked O1's config" in why
+    checked = []
+    probe = dict(health=lambda s: (checked.append(s) or True, "ok"), spec_of=lambda cfg: FLEETLENS)
+    ok, why = ax.context_health(_O1, **probe, strict=True)  # doctor: a problem to look at
+    assert not ok and "could not be checked" in why and checked == []
+    ok, why = ax.context_health(_O1, **probe)  # Scope: goes on, says so; the zero-lookup check still guards it
+    assert ok and why.startswith("not verified") and checked == []
 
 
 def test_context_health_checks_the_server_the_agent_will_use(tmp_path, monkeypatch):
@@ -588,6 +603,39 @@ def test_a_direct_setup_is_unchanged(tmp_path, monkeypatch):
     dumped = json.loads((tmp_path / "argv.json").read_text())
     assert "codemode" not in dumped["argv"][dumped["argv"].index("--tools") + 1].split(",")
     assert dumped["prompt"] == "the prompt"
+
+
+@pytest.mark.parametrize("extra, tools", [
+    ({"exposure": "hidden", "toolExposure": {"find_symbol": "direct"}}, ["find_symbol"]),
+    ({"exposure": "direct", "toolExposure": {"get_*": "hidden"}}, None),
+    ({"exposure": "codemode", "toolExposure": {"get_source": "hidden", "find_*": "direct"}}, None),
+])
+def test_only_the_tools_the_entry_shows_are_reachable(tmp_path, monkeypatch, extra, tools):
+    """PR #31 review: the grant listed all 15 even when the operator's entry hid some."""
+    _axon_home(tmp_path, monkeypatch, {**_THEIRS, **extra})
+    a = ax.context_access(_O1)
+    every = list(ag.CONTEXT_TOOLS)
+    if tools is None:
+        hidden = {"get_*": [t for t in every if t.startswith("get_")], "get_source": ["get_source"]}
+        gone = hidden["get_source"] if "get_source" in extra.get("toolExposure", {}) else hidden["get_*"]
+        tools = [t for t in every if t not in gone]
+    assert a["tools"] == tools and a["mode"] != "off"
+    assert "of 15 tools" in a["note"]
+
+
+def test_the_grant_follows_the_exposed_tools(tmp_path, monkeypatch):
+    _axon_home(tmp_path, monkeypatch, {**_THEIRS, "exposure": "hidden", "toolExposure": {"find_symbol": "direct"}})
+    exe = _fake(tmp_path, monkeypatch)
+    run = tmp_path / "run"
+    run.mkdir()
+    cfg = Cfg(**{"AGENT.ENGINE": "axon", "AGENT.AXON": {"BIN": str(exe)},
+                 "MCP": {"mcpServers": {"fleetlens": FLEETLENS}}})
+    ag.run(_spec(), "the prompt", run, cfg, stage="scope", step="run")
+    dumped = json.loads((tmp_path / "argv.json").read_text())
+    tools = dumped["argv"][dumped["argv"].index("--tools") + 1].split(",")
+    assert [t for t in tools if t.startswith("mcp__")] == ["mcp__fleetlens__find_symbol"]
+    assert "codemode" not in tools
+    assert json.loads(dumped["env"]["HARNESS_POLICY_JSON"])["granted_tools"] == ["mcp__fleetlens__find_symbol"]
 
 
 def test_an_unusable_entry_grants_no_context_tools(tmp_path, monkeypatch):

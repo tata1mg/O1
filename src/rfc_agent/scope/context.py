@@ -45,54 +45,76 @@ def spec_of(cfg) -> dict | None:
 PROBE_TOOL = "get_index_info"
 
 
-def _http_status(url: str, headers: dict) -> int | None:
-    """The HTTP status an MCP `initialize` POST gets, when it got one at all (None: no answer, e.g. VPN off).
-    Only to tell a refused token from an unreachable host; the MCP calls themselves go through steering."""
+#: the whole health check — retries, the status probe and the tool checks — ends by this many seconds, so a
+#: host that swallows packets costs about half a minute, not one full HTTP timeout per step (PR #31 review)
+HEALTH_DEADLINE_S = 30
+
+
+def _http_status(url: str, headers: dict, timeout: float = 5) -> tuple[int | None, str]:
+    """(HTTP status, "") for an MCP `initialize` POST that got an HTTP answer, else (None, why): "no answer"
+    (timeout, refused, unknown host: VPN off?), "TLS failed: …", or "bad URL: …". Only to say WHY the server did
+    not greet; the MCP calls themselves go through steering."""
+    import ssl
     import urllib.error
     import urllib.request
 
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
         "protocolVersion": "2025-03-26", "capabilities": {},
         "clientInfo": {"name": "rfc-agent-scope", "version": "1"}}})
-    req = urllib.request.Request(url, data=body.encode(), method="POST", headers={
-        "Content-Type": "application/json", "Accept": "application/json, text/event-stream", **(headers or {})})
     try:
-        with urllib.request.urlopen(req, timeout=12) as resp:
-            return int(resp.status)
+        req = urllib.request.Request(url, data=body.encode(), method="POST", headers={
+            "Content-Type": "application/json", "Accept": "application/json, text/event-stream", **(headers or {})})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return int(resp.status), ""
     except urllib.error.HTTPError as e:
-        return int(e.code)
-    except Exception:
-        return None
+        return int(e.code), ""
+    except urllib.error.URLError as e:
+        if isinstance(e.reason, ssl.SSLError):
+            return None, f"TLS failed: {e.reason}"
+        return None, "no answer"
+    except ssl.SSLError as e:
+        return None, f"TLS failed: {e}"
+    except (TimeoutError, ConnectionError, OSError):
+        return None, "no answer"
+    except ValueError as e:  # a malformed URL or header
+        return None, f"bad URL: {e}"
 
 
-def health(spec: dict | None, attempts: int = 3) -> tuple[bool, str]:
+def health(spec: dict | None, attempts: int = 3, deadline_s: float = HEALTH_DEADLINE_S) -> tuple[bool, str]:
     """(ok, why): can an agent USE the layer, not only reach it. Three layers, each named when it fails:
     the server answers `initialize` (retried with a short pause), `tools/list` names the read tools the
     agents are granted, and one real call (`get_index_info`) succeeds — a server that greets a bad token
-    but refuses its tool calls is not a working layer (issue #16)."""
+    but refuses its tool calls is not a working layer (issue #16). The whole check ends by `deadline_s`."""
     if not spec:
         return False, f"not configured (config.json MCP.mcpServers.{SERVER})"
-    from ..steering import _mcp_call
+    from ..steering import _HTTP_TIMEOUT_S, _mcp_call
     url, headers = spec["url"], spec.get("headers") or {}
     host = url.split("/")[2] if url.count("/") >= 2 else url
-    sid = None
+    end = time.monotonic() + deadline_s
+
+    def left(cap: float = _HTTP_TIMEOUT_S) -> float:
+        return max(1.0, min(cap, end - time.monotonic()))
+
+    res, sid = None, None
     for i in range(attempts):
         res, sid = _mcp_call(url, headers, "initialize", {
             "protocolVersion": "2025-03-26", "capabilities": {},
-            "clientInfo": {"name": "rfc-agent-scope", "version": "1"}})
-        if res is not None:
+            "clientInfo": {"name": "rfc-agent-scope", "version": "1"}}, timeout=left())
+        if res is not None or end - time.monotonic() <= 2:
             break
         if i < attempts - 1:
             time.sleep(2)
-    else:
-        status = _http_status(url, headers)
+    if res is None:
+        status, why = _http_status(url, headers, timeout=left(5))
         if status in (401, 403):
             return False, f"{host} refused the token (HTTP {status}) — check the server's Authorization header"
         if status:
             return False, f"{host} answered HTTP {status} instead of an MCP greeting — is the URL right?"
-        return False, f"{host} did not answer after {attempts} attempts (VPN off?)"
-    _mcp_call(url, headers, "notifications/initialized", {}, session=sid)
-    listed, _ = _mcp_call(url, headers, "tools/list", {}, session=sid)
+        if why.startswith(("TLS failed", "bad URL")):
+            return False, f"{host}: {why}"
+        return False, f"{host} did not answer within {deadline_s:.0f}s (VPN off?)"
+    _mcp_call(url, headers, "notifications/initialized", {}, session=sid, timeout=left())
+    listed, _ = _mcp_call(url, headers, "tools/list", {}, session=sid, timeout=left())
     names = {str(t.get("name")) for t in (listed or {}).get("tools") or [] if isinstance(t, dict)}
     if not names:
         return False, f"{host} answers, but lists no tools (tools/list failed — is the token right?)"
@@ -102,7 +124,8 @@ def health(spec: dict | None, attempts: int = 3) -> tuple[bool, str]:
         return False, f"{host} answers, but offers none of the {len(wanted)} read tools the agents use"
     if PROBE_TOOL not in names:
         return False, f"{host} answers, but has no {PROBE_TOOL} tool to prove a call works"
-    probe, _ = _mcp_call(url, headers, "tools/call", {"name": PROBE_TOOL, "arguments": {}}, session=sid)
+    probe, _ = _mcp_call(url, headers, "tools/call", {"name": PROBE_TOOL, "arguments": {}}, session=sid,
+                         timeout=left())
     if not probe or probe.get("isError"):
         text = ""
         with contextlib.suppress(Exception):
@@ -172,7 +195,7 @@ def _last_services_json(text: str) -> list[dict] | None:
     return None
 
 
-def discover(prd_text: str, cfg, spec: dict, log_dir: Path | None = None) -> dict:
+def discover(prd_text: str, cfg, spec: dict | None, log_dir: Path | None = None) -> dict:
     """The discovery agent: whole PRD in, fleetlens read tools only, no built-in tools.
     → {ok, services: [{service, tier, why}], cost_usd, seconds, tool_calls, lookups, error}.
     `ok` needs at least one successful context lookup: services named without one are guesses."""
@@ -186,8 +209,9 @@ def discover(prd_text: str, cfg, spec: dict, log_dir: Path | None = None) -> dic
     log_dir = log_dir or Path(tempfile.mkdtemp(prefix="rfc-scope-discovery-"))
     log_dir.mkdir(parents=True, exist_ok=True)
     mcp = log_dir / "scope.discovery.mcp.json"
-    mcp.write_text(json.dumps({"mcpServers": {SERVER: spec}}, indent=2))
-    mcp.chmod(0o600)  # it carries the token
+    if spec and not _on_axon(cfg):  # the Claude path's MCP config; on Axon the agent's own session has it
+        mcp.write_text(json.dumps({"mcpServers": {SERVER: spec}}, indent=2))
+        mcp.chmod(0o600)  # it carries the token
     body = re.sub(r"\A---\n.*?\n---\n", "", prd_text, count=1, flags=re.DOTALL)
     prompt = DISCOVERY_PROMPT.format(max_repos=MAX_REPOS) + body
     cmd = [binary, "-p", "--model", model, "--tools", "", "--setting-sources", "",
@@ -253,6 +277,19 @@ def successful_lookups(calls: dict) -> int:
     prefix = f"mcp__{SERVER}__"
     return sum(1 for c in calls.values()
                if str(c.get("name") or "").startswith(prefix) and "output" in c and not c.get("is_error"))
+
+
+def _has_context(cfg, spec: dict | None) -> bool:
+    """Whether the discovery agent will have a context layer: O1's own config, or — on Axon — the operator's
+    own entry, which the health check and the agent's grants already accept (PR #31 review: an Axon-only
+    setup was reported healthy and then skipped discovery)."""
+    if spec:
+        return True
+    if not _on_axon(cfg):
+        return False
+    from ..axon_agent import context_access
+
+    return context_access(cfg)["mode"] != "off"
 
 
 def _on_axon(cfg) -> bool:
@@ -420,7 +457,7 @@ def gather(cfg, spec: dict | None, layer_ok: bool, prd_text: str, repos_root: Pa
     why: dict[str, list[str]] = {r: ["named by you (--repos)"] for r in named}
     sure = set(named)
     order = list(named)
-    disc = discover(prd_text, cfg, spec, log_dir) if (spec and layer_ok) else None
+    disc = discover(prd_text, cfg, spec, log_dir) if (layer_ok and _has_context(cfg, spec)) else None
     keep = ("ok", "services", "error", "tool_calls", "lookups", "seconds", "cost_usd")
     meta.update(discovery=({k: disc[k] for k in keep}
                            if disc else None),

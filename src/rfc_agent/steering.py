@@ -36,8 +36,9 @@ _HTTP_TIMEOUT_S = 12
 
 
 def _mcp_call(url: str, headers: dict, method: str, params: dict,
-              session: str | None = None) -> tuple[dict | None, str | None]:
-    """One JSON-RPC call over MCP streamable HTTP. Returns (result, session_id). None on any failure."""
+              session: str | None = None, timeout: float | None = None) -> tuple[dict | None, str | None]:
+    """One JSON-RPC call over MCP streamable HTTP. Returns (result, session_id). None on any failure.
+    `timeout` (seconds) defaults to _HTTP_TIMEOUT_S; a caller with an overall deadline passes what is left."""
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     req = urllib.request.Request(url, data=body, method="POST", headers={
         "Content-Type": "application/json",
@@ -46,7 +47,7 @@ def _mcp_call(url: str, headers: dict, method: str, params: dict,
         **(headers or {}),
     })
     try:
-        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT_S) as resp:
+        with urllib.request.urlopen(req, timeout=timeout or _HTTP_TIMEOUT_S) as resp:
             sid = resp.headers.get("Mcp-Session-Id") or session
             raw = resp.read().decode("utf-8", errors="replace")
     except Exception:
