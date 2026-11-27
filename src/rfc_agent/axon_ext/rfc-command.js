@@ -971,7 +971,7 @@ export default function make(pi, { project, uv = "uv" } = {}) {
 
       if (argv[0] === "doctor") {
         ui.setWorkingMessage?.("rfc: checking Axon…");
-        const r = await uvRun(["python", "-m", "rfc_agent.axon_agent", "doctor"], ctx.cwd);
+        const r = await uvRun(["python", "-m", "rfc_agent.axon_agent", "doctor", "--table"], ctx.cwd);
         ui.setWorkingMessage?.();
         pi.sendMessage({ customType: "rfc-agent", content: (r.out + r.err).trim(), display: true });
         return;

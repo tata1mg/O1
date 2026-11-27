@@ -49,6 +49,11 @@ fix below; its version is in `plugins/test-agent/.claude-plugin/plugin.json`).
 - **`--yes` help text** now says it runs unattended and takes the default for every decision that would pause the run,
   instead of a list of what it skips.
 
+- **`/rfc doctor` on Axon is a table** (`doctor --table`): every check on its own row with PASS / FAIL / WARN and, for a
+  failure, how to fix it, like the Claude Code doctor. It adds checks the Axon doctor lacked: Node 22.19+ for Pi,
+  the config file and `ATLASSIAN.SITE`, Langfuse keys, the repos and runs folders, the Figma app and plugin, and the
+  Mermaid check's Node/npm. The check on Atlassian also fails when the server is still on v1.
+
 ### Fixed
 
 - **Any wrong parameter now says so (#29), for `/rfc` and `/test`, on Claude Code and Axon.** One shared parser

@@ -656,6 +656,7 @@ def main(argv: list[str] | None = None) -> int:
     p = FriendlyParser(prog="python -m rfc_agent.axon_agent")
     p.add_argument("command", choices=("doctor", "models", "engines", "install", "uninstall"))
     p.add_argument("--no-atlassian", action="store_true", help="doctor: skip the Atlassian check (local --prd file)")
+    p.add_argument("--table", action="store_true", help="doctor: every check as a table row (what, PASS/FAIL, fix)")
     args, rest = p.parse_known_args(argv)
     if args.command == "engines":
         # the engine each stage of a run with these rfc arguments will use: flags, then config, then the default
@@ -685,6 +686,12 @@ def main(argv: list[str] | None = None) -> int:
         for m in _STAGE_MODELS:
             print(f"{m:32} -> {gateway_model(m, cfg)}")
         return 0
+    if args.table:
+        from . import doctor_table
+
+        rows = doctor_table.checks(cfg, atlassian=not args.no_atlassian)
+        print(doctor_table.render(rows))
+        return 1 if doctor_table.blocked(rows) else 0
     problems = doctor(cfg, atlassian=not args.no_atlassian)
     for line in problems:
         print(f"FAIL  {line}")

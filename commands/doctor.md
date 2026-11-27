@@ -55,8 +55,9 @@ each, with the concrete fix for every FAIL. Read-only — change nothing without
 
 10. **Axon engine** (only when config `AGENT.ENGINE` or `AGENT.STAGE_ENGINES` names `axon`, or the user says they
    will run with `--engine axon`; otherwise report `n/a`):
-   `uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m rfc_agent.axon_agent doctor` prints `axon: READY`, or one
-   `FAIL` line per problem with its fix (Axon installed, `axon auth status` valid, managed Pi >= 1.4.0, every
+   `uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m rfc_agent.axon_agent doctor --table` prints one row per check
+   (what was checked, PASS / FAIL / WARN, how to fix a failure) and ends `axon: READY` or `axon: BLOCKED`; without `--table` it prints
+   `axon: READY`, or one `FAIL` line per problem with its fix (Axon installed, `axon auth status` valid, managed Pi >= 1.4.0, every
    mapped model on the gateway, fleetlens answering). `python -m rfc_agent.axon_agent models` shows which gateway
    model each stage model maps to. When Scope runs on Axon it fetches Confluence/Jira through Axon's own Atlassian
    sign-in, which this doctor checks; otherwise Claude checks 2 and 8 apply as usual.
