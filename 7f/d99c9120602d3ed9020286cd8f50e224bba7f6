@@ -1,0 +1,35 @@
+docs/REVISE.md
+  s_cc4d7f9cc61b85::t_e8f93c5ec1725e 116
+docs/RFC_SHAPE.md
+  s_cc4d7f9cc61b85::t_e8f93c5ec1725e 95
+decisions.md
+  s_cc4d7f9cc61b85::t_e8f93c5ec1725e 262-266
+  s_cc4d7f9cc61b85::t_fa5354e867d49e 308-323
+commands/setup.md
+  s_cc4d7f9cc61b85::t_e8f93c5ec1725e 163-170
+docs/OBSERVABILITY.md
+  s_cc4d7f9cc61b85::t_e8f93c5ec1725e 56-57,66,71-74
+  s_cc4d7f9cc61b85::t_e5ca6d01f06be7 75
+CLAUDE_INSTALL.md
+  s_cc4d7f9cc61b85::t_e8f93c5ec1725e 218-219
+CONFIG.md
+  s_cc4d7f9cc61b85::t_e8f93c5ec1725e 96,99,103-106,108-109
+commands/doctor.md
+  s_cc4d7f9cc61b85::t_e8f93c5ec1725e 40-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7fd99c9120602d3ed9020286cd8f50e224bba7f6",
+  "prompts": {},
+  "sessions": {
+    "s_cc4d7f9cc61b85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4112ec27-d126-41f6-b6da-f6edd5b890b3",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}
