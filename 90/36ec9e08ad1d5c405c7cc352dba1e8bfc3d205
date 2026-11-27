@@ -1,0 +1,29 @@
+plugins/test-agent/.claude-plugin/plugin.json
+  s_cc4d7f9cc61b85::t_3e24760c0a643e 4
+package.json
+  s_cc4d7f9cc61b85::t_3e24760c0a643e 4
+pyproject.toml
+  s_cc4d7f9cc61b85::t_3e24760c0a643e 3
+.claude-plugin/plugin.json
+  s_cc4d7f9cc61b85::t_3e24760c0a643e 4
+CHANGELOG.md
+  s_cc4d7f9cc61b85::t_3e24760c0a643e 6,8-9,11,16-53,60-70
+uv.lock
+  s_cc4d7f9cc61b85::t_f0b845c5f8b321 442
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9036ec9e08ad1d5c405c7cc352dba1e8bfc3d205",
+  "prompts": {},
+  "sessions": {
+    "s_cc4d7f9cc61b85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4112ec27-d126-41f6-b6da-f6edd5b890b3",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}
