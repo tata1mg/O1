@@ -53,6 +53,8 @@ rfc-run                                   chain   input: argv · output: {exit}
 ├─ stage:scope                             chain   output: {exit}; ERROR + status message when it stopped
 │   ├─ agent:atlassian → llm:atlassian    one per connector turn (cost; connector calls as tools if verbose)
 │   ├─ agent:repo-discovery → llm:repo-discovery   the context-layer discovery agent (cost; services as output)
+│   ├─ operator:run_input                 what you gave the run: input mode (flags / prompt), Figma source (flag, instructions,
+│   │                                     PRD, added at the prompt, none) and the PRD links ignored, instructions and prompt (300 words)
 │   └─ operator:confirm                   your Scope selection: selected / not_selected
 ├─ stage:investigate
 │   ├─ agent:lead:1a → llm:lead:1a        agent = identity + outcome; generation = model, tokens, cost
@@ -61,10 +63,15 @@ rfc-run                                   chain   input: argv · output: {exit}
 │   ├─ gate:T1, gate:T1:after-fix         the per-agent checks
 │   ├─ operator:pause1, operator:pause2   your pause answers (selection, feedback, answers, notes)
 │   └─ agent:lead (1c) …, gate:understanding
-├─ stage:draft  → agent:lead:write, gate:draft[, agent:lead:gate-fix, gate:draft:after-fix]
+├─ stage:draft  → agent:lead:write, gate:draft[, agent:lead:gate-fix, gate:draft:after-fix], evaluator:mermaid:draft
 ├─ stage:review  → one agent per reviewer [, operator:pause3]
 └─ stage:revise  → lead fix + reviewer confirm rounds; stage:draft (check-only gate) and stage:summarize nest inside
 ```
+
+A run started from plain words carries the tag `input:prompt` and metadata `input_mode: prompt`. `evaluator:mermaid:draft`
+scores how the RFC's diagrams fared (`mermaid_diagrams`, `mermaid_failed_first_parse`, `mermaid_repaired_automatically`,
+`mermaid_fixed_by_lead`, `mermaid_shown_as_code`, and `mermaid_failed`: 1 when any diagram is shown as code, else 0); its
+output lists each failing diagram's line and the parser's message.
 
 Agent names are `agent:<label>[:<step>]`, where the step is the one the stage passes (`1a`, `write`, `fix`, …).
 Each agent's metadata has `session_id`, `seconds`, `turns`, `tool_calls`, `rate_limited`, `resumed`, `effort`

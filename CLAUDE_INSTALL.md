@@ -215,7 +215,8 @@ changed.
 |---|---|
 | `Not logged in · Please run /login` | Sign in the `claude` command: in Terminal, run `claude`, then `/login` |
 | `/rfc-agent:setup` or `/rfc-agent:rfc` isn't found | Restart Claude Code. Check `claude plugin list` shows `rfc-agent@rfc-agent-marketplace` enabled |
-| Stuck fetching the PRD, or "Atlassian is not connected" | Reconnect Atlassian (claude.ai → Settings → Connectors), then check `claude mcp list` |
+| Stuck fetching the PRD, or "Atlassian is not connected" | Sign the `atlassian` server in with `/mcp`, then check `claude mcp list` |
+| "looks like it is still on v1" | Atlassian MCP v2 only: `claude mcp remove atlassian`, then `claude mcp add --scope user --transport http atlassian https://mcp.atlassian.com/v2/mcp`, then `/mcp` |
 | `ATLASSIAN.SITE is not set` | Run `/rfc-agent:setup` and give the team's Atlassian site |
 | `context layer unavailable` | Run `/rfc-agent:setup` to check the fleetlens URL and token, and that the server is reachable |
 | A repo shows `no access` or `clone failed` | Check you can `git clone` that repo yourself, and fix your git credentials for its host |

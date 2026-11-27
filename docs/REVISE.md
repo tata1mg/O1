@@ -113,7 +113,7 @@ apply if cheap, no entry needed.
 
 ## The gate
 
-Draft's gate runs again on the fixed RFC (coverage, structure, CHANGE blocks, secrets, Mermaid lint, citations
+Draft's gate runs again on the fixed RFC (coverage, structure, CHANGE blocks, secrets, Mermaid parse check, citations
 as a final assertion), with its own single fix round; the coverage table and References are re-rendered. Same
 code as `draft --check-only`.
 
