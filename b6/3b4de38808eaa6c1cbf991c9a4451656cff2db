@@ -1,0 +1,202 @@
+src/workflows/testing/status.py
+  s_cc4d7f9cc61b85::t_c11bb8444ef8fb 411
+  s_cc4d7f9cc61b85::t_03e31fc739ea1f 26
+  s_cc4d7f9cc61b85::t_35d6559a98f036 25
+src/rfc_agent/draft/mermaid_tool/check.mjs
+  s_efe335148af6ef::t_7586520e7e6f98 1-27
+src/rfc_agent/scope/atlassian.py
+  s_cc4d7f9cc61b85::t_60d94ecee4d981 28-31,33-36,69-82,246-250,254,259-277
+  s_cc4d7f9cc61b85::t_70e5e76416234a 241,243-245
+  s_cc4d7f9cc61b85::t_c6022730382cc2 287-288,290,293,297-303,305-311,315,318
+  s_cc4d7f9cc61b85::t_e71e54839d7fcd 83
+src/rfc_agent/revise/cli.py
+  s_cc4d7f9cc61b85::t_35d6559a98f036 20-21
+  s_cc4d7f9cc61b85::t_03e31fc739ea1f 51
+src/rfc_agent/scope/atlassian_axon.py
+  s_cc4d7f9cc61b85::t_c6022730382cc2 169-171,177,181-182,186-193,196,198-203,205,207,210,215
+  s_cc4d7f9cc61b85::t_03b5fce0055026 30-41
+tests/fixtures/axon/test_command_cases.mjs
+  s_cc4d7f9cc61b85::t_a415c319e6e5ea 6,39-45
+src/rfc_agent/scope/figma.py
+  s_efe335148af6ef::t_53d7472cb5aeda 24-27,40,49-60
+  s_efe335148af6ef::t_fdcdf24c3ad74d 61-62
+src/rfc_agent/draft/mermaid_check.py
+  s_efe335148af6ef::t_7586520e7e6f98 1-224,228-235
+  s_efe335148af6ef::t_e428232f2a113a 225-227
+  s_efe335148af6ef::t_139951af375a12 236-237
+tests/rfc/test_intake.py
+  s_efe335148af6ef::t_7190b8201977be 11-12
+  s_cc4d7f9cc61b85::t_4f3d975832b5b2 93-104,107
+  s_efe335148af6ef::t_9857fa229fa06e 1-10,13-92
+  s_cc4d7f9cc61b85::t_f95795c8f7463c 106,108-131
+  s_cc4d7f9cc61b85::t_3775d76ca30e5b 105
+src/rfc_agent/draft/mermaid_tool/package.json
+  s_efe335148af6ef::t_7586520e7e6f98 1-10
+CHANGELOG.md
+  s_efe335148af6ef::t_960ee501e30d9d 53-54
+  s_cc4d7f9cc61b85::t_d9cb41bec79b62 20-25
+  s_efe335148af6ef::t_5e2e004a437b0a 27-31
+  s_efe335148af6ef::t_72080e7f09c7eb 68-70
+  s_efe335148af6ef::t_8edcce28a123e2 32-42,55-58
+  s_cc4d7f9cc61b85::t_3c9565cc29a2f8 13-19,26
+tests/conftest.py
+  s_efe335148af6ef::t_10b8fc9a304d8c 29-31
+src/rfc_agent/run_end.py
+  s_cc4d7f9cc61b85::t_90bff8edbed495 58
+docs/SCOPE.md
+  s_efe335148af6ef::t_960ee501e30d9d 61
+  s_cc4d7f9cc61b85::t_90bff8edbed495 110-111,117-119
+  s_efe335148af6ef::t_8edcce28a123e2 64-65,136,222-238
+src/rfc_agent/scope/confirm.py
+  s_efe335148af6ef::t_8888234d7628e5 30,215-216
+  s_efe335148af6ef::t_095ca1e52ad83b 29,31,80-134,137-153
+  s_efe335148af6ef::t_7190b8201977be 135-136
+src/rfc_agent/intake.py
+  s_efe335148af6ef::t_b7e445c30fc08f 1-77,80-131
+  s_efe335148af6ef::t_7190b8201977be 78-79
+src/rfc_agent/axon_ext/rfc-command.js
+  s_efe335148af6ef::t_8888234d7628e5 240,242,246-248
+  s_efe335148af6ef::t_a87f1d1c920bbd 832-833,962,1014-1028
+  s_efe335148af6ef::t_8ba3c333d3cac9 97,99,104,108-115,210-211,230,241,243-245,249-252,291-306,640,766-767,769,774
+  s_efe335148af6ef::t_77961f25d65577 1029-1030
+commands/setup.md
+  s_cc4d7f9cc61b85::t_90bff8edbed495 165
+src/workflows/testing/preflight.py
+  s_cc4d7f9cc61b85::t_c11bb8444ef8fb 599
+  s_cc4d7f9cc61b85::t_35d6559a98f036 46
+  s_cc4d7f9cc61b85::t_03e31fc739ea1f 47
+src/workflows/testing/progress.py
+  s_cc4d7f9cc61b85::t_c11bb8444ef8fb 371
+  s_cc4d7f9cc61b85::t_35d6559a98f036 38
+  s_cc4d7f9cc61b85::t_03e31fc739ea1f 39
+src/workflows/testing/stages/convert_flows/__init__.py
+  s_cc4d7f9cc61b85::t_35d6559a98f036 36
+  s_cc4d7f9cc61b85::t_c11bb8444ef8fb 338
+commands/scope.md
+  s_efe335148af6ef::t_276784f7958b33 68
+  s_efe335148af6ef::t_8888234d7628e5 78-81
+  s_efe335148af6ef::t_f5e2ed4908be1f 3,54-60,77,82-83,89-92
+tests/rfc/test_scope_main.py
+  s_efe335148af6ef::t_7190b8201977be 232-233,238
+  s_efe335148af6ef::t_62deb3e8ab74e0 174-193,195-231,234-237,239-280
+  s_efe335148af6ef::t_a77cf5b1e18aef 194
+commands/rfc.md
+  s_efe335148af6ef::t_f5e2ed4908be1f 3,16-36,127
+src/workflows/testing/execute.py
+  s_cc4d7f9cc61b85::t_35d6559a98f036 46
+  s_cc4d7f9cc61b85::t_c11bb8444ef8fb 495
+src/workflows/testing/evaluation.py
+  s_cc4d7f9cc61b85::t_35d6559a98f036 25
+  s_cc4d7f9cc61b85::t_c11bb8444ef8fb 50
+CONFIG.md
+  s_cc4d7f9cc61b85::t_90bff8edbed495 99
+src/rfc_agent/run.py
+  s_efe335148af6ef::t_960ee501e30d9d 126
+  s_cc4d7f9cc61b85::t_35d6559a98f036 37-38
+  s_efe335148af6ef::t_a9c1e96def539e 106
+  s_cc4d7f9cc61b85::t_03e31fc739ea1f 93
+  s_efe335148af6ef::t_7c750676f44f78 102-105,107,154-155,159-162,189-190
+  s_efe335148af6ef::t_4d182f9f8ac5cd 127
+src/rfc_agent/observe.py
+  s_efe335148af6ef::t_139951af375a12 753,758-778,781-785
+  s_cc4d7f9cc61b85::t_c9882cd17cc9a7 779-780
+  s_efe335148af6ef::t_7190b8201977be 403-404
+  s_efe335148af6ef::t_e572f51b101307 755-757
+  s_efe335148af6ef::t_a9c1e96def539e 388-391,402
+  s_efe335148af6ef::t_b9ed6445ceff4f 754
+docs/DRAFT.md
+  s_cc4d7f9cc61b85::t_ad53835536eddb 304
+  s_efe335148af6ef::t_276784f7958b33 280
+  s_efe335148af6ef::t_5e2e004a437b0a 285,287-303,305-310,345
+tests/fixtures/axon/rfc_command_cases.mjs
+  s_efe335148af6ef::t_d930ccefb894d6 32-50
+  s_efe335148af6ef::t_12421358928bd3 96
+  s_efe335148af6ef::t_698b40f57287b4 102
+src/rfc_agent/axon_agent.py
+  s_cc4d7f9cc61b85::t_35d6559a98f036 34
+  s_cc4d7f9cc61b85::t_03e31fc739ea1f 656,662
+  s_cc4d7f9cc61b85::t_a4bc154e4a2fef 593,596,598-601
+src/rfc_agent/feedback.py
+  s_cc4d7f9cc61b85::t_03e31fc739ea1f 954
+  s_cc4d7f9cc61b85::t_35d6559a98f036 81-82
+src/rfc_agent/summarize/cli.py
+  s_cc4d7f9cc61b85::t_35d6559a98f036 17-18
+  s_cc4d7f9cc61b85::t_03e31fc739ea1f 38
+src/harness/cli_errors.py
+  s_cc4d7f9cc61b85::t_c11bb8444ef8fb 1-42,51-54,56,58-81
+  s_cc4d7f9cc61b85::t_e9a6e622a794c7 43-50,55,57
+docs/harness/ENGINES.md
+  s_cc4d7f9cc61b85::t_90bff8edbed495 299
+src/rfc_agent/draft/gate.py
+  s_efe335148af6ef::t_139951af375a12 15,194-196,209-214
+src/harness/cli.py
+  s_cc4d7f9cc61b85::t_03e31fc739ea1f 593,598-599,602-603
+  s_cc4d7f9cc61b85::t_4f02136a86a074 37
+AXON_INSTALL.md
+  s_cc4d7f9cc61b85::t_90bff8edbed495 275
+tests/rfc/test_mermaid_check.py
+  s_efe335148af6ef::t_e428232f2a113a 1-11,14-44,48-50,53-117,131-159,161,166-183
+  s_cc4d7f9cc61b85::t_eff4b8d7bd3e7d 160
+  s_efe335148af6ef::t_b744b0acdce00c 45,118-130
+  s_cc4d7f9cc61b85::t_03b5fce0055026 162-165
+  s_efe335148af6ef::t_b9ed6445ceff4f 12-13,46-47,51-52
+src/rfc_agent/mcp_tools.py
+  s_cc4d7f9cc61b85::t_a4bc154e4a2fef 113-115,117-120
+src/rfc_agent/review/cli.py
+  s_cc4d7f9cc61b85::t_35d6559a98f036 18-19
+  s_cc4d7f9cc61b85::t_03e31fc739ea1f 117
+src/rfc_agent/draft/cli.py
+  s_efe335148af6ef::t_b9ed6445ceff4f 239-240
+  s_cc4d7f9cc61b85::t_03e31fc739ea1f 45
+  s_efe335148af6ef::t_10b8fc9a304d8c 30,187,219-238,241,251
+  s_cc4d7f9cc61b85::t_35d6559a98f036 20-21
+src/rfc_agent/axon_ext/test-command.js
+  s_cc4d7f9cc61b85::t_5c01ed2b24af4d 318-327,329-331,339,412-416,485
+src/rfc_agent/scope/cli.py
+  s_cc4d7f9cc61b85::t_35d6559a98f036 33-34
+  s_efe335148af6ef::t_7c750676f44f78 35
+  s_efe335148af6ef::t_a582240f746a74 124-144,198-203,299,302-314,322-342,458,473-476,557-558
+  s_cc4d7f9cc61b85::t_4e03c7aa28bb13 267-272,507-511
+  s_cc4d7f9cc61b85::t_a4bc154e4a2fef 277,282,516,522-523
+  s_cc4d7f9cc61b85::t_03e31fc739ea1f 166,185
+  s_efe335148af6ef::t_960ee501e30d9d 192
+  s_efe335148af6ef::t_4d182f9f8ac5cd 193
+tests/rfc/test_scope.py
+  s_cc4d7f9cc61b85::t_70e5e76416234a 515,517
+  s_efe335148af6ef::t_549613afbb8306 555-658
+  s_cc4d7f9cc61b85::t_f607fe6595a7ae 31-33,39-45
+  s_efe335148af6ef::t_698b40f57287b4 659-676
+  s_cc4d7f9cc61b85::t_a7ae7265c1cf94 46
+  s_cc4d7f9cc61b85::t_7597345ab93785 454-455
+src/rfc_agent/investigate/cli.py
+  s_cc4d7f9cc61b85::t_03e31fc739ea1f 580
+  s_cc4d7f9cc61b85::t_35d6559a98f036 24-25
+  s_efe335148af6ef::t_960ee501e30d9d 586
+  s_efe335148af6ef::t_4d182f9f8ac5cd 587
+tests/rfc/test_atlassian_axon.py
+  s_cc4d7f9cc61b85::t_f607fe6595a7ae 13-14,56,58-68,76-78,86,89,91-92,95,99-101,107,111,115-116,119-120,123-133,147,151-153,172-179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b63b4de38808eaa6c1cbf991c9a4451656cff2db",
+  "prompts": {},
+  "sessions": {
+    "s_cc4d7f9cc61b85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4112ec27-d126-41f6-b6da-f6edd5b890b3",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    },
+    "s_efe335148af6ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a78a2a85-1481-4855-9727-3a8b6d22dcd6",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}
