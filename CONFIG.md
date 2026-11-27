@@ -96,7 +96,7 @@ Secrets for testing stay out of this file: the Kiwi password in `~/.tcms.conf`, 
   itself. Use the claude.ai Atlassian connector, or a user-scope server:
 
   ```bash
-  claude mcp add --transport http atlassian https://mcp.atlassian.com/v1/mcp
+  claude mcp add --transport http atlassian https://mcp.atlassian.com/v2/mcp
   claude mcp list
   ```
 

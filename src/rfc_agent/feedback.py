@@ -78,6 +78,8 @@ import sys
 import time
 from pathlib import Path
 
+from harness.cli_errors import FriendlyParser
+
 from . import feedback_summary, observe, run_facts
 from .run_end import state as run_end_state
 
@@ -949,7 +951,7 @@ def _note(text: str) -> tuple[str, str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="rfc_agent.feedback", description=__doc__.split("\n\n")[0])
+    ap = FriendlyParser(prog="rfc_agent.feedback", description=__doc__.split("\n\n")[0])
     ap.add_argument("--run-dir", required=True, type=Path)
     ap.add_argument("--context", action="store_true", help="print what the rating prompt needs, as JSON, and exit")
     ap.add_argument("--rating", choices=["up", "down"])

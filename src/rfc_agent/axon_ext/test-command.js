@@ -315,9 +315,20 @@ export const HELP = [
 
 // ---- one launch: a detached harness child, its progress watcher, its end ------------------------------
 
+/** Why a launch that ended badly ended: the STOP / error lines of its log (a wrong parameter names itself there),
+ *  else the exit code. null when it ended cleanly or the code is unknown (a run followed with /test attach). */
+export function stopReason(logFile, code, lines = 400) {
+  if (code === 0 || code === null || code === undefined) return null;
+  const rows = tail(logFile, lines) || [];
+  const hits = rows.filter((l) => /\[\w+\] STOP: |: error: |PIPELINE CONFIG ERROR: |^Traceback|Error: /.test(l));
+  const why = hits.slice(-3).map((l) => l.replace(/^.*?(\[\w+\] STOP: )/, "").trim());
+  return why.length ? why.join("\n") : `the process ended with exit ${code} — see ${logFile}`;
+}
+
 class Job {
-  constructor({ dir, kind, label, child, pid, from, ctl, onDone }) {
-    Object.assign(this, { dir, kind, label, child, pid, ctl, onDone });
+  constructor({ dir, kind, label, child, pid, from, ctl, onDone, logFile }) {
+    Object.assign(this, { dir, kind, label, child, pid, ctl, onDone, logFile });
+    this.code = null;
     this.name = path.basename(dir);
     this.exited = false;
     this.lines = [];
@@ -325,7 +336,7 @@ class Job {
     this.progressAt = -1;
     this.t0 = Date.now();
     this.from = from || 0;
-    if (child) child.on("exit", () => (this.exited = true));
+    if (child) child.on("exit", (code) => ((this.exited = true), (this.code = code)));
     this.startWatcher(this.from);
   }
 
@@ -398,6 +409,11 @@ class Job {
     const ui = this.ctl.ui();
     ui?.setWidget(WIDGET, undefined);
     ui?.setStatus(WIDGET, undefined);
+    const why = this.logFile ? stopReason(this.logFile, this.code) : null;
+    if (why) {
+      ui?.notify(`test ${this.name}: stopped`, "error");
+      this.ctl.post(`test: ${this.label} stopped.\n${why}`);
+    }
     return this.onDone?.(this);
   }
 }
@@ -466,7 +482,7 @@ export default function make(pi, { project, uv = "uv" } = {}) {
     });
     fs.closeSync(fd);
     fs.writeFileSync(path.join(logs, PID_FILE), JSON.stringify({ pid: child.pid, kind, log: logName }));
-    const job = new Job({ dir, kind, label, child, pid: child.pid, from, ctl, onDone });
+    const job = new Job({ dir, kind, label, child, pid: child.pid, from, ctl, onDone, logFile: path.join(logs, logName) });
     jobs.set(dir, job);
     lastDir = dir;
     job.render();

@@ -26,3 +26,6 @@ os.environ.setdefault("RFC_AGENT_LANGFUSE", "false")
 
 # A developer's own GIT_REPOS_REMOTE must not change what the repo tests infer from their temp checkouts.
 os.environ.setdefault("RFC_AGENT_GIT_REPOS_REMOTE", "")
+
+# The Mermaid parser is Node + an npm install: the suite never installs or runs it unless a test turns it on.
+os.environ.setdefault("RFC_AGENT_MERMAID_CHECK", "off")

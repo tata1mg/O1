@@ -29,6 +29,25 @@ const w = m.parseWaiting("  [investigate] WAITING FOR PAUSE 3: proposal at /r/co
 check("parseWaiting triage", w && w.kind === "triage" && w.n === 3 && w.answers === "/r/confirm/p3.answers.json", w);
 const s = m.parseWaiting("  [scope] WAITING FOR SELECTION: proposal at /r/confirm/proposal.json — answers expected at /r/confirm/answers.json");
 check("parseWaiting scope", s && s.kind === "scope" && s.proposal === "/r/confirm/proposal.json", s);
+const dz = m.parseWaiting("  [scope] WAITING FOR DESIGN: proposal at /r/confirm/design.proposal.json — answers expected at /r/confirm/design.answers.json");
+check("parseWaiting design", dz && dz.kind === "design" && dz.answers === "/r/confirm/design.answers.json", dz);
+check("isPrompt: free text vs flags and subcommands",
+  m.isPrompt("Build an rfc from https://x/wiki/pages/1") && !m.isPrompt("--prd x.md") && !m.isPrompt("doctor") && !m.isPrompt("  "));
+{ // the design question: proceed, stop, add (a bad link is asked again, a good one is returned)
+  const asked = [];
+  const pick = (choice, inputs = []) => ({
+    select: async (title, options) => { asked.push(options); return options.find((o) => o.startsWith(choice)); },
+    input: async () => inputs.shift(),
+    notify: () => {},
+  });
+  const prop = { no_design: "the PRD links no Figma design" };
+  const a1 = await m.askDesign(pick("Proceed"), prop);
+  const a2 = await m.askDesign(pick("Stop"), prop);
+  const a3 = await m.askDesign(pick("Add", ["nope", "https://www.figma.com/design/uwvYvW3cBm2DNKXgfIUXC5?node-id=0-1"]), prop);
+  check("askDesign offers three choices", asked[0].length === 3, asked[0]);
+  check("askDesign answers", a1.choice === "proceed" && a2.choice === "stop" && a3.choice === "add" &&
+    a3.figma_url.includes("uwvYvW3cBm2DNKXgfIUXC5"), [a1, a2, a3]);
+}
 check("relayLine banner", m.relayLine("  [rfc] ── Review ──") === "Review");
 check("relayLine keeps a stage's STOP reason",
   m.relayLine("  [scope] STOP: no Atlassian MCP server is connected") === "STOP: no Atlassian MCP server is connected");
@@ -74,12 +93,13 @@ const ui = {
     if (/Retry these repo snapshots/.test(title) && options.some((o) => o.startsWith("[ ] svc_c"))) {
       return options.find((o) => o.startsWith("[ ] svc_c"));
     }
+    if (/miss a repo/.test(title)) return options[1]; // "Add more repos / set a branch"
     if (/Who owns cart/.test(title)) return "cart team";
     if (/Rate this run/.test(title)) return "Later"; // the end-of-run offer; feedback_command_cases.mjs covers rating
     return options[0]; // Done / Plan looks right
   },
   async input(title) {
-    if (/Add repos/.test(title)) return "svc_new, svc_a=feature/x";
+    if (/To ADD a repo/.test(title)) return "svc_new, svc_a=feature/x";
     if (/Notes on findings/.test(title)) return "R-F1.2: disagree, svc_a never edits";
     return "";
   },

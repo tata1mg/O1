@@ -31,6 +31,7 @@ import time
 import uuid
 from pathlib import Path
 
+from harness.cli_errors import FriendlyParser
 from harness.engines.axon import (
     RECONNECT_PROMPT,
     RFC_TOOLS_JS,
@@ -589,11 +590,15 @@ def doctor(cfg, *, atlassian: bool = True) -> list[str]:
         from .scope.atlassian_axon import AxonConnectorSession
 
         name = s["atlassian_server"]
-        state = AxonConnectorSession(Path("."), axon_bin=s["bin"], server=name).server_status()
+        state, url = AxonConnectorSession(Path("."), axon_bin=s["bin"], server=name).server_info()
         if state == "missing":
             problems.append(f"Axon has no Atlassian MCP server '{name}' (needed for a Confluence/Jira PRD) — "
-                            f"`axon pi mcp add {name} --url https://mcp.atlassian.com/v1/mcp`, then "
+                            f"`axon pi mcp add {name} --url https://mcp.atlassian.com/v2/mcp`, then "
                             f"`axon pi mcp login {name}`. A local --prd file doesn't need it")
+        elif "/v1/" in url:
+            problems.append(f"Axon's Atlassian MCP server '{name}' is on the deprecated v1 endpoint ({url}); rfc-agent "
+                            f"needs v2 — `axon pi mcp remove {name}`, `axon pi mcp add {name} --url "
+                            f"https://mcp.atlassian.com/v2/mcp`, `axon pi mcp login {name}`")
         elif state != "connected":
             problems.append(f"Axon's Atlassian MCP server '{name}' is '{state}' (needed for a Confluence/Jira PRD)"
                             f" — `axon pi mcp login {name}`. A local --prd file doesn't need it")
@@ -645,17 +650,16 @@ def install(agent_dir: Path | None = None) -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
-    import argparse
 
     from .config import get_config
 
-    p = argparse.ArgumentParser(prog="python -m rfc_agent.axon_agent")
+    p = FriendlyParser(prog="python -m rfc_agent.axon_agent")
     p.add_argument("command", choices=("doctor", "models", "engines", "install", "uninstall"))
     p.add_argument("--no-atlassian", action="store_true", help="doctor: skip the Atlassian check (local --prd file)")
     args, rest = p.parse_known_args(argv)
     if args.command == "engines":
         # the engine each stage of a run with these rfc arguments will use: flags, then config, then the default
-        ep = argparse.ArgumentParser(prog="python -m rfc_agent.axon_agent engines")
+        ep = FriendlyParser(prog="python -m rfc_agent.axon_agent engines")
         add_engine_args(ep)
         eargs, _ = ep.parse_known_args(rest)
         apply_engine_args(eargs.engine, eargs.stage_engine)

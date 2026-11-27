@@ -8,12 +8,13 @@ that the file was written (one retry). Runs automatically at the end of Revise.
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import sys
 import time
 from pathlib import Path
+
+from harness.cli_errors import FriendlyParser
 
 from .. import observe
 from ..config import get_config
@@ -34,7 +35,7 @@ def settings(cfg) -> dict:
 
 @observe.entry("summarize")
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="python -m rfc_agent.summarize",
+    p = FriendlyParser(prog="python -m rfc_agent.summarize",
                                 description="Summarize: readable copy of the RFC.")
     p.add_argument("--run-dir", required=True, help="the run folder, after Revise")
     p.add_argument("--fresh", action="store_true", help="write it again even if it is up to date")

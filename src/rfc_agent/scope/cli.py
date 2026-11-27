@@ -30,7 +30,9 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .. import observe
+from harness.cli_errors import FriendlyParser
+
+from .. import intake, observe
 from ..config import get_config
 from ..legacy_names import migrate_run_dir
 from . import atlassian as at
@@ -119,6 +121,27 @@ def _write_jira(path: Path, key: str, call: at.ToolCall) -> None:
     path.write_text(at.provenance(f"jira {key}", key, _now()) + call.text, encoding="utf-8")
 
 
+OVERRIDE_HEADER = ("## Run instructions from the operator\n\nThese come from the person running this RFC. Where they "
+                   "conflict with the PRD below, they win; everywhere else the PRD stands.\n\n")
+
+
+def _with_instructions(prd_text: str, instructions: str) -> str:
+    """The PRD with the operator's instructions on top (after the provenance header, which stays first)."""
+    m = re.match(r"\A---\n.*?\n---\n", prd_text, flags=re.DOTALL)
+    head = m.group(0) if m else ""
+    return f"{head}\n{OVERRIDE_HEADER}{instructions.strip()}\n\n---\n\n{prd_text[len(head):].lstrip(chr(10))}"
+
+
+def _run_input(args, instructions: str, figma_source: str, links: list[dict], discarded: list[str]) -> dict:
+    """What the operator gave this run, for the Langfuse trace (text clipped to 300 words)."""
+    out = {"input_mode": args.input_mode,
+           "figma": {"source": figma_source, "links": [lk["url"] for lk in links], "prd_links_discarded": discarded},
+           "instructions": intake.clip_words(instructions) if instructions else None}
+    if args.input_mode == "prompt":
+        out["prompt"] = intake.clip_words(intake.read_text_arg(args.prompt_text))
+    return out
+
+
 def _blob_images(text: str) -> int:
     return len(re.findall(r"!\[[^\]]*\]\(blob:", text))
 
@@ -140,7 +163,7 @@ def _axon_atlassian(cfg, model: str, run_dir: Path):
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["run-dir"]:  # where a run for these args lands — used by the commands before they start
-        rp = argparse.ArgumentParser(prog="python -m rfc_agent.scope run-dir")
+        rp = FriendlyParser(prog="python -m rfc_agent.scope run-dir")
         rp.add_argument("--prd")
         rp.add_argument("--jira")
         rp.add_argument("--run-dir")
@@ -159,18 +182,25 @@ def main(argv: list[str] | None = None) -> int:
         print(f"removed {n} snapshot(s)")
         return 0
 
-    p = argparse.ArgumentParser(prog="python -m rfc_agent.scope", description="Scope: prepare a run's inputs.")
+    p = FriendlyParser(prog="python -m rfc_agent.scope", description="Scope: prepare a run's inputs.")
     p.add_argument("--prd", required=True, help="Confluence url, page id, or a local markdown file")
     p.add_argument("--jira", help="Jira key or url")
     p.add_argument("--repos", default="", help="repos you already know are in scope, comma list")
     p.add_argument("--repos-root", help="local checkouts root (default: config REPOS_ROOT)")
     p.add_argument("--run-dir", help="run directory (default: a new RUNS_ROOT/<jira-key or prd-id>-<timestamp>)")
     p.add_argument("--out", help="parent for the auto-named run dir (default: config RUNS_ROOT)")
-    p.add_argument("--yes", action="store_true", help="accept the proposal without the confirm screen")
+    p.add_argument("--yes", action="store_true",
+                   help="run unattended: ask nothing, and take the default for every decision that would pause scope")
     p.add_argument("--confirm-file", action="store_true",
                    help="confirm through files instead of the terminal: write confirm/proposal.json and wait for "
                         "confirm/answers.json (what /rfc-agent:scope uses; automatic when there is no terminal)")
     p.add_argument("--no-figma", action="store_true", help="skip Figma entirely")
+    p.add_argument("--figma", action="append", default=[], metavar="URL",
+                   help="a Figma design link to use instead of any in the PRD (repeatable)")
+    p.add_argument("--instructions", metavar="TEXT|FILE",
+                   help="extra instructions for this run; where they conflict with the PRD they win")
+    p.add_argument("--input-mode", choices=("flags", "prompt"), default="flags", help=argparse.SUPPRESS)
+    p.add_argument("--prompt-text", metavar="TEXT|FILE", help=argparse.SUPPRESS)
     p.add_argument("--reuse-figma", choices=("ask", "always", "never"), default="ask",
                    help="reuse a cached export of the same link (default: ask)")
     p.add_argument("--figma-wait", type=int, default=figma.WAIT_S, help="seconds to wait per Figma export")
@@ -234,18 +264,22 @@ def main(argv: list[str] | None = None) -> int:
                     _say(f"STOP: {e}")
                     return 1
             with timer.step("atlassian_fetch"):
-                res = session.fetch(pages=[pid] if pid else [], page_descendants=[pid] if pid else [],
-                                    jira=[jira_key] if jira_key else [])
+                try:
+                    res = session.fetch(pages=[pid] if pid else [], page_descendants=[pid] if pid else [],
+                                        jira=[jira_key] if jira_key else [])
+                except at.AtlassianError as e:
+                    _say(f"STOP: {e}")
+                    return 1
                 cost += res.cost_usd
                 for c in res.calls:
                     if c.is_error:
                         _say(f"connector error on {c.name} {json.dumps(c.input)}: {c.text[:200]}")
-                    elif c.name == "getConfluencePage" and str(c.input.get("pageId")) == pid:
+                    elif c.op == "getConfluenceContent" and c.target == pid:
                         page = at.parse_page(c)
                         if page:
                             _write_page(run_dir / "raw" / "prd.md", page, site)
                             scope["prd_title"] = page["title"]
-                    elif c.name == "getConfluencePageDescendants":
+                    elif c.op == at.DESCENDANTS:
                         descendants = at.parse_descendants(c)
                     elif c.name == "getJiraIssue" and jira_key:
                         _write_jira(run_dir / "raw" / "jira.md", jira_key, c)
@@ -262,8 +296,22 @@ def main(argv: list[str] | None = None) -> int:
             _say("STOP: the PRD came back empty — see logs/scope.atlassian.stream.jsonl")
             return 1
         prd_text = prd_path.read_text(encoding="utf-8")
+        prd_source_text = prd_text  # the PRD as written: its Figma links are the PRD's, not the instructions'
         _say(f"PRD: {scope.get('prd_title') or prd_path.name} ({len(prd_text):,} chars)"
              + (f", Jira {jira_key}" if jira_key else ""))
+        instructions = intake.read_text_arg(args.instructions)
+        if args.instructions and not instructions:
+            _say("STOP: --instructions is empty")
+            return 1
+        if instructions:
+            (run_dir / "raw" / "prd.source.md").write_text(prd_source_text, encoding="utf-8")
+            (run_dir / "raw" / "instructions.md").write_text(instructions + "\n", encoding="utf-8")
+            prd_text = _with_instructions(prd_source_text, instructions)
+            prd_path.write_text(prd_text, encoding="utf-8")
+            _say(f"instructions: {len(instructions.split())} words saved to raw/instructions.md — they override the "
+                 "PRD where they conflict (the untouched PRD is raw/prd.source.md)")
+        if args.input_mode == "prompt":
+            (run_dir / "raw" / "prompt.md").write_text(intake.read_text_arg(args.prompt_text) + "\n", encoding="utf-8")
         blobs = _blob_images(prd_text)
         if blobs:
             _say(f"WARN: {blobs} embedded image(s) in the PRD cannot be fetched through the connector")
@@ -271,7 +319,27 @@ def main(argv: list[str] | None = None) -> int:
 
         linked_ids = at.linked_page_ids(prd_text, exclude={pid or ""} | {d["id"] for d in descendants})
         body_jira = [k for k in at.jira_keys(prd_text) if k != jira_key]
-        figma_links = [] if args.no_figma else figma.links_in(prd_text)
+        bad = [u for u in args.figma if not figma.links_in(u)]
+        if bad:
+            _say(f"STOP: --figma {bad[0][:80]} is not a Figma design link (https://www.figma.com/design/<file key>/…)")
+            return 1
+        picked = figma.choose_links(prd_source_text, args.figma, instructions)
+        figma_links = [] if args.no_figma else picked["links"]
+        figma_source, design_decided = ("skipped (--no-figma)" if args.no_figma else picked["source"]), False
+        if picked["prd_links_discarded"] and not args.no_figma:
+            _say(f"Figma: using the link you gave ({picked['source']}); the PRD's own "
+                 f"{len(picked['prd_links_discarded'])} link(s) are ignored")
+        if not args.no_figma and not figma_links and interactive:
+            use_file = args.confirm_file or not sys.stdin.isatty()
+            url = confirm.ask_design("the PRD links no Figma design and none was passed with --figma", run_dir,
+                                     use_file)
+            if url:
+                figma_links, figma_source = figma.links_in(url), "added at the prompt"
+            else:
+                figma_source, design_decided = "none (continued without a design)", True
+        scope["figma_source"] = figma_source
+        observe.operator("run_input", _run_input(args, instructions, figma_source, figma_links,
+                                                 picked["prd_links_discarded"]))
 
         # 3 — figma exports (operator keypress) while scope candidates are computed in the background
         t_layer.join()
@@ -387,7 +455,7 @@ def main(argv: list[str] | None = None) -> int:
                   f"  context layer: {'ok' if layer.get('ok') else 'UNAVAILABLE — ' + str(layer.get('why'))}")
         # no design to read (and Figma not skipped on purpose): the operator decides whether to go on
         no_design = None
-        if not args.no_figma and not any(it.kind == "figma" for it in items):
+        if not args.no_figma and not design_decided and not any(it.kind == "figma" for it in items):
             errs = [ex["error"] for ex in exports if ex.get("error")]
             no_design = ("the PRD links no Figma design" if not exports
                          else "no Figma screens could be read: " + "; ".join(errs or ["no sections found"]))
@@ -402,7 +470,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"\n{header}{confirm.render(items)}\n", file=sys.stderr)
                 if no_design:
                     _say("WARNING: going on without a design (--yes)")
-        for name in _dropped_added_repos(items):  # never silent: file mode has no second screen to show it
+        for it in items:  # what happened to each repo typed by hand: never silent
+            if it.kind == "repo" and it.extra.get("why") == ["added by you"] and it.include:
+                _say(f"added repo '{it.key}' (branch {it.extra.get('branch', '?')}) — traced like the ticked ones")
+        for name in _dropped_added_repos(items):  # file mode has no second screen to show it
             _say(f"WARNING: '{name}' is NOT on Bitbucket (wrong name, or no access) — dropped. "
                  "Rerun scope with the exact repo name.")
         observe.operator("confirm", {"accepted_defaults": not interactive,
@@ -433,19 +504,23 @@ def main(argv: list[str] | None = None) -> int:
             want_jira = [it.key for it in items if it.kind == "jira" and it.include]
             fetched_pages: list[dict] = []
             if (want_pages or want_jira) and session:
-                res = session.fetch(pages=[it.key for it in want_pages], jira=want_jira)
+                try:
+                    res = session.fetch(pages=[it.key for it in want_pages], jira=want_jira)
+                except at.AtlassianError as e:
+                    _say(f"STOP: {e}")
+                    return 1
                 cost += res.cost_usd
                 for c in res.calls:
                     if c.is_error:
                         _say(f"connector error on {c.name}: {c.text[:200]}")
-                    elif c.name == "getConfluencePage":
+                    elif c.op == "getConfluenceContent":
                         page = at.parse_page(c)
                         if page:
                             _write_page(run_dir / "raw" / "linked" / f"{page['id']}-{_slugify(page['title'])}.md", page,
                                         cfg.get("ATLASSIAN.SITE"))
                             fetched_pages.append({"id": page["id"], "title": page["title"]})
-                    elif c.name == "getJiraIssue":
-                        k = str(c.input.get("issueIdOrKey"))
+                    elif c.op == "getJiraIssue":
+                        k = c.target
                         _write_jira(run_dir / "raw" / "linked" / f"jira-{k}.md", k, c)
             snaps = fut_snap.result()
             if fut_fig:
@@ -479,7 +554,8 @@ def main(argv: list[str] | None = None) -> int:
     links_md = ["# Linked context", "", "## Child pages"] + [f"- {d['title']} — page id {d['id']}" for d in descendants]
     links_md += ["", "## Linked pages"] + [f"- page id {i}" for i in linked_ids]
     links_md += ["", "## Referenced Jira"] + [f"- {k}" for k in body_jira]
-    links_md += ["", "## Figma links in PRD"] + [f"- {lk['url']}" for lk in figma.links_in(prd_text)]
+    links_md += ["", f"## Figma links used (source: {scope.get('figma_source', 'prd')})"]
+    links_md += [f"- {lk['url']}" for lk in figma_links]
     (run_dir / "raw" / "links.md").write_text("\n".join(links_md) + "\n", encoding="utf-8")
 
     scope.update({

@@ -55,6 +55,7 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"atlassian.{0,80}(?:not connected|needs? auth|unauthori[sz]ed|not available|not usable|failed"
             r"|disconnected)"
             r"|no atlassian mcp server is connected|tried \d+ fresh connections|atlassian did not answer"
+            r"|atlassian connector did not finish connecting|atlassian server answered none of the v2"
             r"|(?:confluence|jira).{0,80}(?:not connected|unauthori[sz]ed|could not (?:fetch|read))",
             re.I,
         ),

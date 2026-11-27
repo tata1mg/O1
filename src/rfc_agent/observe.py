@@ -385,6 +385,10 @@ def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
             md |= {"run_dir": str(run_dir), **identity.trace_metadata(ident)}
             if ident.get("workstream_source") == "jira":
                 tags.append(f"ticket:{ident['workstream_id']}")
+        mode = _arg(argv, "--input-mode") or "flags"  # a free-text prompt is told apart from explicit flags
+        md["input_mode"] = mode
+        if mode == "prompt":
+            tags.append("input:prompt")
         md = {k: v for k, v in md.items() if v is not None}
         prop = propagate_attributes(
             session_id=session,
@@ -395,7 +399,9 @@ def _open_root(cfg, run_dir: Path | None, entry: str, argv: list[str]):
         )
         prop.__enter__()
     with contextlib.suppress(Exception):
-        _root.update(input={"entry": entry, "argv": argv})  # the trace's Input is the root observation's
+        # inline instructions / prompt text can be long: the trace keeps the first 300 characters of each argument
+        # the trace's Input is the root observation's
+        _root.update(input={"entry": entry, "argv": [a if len(a) <= 300 else a[:300] + "…" for a in argv]})
     if run_dir is not None:  # feedback (rfc_agent.feedback) scores the trace this run produced
         _facts_src = (run_dir, _arg(argv, "--prd"))
         _entry_name = entry
@@ -741,6 +747,39 @@ def gate(
         ev.score(name=f"gate_{kind}_passed", value=0.0 if failures else 1.0, data_type="BOOLEAN")
     with contextlib.suppress(Exception):
         ev.score(name=f"gate_{kind}_must_fix", value=float(len(failures)))
+    _end(ev)
+
+
+def mermaid(stats: dict, *, stage: str, round_label: str | None = None) -> None:
+    """How the RFC's Mermaid diagrams fared, as an `evaluator` observation with scores — one stable name per number,
+    so a dashboard can chart failures per RFC. `stats` is Draft's `check.json` "mermaid" entry: total,
+    failed_first_parse, repaired_automatically, fixed_by_lead, shown_as_code, parser and the reasons (line + the
+    parser's message)."""
+    if not active():
+        return
+    reasons = list(stats.get("reasons") or [])
+    ev = _child(
+        "evaluator",
+        f"mermaid:{stage}" + (f":{round_label}" if round_label else ""),
+        input={"diagrams": stats.get("total", 0), "parser": stats.get("parser")},
+        metadata={"stage": stage, "kind": "mermaid", "reasons": _clip(reasons[:30])},
+    )
+    if ev is None:
+        return
+    shown = int(stats.get("shown_as_code") or 0)
+    first = int(stats.get("failed_first_parse") or 0)
+    with contextlib.suppress(Exception):
+        ev.update(
+            output={k: stats.get(k) for k in ("failed_first_parse", "repaired_automatically", "fixed_by_lead",
+                                              "shown_as_code")} | {"reasons": _clip(reasons[:30])},
+            level="ERROR" if shown else ("WARNING" if first else "DEFAULT"),
+        )
+    for name, value in (("mermaid_diagrams", stats.get("total", 0)), ("mermaid_failed_first_parse", first),
+                        ("mermaid_repaired_automatically", stats.get("repaired_automatically", 0)),
+                        ("mermaid_fixed_by_lead", stats.get("fixed_by_lead", 0)), ("mermaid_shown_as_code", shown),
+                        ("mermaid_failed", 1 if shown else 0)):
+        with contextlib.suppress(Exception):
+            ev.score(name=name, value=float(value))
     _end(ev)
 
 

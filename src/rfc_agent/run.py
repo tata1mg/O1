@@ -34,6 +34,8 @@ import sys
 import time
 from pathlib import Path
 
+from harness.cli_errors import FriendlyParser
+
 from . import feedback, observe, run_end, run_facts
 from .legacy_names import OLD_FROM, migrate_run_dir
 
@@ -88,7 +90,7 @@ def _stage_name(value: str) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="rfc", description="Run the whole RFC pipeline (Scope → Summarize).")
+    p = FriendlyParser(prog="rfc", command="/rfc", description="Run the whole RFC pipeline (Scope → Summarize).")
     g = p.add_argument_group("inputs (Scope)")
     g.add_argument(
         "--prd", help="Confluence URL, page id, or a local markdown file: starts a NEW run in its own folder"
@@ -97,6 +99,12 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--repos", help="repos you already know are in scope, comma list")
     g.add_argument("--repos-root", help="local checkouts root (default: config REPOS_ROOT)")
     g.add_argument("--no-figma", action="store_true", help="ignore Figma links")
+    g.add_argument("--figma", action="append", default=[], metavar="URL",
+                   help="a Figma design link for this run; replaces any link in the PRD (repeatable)")
+    g.add_argument("--instructions", metavar="TEXT|FILE",
+                   help="extra instructions for this run (text or a file); where they conflict with the PRD they win")
+    g.add_argument("--input-mode", choices=("flags", "prompt"), help=argparse.SUPPRESS)
+    g.add_argument("--prompt-text", metavar="TEXT|FILE", help=argparse.SUPPRESS)
     g.add_argument("--reuse-figma", choices=("ask", "always", "never"))
     g.add_argument("--fresh-clone", action="store_true", help="never touch your checkouts (repo cache only)")
     g = p.add_argument_group("stage options")
@@ -115,7 +123,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     g.add_argument("--redo-scope", action="store_true", help="run Scope again even if the inputs exist")
     g.add_argument("--redo-prep", dest="redo_scope", action="store_true", help=argparse.SUPPRESS)  # old name
-    g.add_argument("--yes", action="store_true", help="accept every pause's default (no questions)")
+    g.add_argument("--yes", action="store_true",
+                   help="run unattended: ask nothing, and take the default for every decision that would pause the run")
     from .axon_agent import add_engine_args
 
     add_engine_args(p.add_argument_group("engine (claude-code | axon)"))
@@ -142,9 +151,15 @@ def stage_args(args, stage: str, run_dir: Path) -> list[str]:
             ("--repos", args.repos),
             ("--repos-root", args.repos_root),
             ("--reuse-figma", args.reuse_figma),
+            ("--instructions", args.instructions),
+            ("--prompt-text", args.prompt_text),
         ):
             if val:
                 a += [flag, val]
+        for url in args.figma or []:
+            a += ["--figma", url]
+        if args.input_mode == "prompt":
+            a += ["--input-mode", "prompt"]
         a += [
             f
             for f, on in (
@@ -171,7 +186,8 @@ def stage_args(args, stage: str, run_dir: Path) -> list[str]:
 
 # the options a run starts with; a resume restores any the new call leaves out
 RUN_ARGS = ("prd", "jira", "repos", "repos_root", "no_figma", "reuse_figma", "fresh_clone", "preset",
-            "req_granularity", "ask", "ask_review", "yes", "confirm_file")  # fmt: skip
+            "req_granularity", "ask", "ask_review", "yes", "confirm_file", "figma", "instructions", "input_mode",
+            "prompt_text")  # fmt: skip
 
 
 def _stop_on_sigterm() -> None:

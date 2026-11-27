@@ -162,7 +162,7 @@ and write it to `CFG` as `ATLASSIAN.SITE` (rule 5). Below, `<SITE>` is that valu
 
 The pipeline reads PRDs through Atlassian's MCP server. **Either** one works:
 - the **claude.ai Atlassian connector** (tools `mcp__claude_ai_Atlassian__*`), or
-- a user-scope server named `atlassian` added with `claude mcp add ... atlassian https://mcp.atlassian.com/v1/mcp`
+- a user-scope server named `atlassian` added with `claude mcp add ... atlassian https://mcp.atlassian.com/v2/mcp`
   (tools `mcp__atlassian__*`).
 
 **Check:** `claude mcp list | grep -iE "claude\.ai Atlassian|^atlassian"` — at least one line shows `✔ Connected`. If none does, ask the user to

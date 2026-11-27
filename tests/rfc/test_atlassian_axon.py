@@ -10,7 +10,8 @@ from rfc_agent.scope import atlassian as at
 from rfc_agent.scope import cli as scope_cli
 from rfc_agent.scope.atlassian_axon import AxonConnectorSession
 
-SITES = [{"id": "cloud-1", "url": "https://acme.atlassian.net"}, {"id": "cloud-2", "url": "https://other.net"}]
+V2_PAGE = {"data": {"id": "7", "type": "live_doc", "title": "T", "body": {"format": "markdown", "value": "b" * 300},
+                    "metadata": {"version": {"createdAt": "2026-10-26T05:37:35Z"}}}}
 
 
 def _stream(calls, *, settled=True, stop="toolUse", cost=0.001):
@@ -52,11 +53,19 @@ def _session(tmp_path, **kw):
     return s.__enter__()
 
 
-def test_connect_picks_the_configured_site(tmp_path, fake):
-    fake.turns.append((_stream([("getAccessibleAtlassianResources", {}, {"text": json.dumps(SITES)})]), 0))
+def test_connect_uses_the_site_hostname_and_asks_the_model_nothing(tmp_path, fake):
     s = _session(tmp_path)
-    res = s.connect("https://acme.atlassian.net/")
-    assert s.cloud_id == "cloud-1" and res.cost_usd == pytest.approx(0.001)
+    res = s.connect("https://Acme.atlassian.net/")
+    assert s.cloud_id == "acme.atlassian.net" and res.cost_usd == 0 and fake.seen == []  # no turn, no cost
+    assert s.connector_status == "connected"
+
+
+def test_one_turn_is_its_own_folder_and_only_the_v2_read_tools(tmp_path, fake):
+    fake.turns.append((_stream([("getConfluenceContent", {"content_id": "7"}, {"text": json.dumps(V2_PAGE)})]), 0))
+    s = _session(tmp_path)
+    s.connect("https://acme.atlassian.net/")
+    res = s.fetch(pages=["7"])
+    assert res.cost_usd == pytest.approx(0.001)
     run = fake.seen[0]
     # its own folder, with a project override that only switches the user server to direct exposure
     override = json.loads((run["cwd"] / ".pi" / "mcp.json").read_text())
@@ -64,7 +73,9 @@ def test_connect_picks_the_configured_site(tmp_path, fake):
     argv = run["argv"]
     assert argv[:5] == ["axon", "pi", "--mode", "json", "-p"] and "--approve" in argv and "--no-session" in argv
     tools = argv[argv.index("--tools") + 1].split(",")
-    assert tools == [f"mcp__atlassian__{t}" for t in at.TOOLS]  # nothing but the four fetch tools
+    assert tools == [f"mcp__atlassian__{t}" for t in at.TOOLS]  # nothing but the read tools
+    assert at.TOOLS == ("getConfluenceContent", "executeRead", "getJiraIssue")
+    assert "getConfluenceContent with cloudId acme.atlassian.net, content_id 7" in run["input"]
     assert argv[argv.index("--model") + 1] == "gemini-3.8-flash"
     assert (tmp_path / "logs" / "scope.atlassian.stream.jsonl").read_text().count("agent_settled") == 1
 
@@ -72,58 +83,54 @@ def test_connect_picks_the_configured_site(tmp_path, fake):
 def test_fetch_reads_the_untruncated_file(tmp_path, fake):
     body = "x" * 30000
     full = tmp_path / "pi-mcp-full.txt"
-    full.write_text(json.dumps({"id": "42", "title": "PRD", "body": body, "webUrl": "u"}))
+    full.write_text(json.dumps({"data": {"id": "42", "title": "PRD", "body": {"format": "markdown", "value": body}}}))
     cut = "Warning: truncated output …" + body[:100]
     fake.turns.append((_stream([
-        ("getConfluencePage", {"pageId": "42"}, {"text": cut, "details": {"fullOutputPath": str(full)}}),
+        ("getConfluenceContent", {"content_id": "42"}, {"text": cut, "details": {"fullOutputPath": str(full)}}),
         ("getJiraIssue", {"issueIdOrKey": "AB-1"}, {"text": "{\"key\": \"AB-1\"}"}),
-        ("getConfluencePageDescendants", {"pageId": "42"}, {"text": "nope", "error": True}),
+        ("executeRead", {"name": "getConfluenceContentDescendants", "inputs": {"contentId": "42"}},
+         {"text": "nope", "error": True}),
     ]), 0))
     s = _session(tmp_path)
-    s.cloud_id = "cloud-1"
+    s.cloud_id = "acme.atlassian.net"
     res = s.fetch(pages=["42"], page_descendants=["42"], jira=["AB-1"])
     page, jira, desc = res.calls
     assert at.parse_page(page)["body"] == body  # byte-exact, not the 20 KB cut
-    assert jira.name == "getJiraIssue" and jira.text == '{"key": "AB-1"}'
-    assert desc.is_error
-    assert "cloudId cloud-1" in fake.seen[0]["input"]
-
-
-def test_the_site_must_match_exactly(tmp_path, fake):
-    lookalike = [{"id": "evil", "url": "https://notacme.atlassian.net"}, {"id": "other", "url": "https://other.net"}]
-    fake.turns.append((_stream([("getAccessibleAtlassianResources", {}, {"text": json.dumps(lookalike)})]), 0))
-    with pytest.raises(at.AtlassianError) as e:
-        _session(tmp_path).connect("https://acme.atlassian.net")
-    assert not e.value.retryable  # no substring match, no first-site pick
-    assert str(e.value) == ("ATLASSIAN.SITE is acme.atlassian.net, but this Atlassian sign-in reaches only: "
-                            "notacme.atlassian.net, other.net. Fix ATLASSIAN.SITE, or sign in with an account "
-                            "that can see that site.")
-    assert at.pick_cloud_id(json.dumps(SITES), "ACME.atlassian.net/") == "cloud-1"  # scheme, case, slash don't matter
-    assert at.pick_cloud_id("[]", "https://acme.atlassian.net") is None  # nothing listed: the retryable path
+    assert jira.op == "getJiraIssue" and jira.target == "AB-1" and jira.text == '{"key": "AB-1"}'
+    assert desc.is_error and desc.op == "getConfluenceContentDescendants" and page.target == "42"
+    assert "cloudId acme.atlassian.net" in fake.seen[0]["input"]
 
 
 def test_not_signed_in_is_not_retried(tmp_path, fake):
-    fake.turns.append((_stream([]), 0))
     fake.status = {"servers": [{"name": "atlassian", "state": "needs-auth"}]}
-    s = _session(tmp_path)
     with pytest.raises(at.AtlassianError) as e:
-        s.connect("https://acme.atlassian.net")
+        _session(tmp_path).connect("https://acme.atlassian.net")
     assert not e.value.retryable and "axon pi mcp login atlassian" in str(e.value)
 
 
-def test_missing_server_says_how_to_add_it(tmp_path, fake):
-    fake.turns.append((_stream([]), 0))
+def test_missing_server_says_how_to_add_it_on_v2(tmp_path, fake):
     fake.status = {"servers": []}
     with pytest.raises(at.AtlassianError) as e:
         _session(tmp_path).connect("https://acme.atlassian.net")
-    assert "axon pi mcp add atlassian" in str(e.value) and not e.value.retryable
+    assert "axon pi mcp add atlassian --url https://mcp.atlassian.com/v2/mcp" in str(e.value)
+    assert not e.value.retryable
 
 
-def test_connected_but_silent_is_retryable(tmp_path, fake):
-    fake.turns.append((_stream([]), 0))
+def test_a_server_still_on_v1_is_refused_with_the_fix(tmp_path, fake):
+    fake.status = {"servers": [{"name": "atlassian", "state": "connected", "url": "https://mcp.atlassian.com/v1/mcp"}]}
     with pytest.raises(at.AtlassianError) as e:
         _session(tmp_path).connect("https://acme.atlassian.net")
-    assert e.value.retryable
+    msg = str(e.value)
+    assert "v1/mcp" in msg and "axon pi mcp remove atlassian" in msg and "v2/mcp" in msg and not e.value.retryable
+
+
+def test_fetch_with_no_connector_call_says_the_v2_tools_are_missing(tmp_path, fake):
+    fake.turns.append((_stream([]), 0))
+    s = _session(tmp_path)
+    s.connect("https://acme.atlassian.net")
+    with pytest.raises(at.AtlassianError) as e:
+        s.fetch(pages=["7"])
+    assert "v2" in str(e.value)
 
 
 def test_unfinished_turn_and_refusal(tmp_path, fake):
@@ -137,15 +144,13 @@ def test_unfinished_turn_and_refusal(tmp_path, fake):
     assert "refused" in str(e.value) and not e.value.retryable
 
 
-def test_open_session_retries_with_a_fresh_axon_session(tmp_path, fake):
+def test_open_session_connects_without_a_model_turn(tmp_path, fake):
     import contextlib
 
-    ok = _stream([("getAccessibleAtlassianResources", {}, {"text": json.dumps(SITES)})])
-    fake.turns += [(_stream([]), 0), (ok, 0)]
     with contextlib.ExitStack() as st:
-        s, _ = at.open_session(st, tmp_path / "x.jsonl", "https://acme.atlassian.net", wait_s=0,
-                               make=lambda: AxonConnectorSession(tmp_path / "x.jsonl"))
-        assert s.cloud_id == "cloud-1" and len(fake.seen) == 2
+        s, cost = at.open_session(st, tmp_path / "x.jsonl", "https://acme.atlassian.net", wait_s=0,
+                                  make=lambda: AxonConnectorSession(tmp_path / "x.jsonl"))
+        assert s.cloud_id == "acme.atlassian.net" and cost == 0 and fake.seen == []
 
 
 def test_scope_uses_axon_only_on_axon(tmp_path, monkeypatch):
@@ -164,14 +169,14 @@ def test_scope_uses_axon_only_on_axon(tmp_path, monkeypatch):
 
 
 def test_parse_page_reads_the_v2_shape():
-    """Atlassian's own MCP server (Axon's, and Claude Code's user-scope `atlassian`) returns Confluence v2 JSON."""
-    v2 = {"id": "7", "title": "T", "body": "b" * 300, "version": {"createdAt": "2026-10-26T05:37:35Z"},
-          "_links": {"base": "https://acme.atlassian.net/wiki", "webui": "/spaces/X/pages/7/T"}}
-    page = at.parse_page(at.ToolCall("getConfluencePage", {"pageId": "7"}, json.dumps(v2)))
-    assert page["url"] == "https://acme.atlassian.net/wiki/spaces/X/pages/7/T"
-    assert page["last_modified"] == "2026-10-26T05:37:35Z"
-    bare = at.parse_page(at.ToolCall("getConfluencePage", {}, json.dumps({"id": "7", "title": "T", "body": "x"})))
-    assert bare["url"] == "" and bare["last_modified"] == ""
+    """Atlassian MCP v2: {"data": {id, type, title, body: {format, value}, metadata: {version: {createdAt}}}}."""
+    page = at.parse_page(at.ToolCall("getConfluenceContent", {"content_id": "7"}, json.dumps(V2_PAGE)))
+    assert page["id"] == "7" and page["title"] == "T" and page["body"] == "b" * 300
+    assert page["url"] == "" and page["last_modified"] == "2026-10-26T05:37:35Z"
+    bare = {"data": {"title": "T", "body": {"format": "markdown", "value": "x"}}}
+    got = at.parse_page(at.ToolCall("getConfluenceContent", {"content_id": "9"}, json.dumps(bare)))
+    assert got["id"] == "9" and got["last_modified"] == ""
+    assert at.parse_page(at.ToolCall("getConfluenceContent", {}, json.dumps({"id": "7", "body": "v1 shape"}))) is None
 
 
 def test_write_page_falls_back_to_a_site_url(tmp_path):

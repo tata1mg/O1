@@ -171,3 +171,110 @@ def test_run_dir_prefers_the_jira_key_when_given(tmp_path, cfg, capsys):
 def test_cleanup_needs_exactly_one_argument(capsys):
     assert scope_cli.main(["cleanup"]) == 2
     assert "usage" in capsys.readouterr().err
+
+
+# ---- instructions, --figma, the design question and what the trace records ----------------------------------
+
+
+def _run_scope(tmp_path, prd, *extra):
+    root = _repos_root(tmp_path)
+    run = tmp_path / "run"
+    code = scope_cli.main(["--prd", str(prd), "--repos", "svc", "--repos-root", str(root), "--run-dir", str(run),
+                           *extra])
+    return code, run
+
+
+def test_instructions_go_on_top_of_the_prd_and_the_source_is_kept(tmp_path, cfg, prd, monkeypatch):
+    seen = []
+    monkeypatch.setattr(scope_cli.observe, "operator", lambda action, data=None: seen.append((action, data)))
+    code, run = _run_scope(tmp_path, prd, "--yes", "--no-figma", "--instructions", "mWeb only. No email form.")
+    assert code == 0
+    assert (run / "raw" / "instructions.md").read_text().strip() == "mWeb only. No email form."
+    assert PRD in (run / "raw" / "prd.source.md").read_text()
+    assert "Run instructions" not in (run / "raw" / "prd.source.md").read_text()  # the source is the PRD untouched
+    effective = (run / "raw" / "prd.md").read_text()
+    assert effective.startswith("---\nsource_url:") and "## Run instructions from the operator" in effective
+    assert effective.index("mWeb only") < effective.index("Duplicate-patient nudge")  # instructions first, PRD after
+    [(action, data)] = [x for x in seen if x[0] == "run_input"]
+    assert data["instructions"] == "mWeb only. No email form." and data["input_mode"] == "flags"
+    assert data["figma"]["source"].startswith("skipped")
+
+
+def test_instructions_can_come_from_a_file(tmp_path, cfg, prd):
+    f = tmp_path / "overrides.md"
+    f.write_text("Share a PDF through the native share sheet.\n")
+    code, run = _run_scope(tmp_path, prd, "--yes", "--no-figma", "--instructions", str(f))
+    assert code == 0
+    assert "native share sheet" in (run / "raw" / "prd.md").read_text()
+
+
+def test_no_instructions_leaves_the_prd_alone(tmp_path, cfg, prd):
+    code, run = _run_scope(tmp_path, prd, "--yes", "--no-figma")
+    assert code == 0
+    assert not (run / "raw" / "instructions.md").exists() and not (run / "raw" / "prd.source.md").exists()
+    assert "Run instructions" not in (run / "raw" / "prd.md").read_text()
+
+
+def test_a_figma_value_that_is_not_a_figma_link_stops(tmp_path, cfg, prd, capsys):
+    code, _ = _run_scope(tmp_path, prd, "--yes", "--figma", "https://example.com/not-figma")
+    assert code == 1 and "not a Figma design link" in capsys.readouterr().err
+
+
+def test_a_prompt_run_records_the_prompt_clipped_to_300_words(tmp_path, cfg, prd, monkeypatch):
+    seen = []
+    monkeypatch.setattr(scope_cli.observe, "operator", lambda action, data=None: seen.append((action, data)))
+    long_prompt = tmp_path / "prompt.md"
+    long_prompt.write_text("Build an rfc " + " ".join(f"w{i}" for i in range(400)))
+    code, run = _run_scope(tmp_path, prd, "--yes", "--no-figma", "--input-mode", "prompt",
+                           "--prompt-text", str(long_prompt))
+    assert code == 0
+    data = dict(seen)["run_input"]
+    assert data["input_mode"] == "prompt"
+    assert "w296" in data["prompt"] and "w297" not in data["prompt"]  # 3 words + w0…w296
+    assert (run / "raw" / "prompt.md").read_text().startswith("Build an rfc")
+
+
+def test_no_figma_anywhere_asks_the_design_question_before_figma_runs(tmp_path, cfg, prd, monkeypatch):
+    """No --figma, none in the instructions, none in the PRD: ask first; proceeding skips the late question."""
+    asked = {}
+
+    def fake_ask(reason, run_dir=None, use_file=False, **_):
+        asked["reason"] = reason
+        return None
+
+    def fake_via_file(items, add_repo, header, run_dir, timeout_s=3600, no_design=None):
+        asked["late_no_design"] = no_design
+        return items
+
+    monkeypatch.setattr(scope_cli.confirm, "ask_design", fake_ask)
+    monkeypatch.setattr(scope_cli.confirm, "via_file", fake_via_file)
+    code, run = _run_scope(tmp_path, prd, "--confirm-file")
+    assert code == 0
+    assert "no Figma design" in asked["reason"] or "links no Figma" in asked["reason"]
+    assert asked["late_no_design"] is None  # decided once: not asked again at the confirm screen
+    assert json.loads((run / "scope.json").read_text())["figma_source"].startswith("none")
+
+
+def test_a_link_added_at_the_design_question_is_used_and_recorded(tmp_path, cfg, prd, monkeypatch):
+    link = "https://www.figma.com/design/uwvYvW3cBm2DNKXgfIUXC5?node-id=0-1"
+    monkeypatch.setattr(scope_cli.confirm, "ask_design", lambda *a, **k: link)
+    monkeypatch.setattr(scope_cli.figma, "ensure_plugin", lambda: (False, "m", []))
+
+    class NoPort:  # the exporter cannot start: the link is still used and its failure is reported
+        def __init__(self, *a, **k):
+            raise OSError("busy")
+
+    monkeypatch.setattr(scope_cli.figma, "Exporter", NoPort)
+    monkeypatch.setattr(scope_cli.confirm, "via_file", lambda items, add_repo, header, run_dir, **k: items)
+    code, run = _run_scope(tmp_path, prd, "--confirm-file")
+    assert code == 0
+    scope = json.loads((run / "scope.json").read_text())
+    assert scope["figma_source"] == "added at the prompt"
+    assert scope["figma"][0]["key"] == "uwvYvW3cBm2DNKXgfIUXC5" and scope["figma"][0]["mode"] == "failed"
+    assert link in (run / "raw" / "links.md").read_text()
+
+
+def test_added_repos_are_reported_one_by_one(tmp_path, cfg, prd, capsys):
+    code, _ = _run_scope(tmp_path, prd, "--yes", "--no-figma")
+    assert code == 0  # `svc` was named with --repos, so it is not an "added by you" repo: no "added" line
+    assert "added repo" not in capsys.readouterr().err

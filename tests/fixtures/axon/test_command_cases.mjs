@@ -3,6 +3,7 @@
 //   node test_command_cases.mjs <test-command.js> <fake_uv_testing.py> <project dir> <run dir> <cwd> <uv log>
 // Prints one JSON line {ok, failures:[...]} — the python test asserts on it.
 import fs from "node:fs";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const [, , cmdJs, fakeUv, project, runDir, cwd, uvLog] = process.argv;
@@ -35,6 +36,13 @@ const gen = m.harnessCmd("generate", { feature: "F", runDir: "/r", rfcRunDir: "/
 check("harnessCmd generate", gen.join(" ") === "harness run testing --feature F --run-dir /r --rfc-run-dir /d --no-interactive --test-data /t --engine axon --disable testing.store", gen.join(" "));
 check("parsePrint missing", JSON.stringify(m.parsePrint("execute web: missing --env, --build").missing) === JSON.stringify(["--env", "--build"]));
 check("parsePrint run dir", m.parsePrint("uv run --project P harness run testing --feature F --run-dir /x/y --env e").runDir === "/x/y");
+{ // a launch that ends badly says why: the log's STOP line (a wrong parameter names itself), else the exit code
+  const lf = path.join(cwd, "stopreason.out");
+  fs.writeFileSync(lf, "usage…\n[harness] STOP: Invalid parameter found: --nope, please check supported parameters\n");
+  check("stopReason names the wrong parameter", m.stopReason(lf, 1) === "Invalid parameter found: --nope, please check supported parameters", m.stopReason(lf, 1));
+  check("stopReason clean exit", m.stopReason(lf, 0) === null && m.stopReason(lf, null) === null);
+  check("stopReason no log line", m.stopReason(path.join(cwd, "nope.out"), 3).startsWith("the process ended with exit 3"));
+}
 const rc = await import(pathToFileURL(cmdJs.replace("test-command.js", "rfc-command.js")).href);
 const saved = process.env.PATH;
 process.env.PATH = "/usr/bin";

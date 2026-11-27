@@ -110,16 +110,14 @@ READONLY_TOOLS: dict[str, tuple[str, ...]] = {
         "sheets_get_sheet_dimensions",
     ),
     "atlassian": (
-        "getConfluencePage",
-        "getConfluencePageDescendants",
-        "getConfluencePageFooterComments",
-        "getConfluencePageInlineComments",
+        # Atlassian MCP v2: executeRead is the generic READ entry (sub-pages, comments, search …); the write and
+        # destructive entries (executeWrite, executeDestructive) are deliberately not granted
+        "getConfluenceContent",
         "getJiraIssue",
-        "searchConfluenceUsingCql",
-        "searchJiraIssuesUsingJql",
-        "getAccessibleAtlassianResources",
-        "search",
-        "fetch",
+        "executeRead",
+        "discover",
+        "searchConfluence",
+        "listJiraIssueComments",
     ),
     "figma": (
         "get_design_context",

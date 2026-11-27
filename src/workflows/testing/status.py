@@ -17,11 +17,12 @@ Read-only: writes nothing.
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from collections import Counter
 from pathlib import Path
+
+from harness.cli_errors import FriendlyParser
 
 if __package__ in (None, ""):  # run as a script: make `workflows.testing` importable from src/
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -407,7 +408,7 @@ def milestone(run_dir: Path, stage: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="status")
+    ap = FriendlyParser(tag="test", prog="status")
     ap.add_argument("run_dir")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--kiwi", action="store_true")

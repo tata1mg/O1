@@ -14,7 +14,6 @@ edits a reviewer made in Kiwi. `--print` shows the command without running it. E
 
 from __future__ import annotations
 
-import argparse
 import shlex
 import subprocess
 import sys
@@ -23,6 +22,7 @@ from pathlib import Path
 if __package__ in (None, ""):  # run as a script: make `workflows.testing` importable from src/
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from harness.cli_errors import FriendlyParser
 from workflows.testing.execute import PROJECT, _load, latest_run  # noqa: E402
 from workflows.testing.preflight import load_config  # noqa: E402
 
@@ -47,7 +47,7 @@ def command(run_dir: Path, engine: str = "") -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="evaluation")
+    ap = FriendlyParser(tag="test", prog="evaluation")
     ap.add_argument("--run-dir")
     ap.add_argument("--print", action="store_true", dest="print_only")
     ap.add_argument("--engine", default="", help="engine for the evaluator (default: the harness's)")

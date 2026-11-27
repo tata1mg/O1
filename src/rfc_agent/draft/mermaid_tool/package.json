@@ -1,0 +1,10 @@
+{
+  "name": "rfc-agent-mermaid-check",
+  "private": true,
+  "type": "module",
+  "description": "Parses Mermaid diagrams with Mermaid's own parser (the one GitHub, mermaid.live and VS Code use). Installed once into ~/.cache/rfc-agent/mermaid-check by rfc_agent.draft.mermaid_check.",
+  "dependencies": {
+    "mermaid": "11.17.2",
+    "jsdom": "26.1.0"
+  }
+}

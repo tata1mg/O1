@@ -25,9 +25,15 @@ from urllib.parse import urlsplit
 from .. import observe
 
 # the claude.ai connector, or the user-scope `atlassian` server the install guide adds (CONFIG.md §5):
-# same tools, same OAuth host
+# same tools, same OAuth host. Atlassian MCP v2 only (https://mcp.atlassian.com/v2/mcp): the v1 endpoint is
+# deprecated and its tools (getConfluencePage, getConfluencePageDescendants, getAccessibleAtlassianResources) are gone.
+# v2 reads a page with getConfluenceContent; sub-pages and every other read go through the generic executeRead
+# (`name` + `inputs`); the site's hostname is accepted as the cloudId, so no lookup call is needed.
 PREFIXES = ("mcp__claude_ai_Atlassian__", "mcp__atlassian__")
-TOOLS = ("getAccessibleAtlassianResources", "getConfluencePage", "getConfluencePageDescendants", "getJiraIssue")
+TOOLS = ("getConfluenceContent", "executeRead", "getJiraIssue")
+DESCENDANTS = "getConfluenceContentDescendants"
+V1_HINT = ("rfc-agent needs the Atlassian MCP v2 server (https://mcp.atlassian.com/v2/mcp); it looks like this one "
+           "is still on v1. Remove the server and add it again with that URL, sign in, then rerun.")
 DEFAULT_MODEL = "claude-haiku-4-5"
 TURN_TIMEOUT_S = 180
 
@@ -59,6 +65,21 @@ class ToolCall:
     input: dict
     text: str = ""
     is_error: bool = False
+
+    @property
+    def op(self) -> str:
+        """The operation: for v2's generic `executeRead` it is the named read (`inputs.name`), else the tool name."""
+        return str(self.input.get("name") or self.name) if self.name == "executeRead" else self.name
+
+    @property
+    def target(self) -> str:
+        """The id this call was made for (a page's content id, an issue key)."""
+        inputs = self.input.get("inputs") if isinstance(self.input.get("inputs"), dict) else {}
+        for src in (self.input, inputs):
+            for k in ("content_id", "contentId", "pageId", "issueIdOrKey", "issueKey", "key"):
+                if src.get(k):
+                    return str(src[k])
+        return ""
 
 
 @dataclass
@@ -217,30 +238,43 @@ class ConnectorSession:
             raise AtlassianError(
                 f"no Atlassian MCP server is connected (status '{self.connector_status}'). Authenticate one "
                 "once in Claude Code (run /mcp, pick 'atlassian' or 'claude.ai Atlassian'), then rerun scope.")
-        res = self._turn("Call getAccessibleAtlassianResources once. Do not call anything else. Reply: done.")
-        for c in res.calls:
-            if c.name == "getAccessibleAtlassianResources" and not c.is_error:
-                self.cloud_id = pick_cloud_id(c.text, site)
-        if not self.cloud_id:
+        if self.connector_status != "connected":
             raise AtlassianError(
-                "the Atlassian connector is not usable from headless claude (no getAccessibleAtlassianResources "
-                f"result; connector status '{self.connector_status}'). Atlassian's server is often just slow to "
-                "answer: rerun in a minute. If it keeps failing, re-authenticate it via /mcp and rerun.",
-                retryable=True)
-        res.cost_usd += warm.cost_usd
-        res.seconds += warm.seconds
-        return res
+                "the Atlassian connector did not finish connecting in headless claude (status "
+                f"'{self.connector_status}'). Atlassian's server is often just slow to answer: rerun in a minute. "
+                "If it keeps failing, re-authenticate it via /mcp and rerun.", retryable=True)
+        # v2 takes the site's hostname as the cloudId: nothing to look up, nothing to be billed for
+        self.cloud_id = _host(site)
+        if not self.cloud_id:
+            raise AtlassianError("ATLASSIAN.SITE is not set (e.g. yourcompany.atlassian.net)")
+        return warm
 
     def fetch(self, pages: list[str] = (), page_descendants: list[str] = (), jira: list[str] = ()) -> TurnResult:
         """One turn that makes every requested call (the model may batch them). Results are byte-exact."""
-        steps = [f"getConfluencePage with cloudId {self.cloud_id}, pageId {p}, contentFormat markdown" for p in pages]
-        steps += [f"getConfluencePageDescendants with cloudId {self.cloud_id}, pageId {p}" for p in page_descendants]
-        steps += [f"getJiraIssue with cloudId {self.cloud_id}, issueIdOrKey {k}" for k in jira]
+        steps = fetch_steps(self.cloud_id, pages, page_descendants, jira)
         if not steps:
             return TurnResult()
         prompt = ("Make exactly these tool calls (in parallel where you can), nothing else, and do not "
                   "summarise their output:\n- " + "\n- ".join(steps) + "\nThen reply: done.")
-        return self._turn(prompt)
+        return check_answered(self._turn(prompt))
+
+
+def fetch_steps(cloud_id: str, pages=(), page_descendants=(), jira=()) -> list[str]:
+    """The v2 calls for one fetch turn, worded so a small model makes exactly them."""
+    steps = [f"getConfluenceContent with cloudId {cloud_id}, content_id {p}, content_format markdown, detail full"
+             for p in pages]
+    steps += [f"executeRead with name {DESCENDANTS}, cloudId {cloud_id}, inputs {{\"contentId\": \"{p}\", "
+              "\"depth\": 2, \"limit\": 250}" for p in page_descendants]
+    steps += [f"getJiraIssue with cloudId {cloud_id}, issueIdOrKey {k}" for k in jira]
+    return steps
+
+
+def check_answered(res: TurnResult) -> TurnResult:
+    """A turn that asked for reads but made no connector call at all: the v2 tools are not bound (the server is
+    still on v1, or not connected). Say so, instead of letting Scope report an empty PRD."""
+    if not res.calls:
+        raise AtlassianError("the Atlassian server answered none of the v2 reads. " + V1_HINT)
+    return res
 
 
 # ---- turning tool results into raw/ files ---------------------------------------------------------
@@ -250,55 +284,38 @@ def _host(url: str) -> str:
     return (urlsplit(u if "//" in u else "//" + u).hostname or "").lower()
 
 
-def pick_cloud_id(sites_text: str, site: str) -> str | None:
-    """The cloudId of the accessible Atlassian site whose host is exactly ATLASSIAN.SITE's. None when the result
-    lists no sites (the connector didn't answer: retryable). When it lists sites and none matches, raise: on an
-    account with several sites, any other pick would fetch a valid-looking PRD from the wrong one."""
+def _data(call: ToolCall):
+    """The payload of a v2 result: {"data": {...}}. None when the result is not JSON of that shape."""
     try:
-        sites = json.loads(sites_text)
+        out = json.loads(call.text)
     except ValueError:
         return None
-    if not isinstance(sites, list) or not sites:
-        return None
-    want = _host(site)
-    for s in sites:
-        if isinstance(s, dict) and want and _host(s.get("url", "")) == want:
-            return s.get("id")
-    hosts = ", ".join(sorted({_host(s.get("url", "")) for s in sites if isinstance(s, dict)})) or "none"
-    raise AtlassianError(f"ATLASSIAN.SITE is {want or 'not set'}, but this Atlassian sign-in reaches only: {hosts}. "
-                         "Fix ATLASSIAN.SITE, or sign in with an account that can see that site.")
+    return out.get("data") if isinstance(out, dict) and "data" in out else out
 
 
 def parse_page(call: ToolCall) -> dict | None:
-    """getConfluencePage result -> {id, title, body, url, last_modified}. None when it is not a page."""
-    try:
-        data = json.loads(call.text)
-    except ValueError:
+    """getConfluenceContent result -> {id, title, body, url, last_modified}. None when it is not a page.
+    v2 shape: {"data": {id, type, title, body: {format, value}, metadata: {version: {createdAt}}}}. It carries no
+    web url: Scope builds one from ATLASSIAN.SITE and the id."""
+    node = _data(call)
+    body = node.get("body") if isinstance(node, dict) else None
+    value = body.get("value") if isinstance(body, dict) else None
+    if not isinstance(value, str):
         return None
-    node = None
-    if isinstance(data, dict):
-        nodes = ((data.get("content") or {}).get("nodes") if isinstance(data.get("content"), dict) else None)
-        node = nodes[0] if nodes else (data if "body" in data else None)
-    if not isinstance(node, dict) or not isinstance(node.get("body"), str):
-        return None
-    # the claude.ai connector returns webUrl/lastModified; Atlassian's own MCP server (the user-scope `atlassian`
-    # server, and Axon's) returns the Confluence v2 shape: _links.webui (+ base) and version.createdAt
-    links = node.get("_links") if isinstance(node.get("_links"), dict) else {}
-    web = links.get("webui") and (links.get("base") or "") + links["webui"]
-    version = node.get("version") if isinstance(node.get("version"), dict) else {}
-    return {"id": str(node.get("id") or call.input.get("pageId") or ""), "title": node.get("title") or "",
-            "body": node["body"], "url": node.get("webUrl") or web or "",
-            "last_modified": node.get("lastModified") or version.get("createdAt") or ""}
+    meta = node.get("metadata") if isinstance(node.get("metadata"), dict) else {}
+    version = meta.get("version") if isinstance(meta.get("version"), dict) else {}
+    return {"id": str(node.get("id") or call.target), "title": node.get("title") or "", "body": value, "url": "",
+            "last_modified": version.get("createdAt") or meta.get("createdAt") or ""}
+
+
+PAGE_TYPES = ("page", "live_doc")  # the kinds of content that are readable pages (v2 also lists folders, whiteboards …)
 
 
 def parse_descendants(call: ToolCall) -> list[dict]:
-    try:
-        data = json.loads(call.text)
-    except ValueError:
-        return []
+    data = _data(call)
     rows = data.get("results") if isinstance(data, dict) else data
     return [{"id": str(r.get("id")), "title": r.get("title") or f"page {r.get('id')}", "depth": r.get("depth")}
-            for r in rows or [] if isinstance(r, dict) and r.get("type", "page") == "page" and r.get("id")]
+            for r in rows or [] if isinstance(r, dict) and r.get("type", "page") in PAGE_TYPES and r.get("id")]
 
 
 def provenance(source: str, title: str, fetched_at: str, extra: dict | None = None) -> str:

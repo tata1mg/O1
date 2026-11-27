@@ -8,13 +8,14 @@ Findings are merged into review/review.md. With --ask-review, you triage them be
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+from harness.cli_errors import FriendlyParser
 
 from .. import observe
 from ..config import get_config
@@ -113,7 +114,7 @@ def build_reviewers(run_dir: Path, flows: dict, scope: dict, cross: bool) -> lis
 
 @observe.entry("review")
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="python -m rfc_agent.review", description="Review: review the RFC.")
+    p = FriendlyParser(prog="python -m rfc_agent.review", description="Review: review the RFC.")
     p.add_argument("--run-dir", required=True, help="the run folder, after Draft")
     p.add_argument("--ask-review", action="store_true", default=None, help="triage findings before Revise")
     p.add_argument("--yes", action="store_true", help="with --ask-review: accept the default triage")

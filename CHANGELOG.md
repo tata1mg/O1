@@ -10,6 +10,36 @@ execution stages). Its version is in `plugins/test-agent/.claude-plugin/plugin.j
 
 ### Added
 
+- **Atlassian MCP v2 only (#15).** Scope reads the PRD with `getConfluenceContent`, sub-pages through `executeRead`
+  (`getConfluenceContentDescendants`) and Jira with `getJiraIssue`; the site hostname is the cloudId, so the
+  `getAccessibleAtlassianResources` lookup is gone. v1 (`/v1/mcp`, deprecated, removed 2027-03-01) is not supported:
+  a server still on v1 stops Scope with "reconnect on v2", and the Axon doctor names the three commands. **Everyone
+  re-adds the server once:** Claude Code `claude mcp remove atlassian` then `claude mcp add --transport http atlassian
+  https://mcp.atlassian.com/v2/mcp`; Axon `axon pi mcp remove atlassian`, `axon pi mcp add atlassian --url
+  https://mcp.atlassian.com/v2/mcp`, `axon pi mcp login atlassian`.
+- **Any wrong parameter now says so (#29), for `/rfc` and `/test`, on Claude Code and Axon.** One shared parser
+  (`harness/cli_errors.py`, used by `rfc`, every stage CLI, the harness and the test-agent helpers) names the wrong
+  option, suggests the nearest one and lists what the command supports: `[rfc] STOP: Invalid parameter found:
+  --figmaa (did you mean --figma?), please check supported parameters while running the /rfc command. Supported: …`.
+  Nothing is checked by option name. The Axon `/test` command also posts the STOP / error lines (or the exit code)
+  of any launch that ends badly, where it used to end without a reason. Exit codes are unchanged.
+- **`mermaid_failed` score** (1 when a diagram is shown as code, else 0) next to the other `mermaid_*` scores.
+- **Mermaid diagrams are parsed before the RFC is handed over (#18).** Draft's gate runs Mermaid's own parser on every
+  diagram, repairs `;` in message text (`#59;`), sends what still fails to the lead once with the parser's message, and
+  shows a diagram that still fails as plain code under a note instead of a block that errors on render. The counts
+  and reasons go to `out/check.json` and to Langfuse (`mermaid_*` scores). The parser installs itself on first use
+  (Node + npm); without them the step is skipped and says so.
+- **`--figma` and `--instructions`.** `--figma <link>` (repeatable) gives the run a Figma design; it replaces any link
+  in the PRD, and so does a Figma link typed in the instructions. `--instructions <text | file>` adds instructions
+  that win over the PRD where they conflict: the untouched PRD is kept as `raw/prd.source.md`, the instructions as
+  `raw/instructions.md`, and `raw/prd.md` carries them on top for every stage. Both are remembered on resume.
+- **`/rfc` in plain words.** `/rfc Build an rfc from <PRD link> and use the latest flows` becomes `--prd`, `--figma`
+  and `--instructions` (a PRD link is required; without one nothing starts). The trace is tagged `input:prompt` and
+  carries the prompt, clipped to 300 words. Works in Claude Code and Axon.
+- **Add a design link at the no-design question.** With no Figma link anywhere, Scope asks *Proceed without design /
+  Stop / Add your design* before Figma runs, so a pasted link goes through the normal screen picking.
+- **Langfuse records what the operator gave the run:** input mode, where the Figma link came from (flag,
+  instructions, PRD, added at the prompt, none) and which PRD links were ignored, and the instructions (300 words).
 - **`/rfc feedback` on Axon.** `/rfc feedback [--run-dir R] [up|down]` asks the same questions as
   `/rfc-agent:feedback` for a finished, stopped, failed or unknown-end run (and a re-rating, with a preview) and
   saves them on the run's Langfuse trace through `feedback.py`. Axon offers it once when a run ends. Each area has
@@ -20,6 +50,12 @@ execution stages). Its version is in `plugins/test-agent/.claude-plugin/plugin.j
 
 ### Changed
 
+- **`--yes` help text** now says it runs unattended and takes the default for every decision that would pause the
+  run, instead of a list of what it skips.
+- **Repo prompt.** After the repo list, Scope offers *Continue with these repos* or *Add more repos / set a branch*;
+  the text box appears only on the second, says what it is for and that Enter skips, and Scope reports what happened
+  to each name typed (added with its branch, or not on Bitbucket and dropped). Repos typed on an earlier pass are no
+  longer forgotten when the list is shown again.
 - **One install flow.** `INSTALL.md` is a router: the agent detects Claude Code or Axon, follows only that guide,
   and stops with a "raise a GitHub issue" message on any other harness. The Claude guide is `CLAUDE_INSTALL.md`,
   the Axon guide `AXON_INSTALL.md` (moved out of `docs/`, installs from `main`, assumes Axon is installed and
@@ -29,6 +65,9 @@ execution stages). Its version is in `plugins/test-agent/.claude-plugin/plugin.j
 
 ### Fixed
 
+- **Figma links without a file name were missed.** `figma.com/design/<key>?node-id=0-1`, a bare
+  `figma.com/design/<key>` and `node-id=71%3A125` were read as "the PRD links no Figma design" and stopped the run.
+  They are found now.
 - `/test-agent:*` run from the marketplace's folder, not the plugin cache that setup synced, so the Kiwi client
   was missing on the first test. `/rfc-agent:setup` now installs and checks that folder too.
 - Axon rating: a typed note after "Nothing wrong" was scored as a gap.

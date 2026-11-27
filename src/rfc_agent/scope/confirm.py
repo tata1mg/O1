@@ -26,8 +26,9 @@ class Item:
 _HEADINGS = {"repo": "Repos", "page": "Child / linked Confluence pages (fetched only if ticked)",
              "jira": "Jira referenced in the PRD (fetched only if ticked)", "figma": "Figma sections"}
 
-HELP = ("  numbers toggle (e.g. `3 7 9`) · `+repo_a,repo_b` adds repos · `b 2=feature/x` sets repo 2's branch\n"
-        "  Enter accepts · `q` aborts")
+HELP = ("  numbers toggle (e.g. `3 7 9`) · `b 2=feature/x` sets repo 2's branch\n"
+        "  optional: `+web_app_vite,orders_service` adds repos the suggestions missed (traced like the ticked ones)\n"
+        "  Enter continues with the ticked items · `q` aborts")
 
 
 def render(items: list[Item]) -> str:
@@ -76,8 +77,80 @@ def apply(items: list[Item], answer: str, add_repo) -> str | None:
 
 
 def no_design_stop(reason: str) -> SystemExit:
-    return SystemExit(f"scope: STOP: no design available ({reason}) — add the Figma link to the PRD and rerun, "
-                      "or rerun with --no-figma to go on without one")
+    return SystemExit(f"scope: STOP: no design available ({reason}) — rerun with --figma <link> (or add the link "
+                      "to the PRD), or rerun with --no-figma to go on without one")
+
+
+DESIGN_PROPOSAL = "confirm/design.proposal.json"
+DESIGN_ANSWERS = "confirm/design.answers.json"
+
+
+def _valid_figma_url(url: str) -> bool:
+    from . import figma
+
+    return bool(figma.links_in(url or ""))
+
+
+def ask_design(reason: str, run_dir=None, use_file: bool = False, timeout_s: int = 3600) -> str | None:
+    """No Figma link came with the run (no --figma, none in the instructions, none in the PRD): ask before Scope
+    goes looking. Returns the link to use, or None to go on without a design; stops the run on Stop.
+
+    Terminal: three choices. File mode (what /rfc-agent:rfc and Axon's /rfc use): confirm/design.proposal.json
+    -> confirm/design.answers.json {"choice": "proceed" | "stop" | "add", "figma_url": "<link>"}."""
+    if use_file:
+        import json
+        import time
+        from pathlib import Path
+
+        run_dir = Path(run_dir)
+        prop, ans = run_dir / DESIGN_PROPOSAL, run_dir / DESIGN_ANSWERS
+        prop.parent.mkdir(parents=True, exist_ok=True)
+        ans.unlink(missing_ok=True)
+        tmp = prop.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"no_design": reason, "options": ["proceed", "stop", "add"]}, indent=2),
+                       encoding="utf-8")
+        tmp.replace(prop)
+        print(f"  [scope] WAITING FOR DESIGN: proposal at {prop} — answers expected at {ans}", file=sys.stderr,
+              flush=True)
+        t0 = time.monotonic()
+        while not ans.exists():
+            if time.monotonic() - t0 > timeout_s:
+                raise SystemExit(f"scope: no answer arrived in {ans} within {timeout_s // 60} min")
+            time.sleep(1)
+        time.sleep(0.3)
+        data = json.loads(ans.read_text(encoding="utf-8"))
+        choice = data.get("choice")
+        if choice == "add":
+            url = str(data.get("figma_url") or "").strip()
+            if not _valid_figma_url(url):
+                raise SystemExit(f"scope: STOP: '{url[:80]}' is not a Figma design link "
+                                 "(https://www.figma.com/design/<file key>/…) — rerun with the right link")
+            return url
+        if choice == "proceed":
+            return None
+        raise no_design_stop(reason)
+    if not sys.stdin.isatty():
+        raise no_design_stop(reason)
+    print(f"\n  No design available ({reason}).\n"
+          "    1  Proceed without a design\n    2  Stop\n    3  Add your design: paste a Figma link now",
+          file=sys.stderr)
+    while True:
+        try:
+            pick = input("  > ").strip()
+        except EOFError:
+            pick = "2"
+        if pick == "1":
+            return None
+        if pick == "2":
+            raise no_design_stop(reason)
+        if pick == "3":
+            try:
+                url = input("  Figma link: ").strip()
+            except EOFError:
+                url = ""
+            if _valid_figma_url(url):
+                return url
+            print("  ! not a Figma design link (https://www.figma.com/design/<file key>/…)", file=sys.stderr)
 
 
 def ask(items: list[Item], add_repo, header: str, no_design: str | None = None) -> list[Item]:
@@ -139,7 +212,8 @@ def via_file(items: list[Item], add_repo, header: str, run_dir, timeout_s: int =
     ans.unlink(missing_ok=True)
     tmp = prop.with_suffix(".tmp")  # atomic: a reader never sees a half-written proposal
     proposal = {"header": header, "items": [
-        {"n": i, "kind": it.kind, "key": it.key, "label": it.label, "note": it.note, "include": it.include}
+        {"n": i, "kind": it.kind, "key": it.key, "label": it.label, "note": it.note, "include": it.include,
+         **({"branch": it.extra["branch"]} if it.kind == "repo" and it.extra.get("branch") else {})}
         for i, it in enumerate(items, 1)]}
     if no_design:
         proposal["no_design"] = no_design
