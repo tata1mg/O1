@@ -1,0 +1,29 @@
+AXON_INSTALL.md
+  s_80bfd6a247c7f7::t_cb211a24704e45 334,341
+src/workflows/testing/ui_agent.py
+  s_80bfd6a247c7f7::t_cb211a24704e45 365-378,382-386,398-399,405-412,414
+tools/ui-runner/package.json
+  s_80bfd6a247c7f7::t_cb211a24704e45 6-7
+tests/testing/test_ui_agent_stage.py
+  s_80bfd6a247c7f7::t_cb211a24704e45 607-626
+commands/setup.md
+  s_80bfd6a247c7f7::t_cb211a24704e45 290
+tools/ui-runner/package-lock.json
+  s_80bfd6a247c7f7::t_2b4013263de43e 9-10,14-16,20-21,27,30-33,37,46-49,52-54,56,62-65,69,76-78,82,92-94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e78223f9230bcc6009e4dc493a0cea35114a4ec1",
+  "prompts": {},
+  "sessions": {
+    "s_80bfd6a247c7f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b9b36d41-accd-4cc4-a73c-19fc135fb3f4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Prabhashish S.Wasu <prabhashish.wasu@1mg.com>"
+    }
+  }
+}

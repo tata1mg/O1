@@ -1,0 +1,33 @@
+src/rfc_agent/axon_agent.py
+  s_80bfd6a247c7f7::t_282950fdd249a2 29,322-330,332,334-359,370-373,375,382-383,385-387,389,393-395,398-405,408,410-414,420-423,545-546,745
+src/rfc_agent/scope/context.py
+  s_80bfd6a247c7f7::t_63f160687062a6 198
+  s_80bfd6a247c7f7::t_53dbb5650cd18d 48-57,65-68,70-76,78-83,87,90,93-98,102-103,107-108,113-117,127-128,212-214,282-294,460
+  s_80bfd6a247c7f7::t_78ee121e65a2e5 77
+CONFIG.md
+  s_80bfd6a247c7f7::t_4467a0c1e1cb48 136-139
+tests/rfc/test_axon_agent.py
+  s_80bfd6a247c7f7::t_9551b2249e87c1 543-557,559-564,608-638
+  s_80bfd6a247c7f7::t_3f90ac046457ef 639-640
+tests/rfc/test_scope_discovery.py
+  s_80bfd6a247c7f7::t_9551b2249e87c1 263,265,267,300-306,310,313-331,337-384
+  s_80bfd6a247c7f7::t_78ee121e65a2e5 332-336
+src/rfc_agent/steering.py
+  s_80bfd6a247c7f7::t_53dbb5650cd18d 39-41,50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "de47a8e4cf2d88f05c62e6046bc1d894b9477fc4",
+  "prompts": {},
+  "sessions": {
+    "s_80bfd6a247c7f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b9b36d41-accd-4cc4-a73c-19fc135fb3f4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Prabhashish S.Wasu <prabhashish.wasu@1mg.com>"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+AXON_INSTALL.md
+  s_80bfd6a247c7f7::t_4b9424bf77970a 301-303,345-348,387-388
+commands/setup.md
+  s_80bfd6a247c7f7::t_4b9424bf77970a 267-271
+src/workflows/testing/preflight.py
+  s_80bfd6a247c7f7::t_9a924079071b54 540
+  s_80bfd6a247c7f7::t_d9b9e7e5e496c7 104-110,168,176-177,187,204,216-217,224-225,490-491,514-539,541-567,768-769,777
+  s_80bfd6a247c7f7::t_fc9a24a03453c0 26-27
+  s_80bfd6a247c7f7::t_14f7d1dff774c1 23-25
+tests/testing/test_preflight_status.py
+  s_80bfd6a247c7f7::t_2ac47fef0fd065 501,504-511
+  s_80bfd6a247c7f7::t_8b758651965616 483-500,502-503,512-563
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f27045d9cbd5e5e11518954351e369ef74f1d2d6",
+  "prompts": {},
+  "sessions": {
+    "s_80bfd6a247c7f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b9b36d41-accd-4cc4-a73c-19fc135fb3f4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Prabhashish S.Wasu <prabhashish.wasu@1mg.com>"
+    }
+  }
+}
