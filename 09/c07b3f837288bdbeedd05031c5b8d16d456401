@@ -1,0 +1,33 @@
+src/rfc_agent/doctor_table.py
+  s_cc4d7f9cc61b85::t_b6e5b45660daa3 1-204,206-222,224-249
+  s_cc4d7f9cc61b85::t_2b2eaf95e09be4 205
+  s_cc4d7f9cc61b85::t_757dfc41b702e1 223
+CHANGELOG.md
+  s_cc4d7f9cc61b85::t_2b2eaf95e09be4 52-56
+tests/rfc/test_doctor_table.py
+  s_cc4d7f9cc61b85::t_062fe99c9c11c2 1
+  s_cc4d7f9cc61b85::t_757dfc41b702e1 2-60,62-81
+  s_cc4d7f9cc61b85::t_2b2eaf95e09be4 61
+commands/doctor.md
+  s_cc4d7f9cc61b85::t_2b2eaf95e09be4 58-60
+src/rfc_agent/axon_agent.py
+  s_cc4d7f9cc61b85::t_222f28fcd3f190 659,689-694
+src/rfc_agent/axon_ext/rfc-command.js
+  s_cc4d7f9cc61b85::t_222f28fcd3f190 974
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "09c07b3f837288bdbeedd05031c5b8d16d456401",
+  "prompts": {},
+  "sessions": {
+    "s_cc4d7f9cc61b85": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4112ec27-d126-41f6-b6da-f6edd5b890b3",
+        "model": "claude-sonnet-5-5"
+      },
+      "human_author": "TrinaChoudhury <trinachoudhury123@gmail.com>"
+    }
+  }
+}
