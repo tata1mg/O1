@@ -3,6 +3,69 @@
 All notable changes to this project. Format follows [Keep a Changelog](https://keepachangelog.com/);
 versions match `.claude-plugin/plugin.json`.
 
+## 0.3.0
+
+Review feedback from running rfc-agent on Axon (#14, #15, #18, #19, #29, #30). test-agent is **0.9.1** (the parameter-error
+fix below; its version is in `plugins/test-agent/.claude-plugin/plugin.json`).
+
+### Breaking
+
+- **Atlassian MCP v2 only (#15).** Scope reads the PRD with `getConfluenceContent`, sub-pages through `executeRead`
+  (`getConfluenceContentDescendants`) and Jira with `getJiraIssue`; the site hostname is the cloudId, so the
+  `getAccessibleAtlassianResources` lookup is gone. v1 (`/v1/mcp`, deprecated, removed 2027-03-01) is not supported:
+  a server still on v1 stops Scope with "looks like it is still on v1", and the Axon doctor names the three commands.
+  **Everyone re-adds the server once:** Claude Code `claude mcp remove atlassian` then `claude mcp add --scope user
+  --transport http atlassian https://mcp.atlassian.com/v2/mcp`, then `/mcp` to sign in; Axon `axon pi mcp remove
+  atlassian`, `axon pi mcp add atlassian --url https://mcp.atlassian.com/v2/mcp`, `axon pi mcp login atlassian`. The
+  `claude.ai Atlassian` connector is still v1 and does not work.
+
+### Added
+
+- **`--figma` and `--instructions` (#19, #14).** `--figma <link>` (repeatable) gives the run a Figma design; it replaces
+  any link in the PRD, and so does a Figma link typed in the instructions. `--instructions <text | file>` adds
+  instructions that win over the PRD where they conflict: the untouched PRD is kept as `raw/prd.source.md`, the
+  instructions as `raw/instructions.md`, and `raw/prd.md` carries them on top for every stage. Both are remembered on
+  resume.
+- **`/rfc` in plain words (#14).** `/rfc Build an rfc from <PRD link> and use the latest flows` becomes `--prd`,
+  `--figma` and `--instructions` (a PRD link is required; without one nothing starts). The trace is tagged
+  `input:prompt` and carries the prompt, clipped to 300 words. Works in Claude Code and Axon.
+- **Add a design link at the no-design question (#19).** With no Figma link anywhere, Scope asks *Proceed without
+  design / Stop / Add your design* before Figma runs, so a pasted link goes through the normal screen picking.
+- **Langfuse records what the operator gave the run:** input mode, where the Figma link came from (flag,
+  instructions, PRD, added at the prompt, none) and which PRD links were ignored, and the instructions (300 words).
+- **Mermaid diagrams are parsed before the RFC is handed over (#18).** Draft's gate runs Mermaid's own parser on every
+  diagram, repairs `;` in message text (`#59;`), sends what still fails to the lead once with the parser's message, and
+  shows a diagram that still fails as plain code under a note instead of a block that errors on render. The counts
+  and reasons go to `out/check.json` and to Langfuse (`mermaid_*` scores, and `mermaid_failed`: 1 when any diagram is
+  shown as code, else 0). The parser installs itself on first use (Node + npm, pinned by `package-lock.json`); without
+  them the step is skipped and says so.
+
+### Changed
+
+- **Repo prompt (#30).** After the repo list, Scope offers *Continue with these repos* or *Add more repos / set a
+  branch*; the text box appears only on the second, says what it is for and that Enter skips, and Scope reports what
+  happened to each name typed (added with its branch, or not on Bitbucket and dropped). Repos typed on an earlier
+  pass are no longer forgotten when the list is shown again.
+- **`--yes` help text** now says it runs unattended and takes the default for every decision that would pause the run,
+  instead of a list of what it skips.
+
+- **`/rfc doctor` on Axon is a table** (`doctor --table`): every check on its own row with PASS / FAIL / WARN and, for a
+  failure, how to fix it, like the Claude Code doctor. It adds checks the Axon doctor lacked: Node 22.19+ for Pi,
+  the config file and `ATLASSIAN.SITE`, Langfuse keys, the repos and runs folders, the Figma app and plugin, and the
+  Mermaid check's Node/npm. The check on Atlassian also fails when the server is still on v1.
+
+### Fixed
+
+- **Any wrong parameter now says so (#29), for `/rfc` and `/test`, on Claude Code and Axon.** One shared parser
+  (`harness/cli_errors.py`, used by `rfc`, every stage CLI, the harness and the test-agent helpers) names the wrong
+  option, suggests the nearest one and lists what the command supports: `[rfc] STOP: Invalid parameter found:
+  --figmaa (did you mean --figma?), please check supported parameters while running the /rfc command. Supported: …`.
+  Nothing is checked by option name. The Axon `/test` command also posts the STOP / error lines (or the exit code)
+  of any launch that ends badly, where it used to end without a reason. Exit codes are unchanged.
+- **Figma links without a file name were missed (#19).** `figma.com/design/<key>?node-id=0-1`, a bare
+  `figma.com/design/<key>` and `node-id=71%3A125` were read as "the PRD links no Figma design" and stopped the run.
+  They are found now.
+
 ## 0.2.1
 
 test-agent is listed in the same marketplace as **0.9.0** (new on `main`: the plugin, with the testing workflow's

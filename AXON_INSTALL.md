@@ -272,7 +272,7 @@ A local `--prd file.md` doesn't need it.
 **Check:** `axon pi mcp list` shows `atlassian`. If not:
 
 ```bash
-axon pi mcp add atlassian --url https://mcp.atlassian.com/v1/mcp
+axon pi mcp add atlassian --url https://mcp.atlassian.com/v2/mcp
 ```
 
 **User:** in a terminal, `axon pi mcp login atlassian`, and finish the consent page it opens in the browser. It is

@@ -58,9 +58,11 @@ uv run python -m rfc_agent.scope --prd "<confluence url>"
 | `--repos a,b` | Repos you already know are in scope. Always proposed, listed first |
 | `--repos-root` | Where your checkouts live (default: config `REPOS_ROOT`) |
 | `--run-dir` / `--out` | Exact run folder / parent for the auto-named one (default: config `RUNS_ROOT`) |
-| `--yes` | No confirm screen: accept the proposal as shown |
+| `--yes` | Run unattended: ask nothing, and take the default for every decision that would pause scope |
 | `--confirm-file` | Confirm through files instead of the terminal (what `/rfc-agent:scope` uses). Automatic when there is no terminal |
 | `--no-figma` | Ignore Figma links |
+| `--figma URL` | A Figma design link for this run (repeatable). It replaces any link in the PRD, and a Figma link typed in `--instructions` counts the same |
+| `--instructions TEXT\|FILE` | Extra instructions for this run. Saved as `raw/instructions.md`; the untouched PRD is kept as `raw/prd.source.md` and `raw/prd.md` gets the instructions on top, saying they win where they conflict with the PRD |
 | `--reuse-figma ask\|always\|never` | What to do when a previous export of the same link exists (default `ask`) |
 | `--figma-wait N` | Seconds to wait for the plugin's screen list, per link (default 600) |
 | `--fresh-clone` | Never touch your checkouts: every repo comes from the repo cache |
@@ -105,14 +107,16 @@ Atlassian connector starts, so it costs no extra time.
 
 A headless `claude -p` session (Haiku 4.5) bound to your Atlassian connector. It runs with **no built-in
 tools** (it cannot read, write or run anything) and only these connector tools allowed:
-`getAccessibleAtlassianResources`, `getConfluencePage`, `getConfluencePageDescendants`, `getJiraIssue`.
+`getConfluenceContent`, `executeRead` (for the sub-page list) and `getJiraIssue`, all from Atlassian MCP **v2**
+(`https://mcp.atlassian.com/v2/mcp`; v1 is deprecated and not supported).
 
 1. **Warm-up turn.** claude.ai connectors are still `pending` when a headless session's first turn starts,
    so a one-shot call sees no Atlassian tools at all. The session's first message is a throwaway; by the
    second, the connector is `connected`.
 2. **Auth check.** If the connector reports `needs-auth` or `failed`, Scope stops with the fix (`/mcp`).
-3. **cloudId.** `getAccessibleAtlassianResources`, matched against config `ATLASSIAN.SITE` (Scope stops if it
-   is unset); the first site is the fallback.
+3. **cloudId.** v2 accepts the site's hostname, so config `ATLASSIAN.SITE` is used as it is (Scope stops if it
+   is unset); there is no lookup call. A server that is still on v1 binds none of the v2 tools: Scope then stops
+   with "reconnect on v2".
 4. **Fetch.** One turn asks for the PRD page (markdown), its descendants, and the Jira issue if given.
 5. **Writing.** **Python writes every file straight from the tool result in the stream.** The model never
    retypes the PRD, so it cannot trim, summarise or "tidy" it. The PRD body is Atlassian's own markdown.
@@ -129,7 +133,7 @@ From `raw/prd.md`, with plain regexes, no model:
 
 | What | How | Used for |
 |---|---|---|
-| Figma links | `figma.com/(design\|file\|proto)/<key>/<name>?node-id=<a>-<b>`. Key and node id are validated; duplicates are dropped | Step 4a |
+| Figma links | `figma.com/(design\|file\|proto)/<key>[/<name>][?node-id=<a>-<b>]` (the name part is optional; `%3A` and `:` work in the node id). Key and node id are validated; duplicates are dropped | Step 4a |
 | Linked Confluence pages | `/wiki/…/pages/<id>` in the body, excluding the PRD itself and its children | Confirm screen, unticked |
 | Jira keys | `ABC-123` patterns, excluding the `--jira` one | Confirm screen, unticked |
 | Embedded images | `![…](blob:…)` markup | Counted and warned about (the connector cannot return them) |
@@ -215,11 +219,23 @@ One numbered list, in four groups:
 
 At least one repo must be selected.
 
-**No design.** When Figma isn't skipped (`--no-figma`) but no design is available — the PRD links no Figma
-design, or none of its links gave readable screens — the same checkpoint asks *"No design is available. Do you
-want to proceed as it is?"*. Proceed → the run goes on without a design (recorded as `no_design` in
-`scope.json`); Stop → Scope exits with `STOP: no design available …`. In file mode the proposal carries
-`"no_design": "<why>"` and the answers must say `"proceed_without_design": true`. `--yes` goes on with a warning.
+**Which Figma link the run uses.** A link given with `--figma`, or typed in the instructions, is used and the
+PRD's own links are ignored. With none, the PRD's links are used. With neither, Scope asks **before** it goes
+looking for Figma: *Proceed without design* / *Stop* / *Add your design* (paste a link; it then goes through the
+normal screen list and section picking). In file mode that is `confirm/design.proposal.json` →
+`confirm/design.answers.json` (`{"choice": "proceed" | "stop" | "add", "figma_url": "…"}`; the terminal line is
+`WAITING FOR DESIGN`). The source (`flag`, `instructions`, `prd`, `added at the prompt`, or none) is in `scope.json`
+as `figma_source` and on the Langfuse trace.
+
+**No design.** When Figma isn't skipped (`--no-figma`) and a link was given but none of its links gave readable
+screens, the confirm checkpoint asks *"No design is available. Do you want to proceed as it is?"*. Proceed → the
+run goes on without a design (recorded as `no_design` in `scope.json`); Stop → Scope exits with
+`STOP: no design available …`. In file mode the proposal carries `"no_design": "<why>"` and the answers must say
+`"proceed_without_design": true`. `--yes` goes on with a warning (and skips the early design question).
+
+**Repos you add.** After the repo list the confirm step offers *Continue with these repos* or *Add more repos /
+set a branch*. Names typed there are checked against Bitbucket and traced like the ticked ones; scope prints one
+line per name: `added repo 'x' (branch …)` or `'x' is NOT on Bitbucket … dropped`. Skipping adds nothing.
 
 ### 6a. Repo snapshots
 

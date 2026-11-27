@@ -32,7 +32,6 @@ Exit code: the harness's (the last one, for `all`).
 
 from __future__ import annotations
 
-import argparse
 import json
 import re
 import shlex
@@ -44,6 +43,7 @@ from pathlib import Path
 if __package__ in (None, ""):  # run as a script: make `workflows.testing` importable from src/
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from harness.cli_errors import FriendlyParser
 from workflows.testing.preflight import load_config, resolved_flags  # noqa: E402
 
 PROJECT = Path(__file__).resolve().parents[3]
@@ -492,7 +492,7 @@ def confirm_production(production: bool, test_account: bool, *, logged_in: bool,
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="execute")
+    ap = FriendlyParser(tag="test", prog="execute")
     ap.add_argument("kind", nargs="?", default="web", choices=(*KINDS, "all"),
                     help="web, backend, ui-agent (with --platform), android, all, or convert (draft flows -> green)")
     ap.add_argument("--run-dir")

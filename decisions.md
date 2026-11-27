@@ -259,6 +259,11 @@ token). `AGENT.AXON.ATLASSIAN_SERVER` names it if it's called something else. Wi
 Claude's connector fetched. The 25 KB page came back whole. Unit tests stub `axon` for the turn parsing, the
 truncation file, the missing / signed-out / silent server and the retry.
 
+**Updated 2026-11-27 — Atlassian MCP v2 only (see D-25).** The fetch now asks for `getConfluenceContent`,
+`executeRead` (sub-pages) and `getJiraIssue`, and the site hostname is the cloudId, so no model turn is needed to connect
+and the "no resources result" error path is gone: `connect()` reads `axon pi mcp list --json` for a missing server, a
+missing sign-in or a server still on `/v1/`.
+
 ## D-23 Read-only tools in the interactive Axon session, not a bash allow-list
 
 **Problem.** Asking an Axon session about a run ("status?") made the agent run commands like
@@ -299,6 +304,22 @@ the packages it installed itself and keeps a user's own (seen in the launcher's 
 registered `/rfc` from `package-entry.js`, and `/rfc help` answered, so the project path resolved. `rfc_status`
 and the read-only tools came up as in D-23. Not yet tried: an `axon pi install git:…` from GitHub, because the
 branch with this isn't pushed.
+
+## D-25 Atlassian MCP v2 only
+
+**Decision.** Scope supports Atlassian MCP v2 (`https://mcp.atlassian.com/v2/mcp`) on Claude Code and Axon, and not v1.
+v1 is deprecated (removed 2027-03-01) and the two do not share tools: v2 reads a page with `getConfluenceContent`
+(`content_id`, `content_format`, `detail`; the body is `{"data": {…, "body": {"format", "value"}}}`), reads sub-pages
+through the generic `executeRead` (`name: getConfluenceContentDescendants`), and takes the site hostname as the cloudId.
+Supporting both would mean two prompts, two parsers and two sets of tests for a server that goes away.
+
+**How.** `scope/atlassian.py` holds the v2 calls, parsers and the "still on v1" error (a fetch turn that makes no
+connector call says the v2 tools are not bound). `atlassian_axon.py` checks the server's URL. `mcp_tools.py` grants
+`executeRead` but never `executeWrite` or `executeDestructive`. The `claude.ai Atlassian` connector is v1 and does not
+work. **Cost of the choice:** everyone re-adds the server once (documented in CONFIG.md and the CHANGELOG).
+
+**Verified (2026-11-27).** Live Scope on Claude Code and on Axon against the Share lab report PRD: the PRD (13,612
+chars) and the sub-page call both worked. Not verified live: `getJiraIssue`'s v2 arguments and a non-empty sub-page list.
 
 ## Live verification (2026-10-28, Axon 0.2.6 / Pi 1.4.0)
 

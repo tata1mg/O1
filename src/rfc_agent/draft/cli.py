@@ -11,12 +11,13 @@ whatever is still wrong becomes a known issue for review (out/check.json) and th
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import sys
 import time
 from pathlib import Path
+
+from harness.cli_errors import FriendlyParser
 
 from .. import observe
 from ..config import get_config
@@ -26,7 +27,7 @@ from ..investigate.config import resolve as resolve_investigate
 from ..investigate.plan import load_json
 from ..investigate.progress import Progress
 from ..legacy_names import config_section, migrate_run_dir
-from . import coverage, gate
+from . import coverage, gate, mermaid_check
 
 PROMPT = Path(__file__).with_name("prompts") / "write.md"
 WRITES = ("out/rfc.md", "out/coverage.json")
@@ -41,7 +42,7 @@ def settings(cfg) -> dict:
 
 @observe.entry("draft")
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="python -m rfc_agent.draft", description="Draft: write the RFC.")
+    p = FriendlyParser(prog="python -m rfc_agent.draft", description="Draft: write the RFC.")
     p.add_argument("--run-dir", required=True, help="the run folder, after Investigate")
     p.add_argument("--fresh", action="store_true", help="write again even if out/rfc.md exists")
     p.add_argument("--check-only", action="store_true", help="don't write — re-run the gate on out/rfc.md")
@@ -183,6 +184,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # ---- the gate ------------------------------------------------------------------------------------
     render()
+    mm = mermaid_check.repair_file(rfc_path)  # mechanical Mermaid repairs first; what still fails goes to the gate
     res = check()
     observe.gate(
         "draft",
@@ -214,6 +216,29 @@ def main(argv: list[str] | None = None) -> int:
         res = check()
         observe.gate("draft", res["must_fix"], res["flags"], kind="draft", round_label="after-fix", stage="draft")
         fixed = True
+    # a diagram that still does not parse is shown as plain code under a note, never as a block that errors on render
+    shown_now = mermaid_check.quarantine(rfc_path)
+    after_text = rfc_path.read_text(encoding="utf-8")
+    shown_total = len(mermaid_check.quarantined(after_text))
+    prev_reasons = ((_read(run_dir / "out" / "check.json") or {}).get("mermaid") or {}).get("reasons") or []
+    mstats = {
+        "parser": mm["parser"],
+        "total": len(mermaid_check.blocks(after_text)) + shown_total,
+        "failed_first_parse": len(mm["failed_initial"]),
+        "repaired_automatically": mm["repaired"],
+        "fixed_by_lead": max(0, len(mm["failed_after_repair"]) - len(shown_now)),
+        "shown_as_code": shown_total,
+        "reasons": ([{"line": f["line"], "error": f["error"]} for f in shown_now]
+                    or (prev_reasons if shown_total else [])),
+    }
+    observe.mermaid(mstats, stage="draft", round_label="check-only" if args.check_only else None)
+    if mstats["failed_first_parse"] or shown_total:
+        prog.milestone(
+            "mermaid",
+            f"Mermaid: {mstats['total']} diagram(s) · {mstats['failed_first_parse']} failed the first parse · "
+            f"{mstats['repaired_automatically']} repaired automatically · "
+            f"{mstats['fixed_by_lead']} fixed by the lead · {shown_total} shown as code",
+        )
     status = "known_issues" if res["must_fix"] else ("fixed" if before["must_fix"] else "clean")
     (run_dir / "out" / "check.json").write_text(
         json.dumps(
@@ -223,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
                 "known_issues": res["must_fix"],
                 "flags": res["flags"],
                 "counts": res["counts"],
+                "mermaid": mstats,
             },
             indent=2,
         ),

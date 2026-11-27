@@ -13,7 +13,6 @@ Rerunning the same command resumes: finished steps and agents are kept.
 
 from __future__ import annotations
 
-import argparse
 import json
 import re
 import sys
@@ -21,6 +20,8 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+from harness.cli_errors import FriendlyParser
 
 from .. import observe
 from ..config import get_config
@@ -576,13 +577,14 @@ def _code_reads(stream: Path) -> int:
 
 @observe.entry("investigate")
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="python -m rfc_agent.investigate",
+    p = FriendlyParser(prog="python -m rfc_agent.investigate",
                                 description="Investigate: understand and ground.")
     p.add_argument("--run-dir", required=True, help="the Scope run folder")
     p.add_argument("--preset", choices=("balanced", "fast"))
     p.add_argument("--req-granularity", choices=("grouped", "fine"))
     p.add_argument("--ask", action="store_true", default=None, help="Pause 2 also asks the open questions")
-    p.add_argument("--yes", action="store_true", help="accept pause defaults (an invalid plan still stops)")
+    p.add_argument("--yes", action="store_true",
+                   help="run unattended: take every pause's default (an invalid plan still stops)")
     p.add_argument("--confirm-file", action="store_true",
                    help="pauses through files (what /rfc-agent:investigate uses)")
     p.add_argument("--fresh", action="store_true", help="ignore saved progress and redo every step")

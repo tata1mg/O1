@@ -92,5 +92,5 @@ fit would cost the coverage table or the citations, which matter more.
 
 The Draft gate checks, mechanically: citations resolve; "not found" claims are not contradicted by a search;
 coverage is complete and valid; sections 1–8 and a `Recommendation` heading exist, with one design subsection
-per flow; CHANGE blocks are consistent; no secrets; Mermaid lint passes. It flags missing REQ or question ids,
+per flow; CHANGE blocks are consistent; no secrets; every Mermaid diagram parses (real parser; `;` repaired, still-broken ones shown as code). It flags missing REQ or question ids,
 uncited "Current state" bullets, and size or TL;DR overruns. Details: [DRAFT.md](DRAFT.md#the-gate).

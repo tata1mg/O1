@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 
 from ..investigate import checks as s1
+from . import mermaid_check
 
 # ---- structure ------------------------------------------------------------------------------------
 
@@ -190,6 +191,9 @@ def mermaid(rfc: str) -> tuple[list[str], int]:
                     m = _MSG.match(ln)
                     if m:
                         used |= {m.group(1), m.group(4)}
+                        if re.search(r"(?<!#\d)(?<!#\d\d);", m.group(5)):
+                            out.append(f"{where}, line {k}: a ';' in message text ends the statement in Mermaid and "
+                                       "breaks the diagram — write #59; instead")
                         continue
                     if "->" in s or "--" in s:
                         out.append(f"{where}, line {k}: malformed message '{s[:60]}' (expected 'A->>B: text')")
@@ -202,6 +206,12 @@ def mermaid(rfc: str) -> tuple[list[str], int]:
             i = j + 1
             continue
         i += 1
+    # Mermaid's own parser (what GitHub, mermaid.live and VS Code run); skipped when it is not installed
+    for f in mermaid_check.failures(rfc) or []:
+        out.append(f"diagram at line {f['line']} does not render — Mermaid says: {f['error']}")
+    for line in mermaid_check.quarantined(rfc):
+        out.append(f"diagram at line {line} failed to render earlier and is shown as plain code: fix its syntax and "
+                   "put it back in a ```mermaid block")
     return out, n_blocks
 
 

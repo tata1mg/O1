@@ -9,7 +9,6 @@ log and the diff. Still open after the last round → "⚠ Unresolved review fin
 
 from __future__ import annotations
 
-import argparse
 import difflib
 import json
 import sys
@@ -17,6 +16,8 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+from harness.cli_errors import FriendlyParser
 
 from .. import observe
 from ..config import get_config
@@ -47,7 +48,7 @@ def _prompt(name: str, **slots: str) -> str:
 
 @observe.entry("revise")
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="python -m rfc_agent.revise", description="Revise: fix the review findings.")
+    p = FriendlyParser(prog="python -m rfc_agent.revise", description="Revise: fix the review findings.")
     p.add_argument("--run-dir", required=True, help="the run folder, after Review")
     p.add_argument("--fresh", action="store_true", help="start over (keeps review/review.md)")
     p.add_argument("--no-readable", action="store_true", help="don't write the readable copy (Summarize) afterwards")

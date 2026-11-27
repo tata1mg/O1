@@ -27,7 +27,18 @@ import time
 from pathlib import Path
 
 from .. import observe
-from .atlassian import TOOLS, TURN_TIMEOUT_S, AtlassianError, ToolCall, TurnResult, _result_text, pick_cloud_id
+from .atlassian import (
+    TOOLS,
+    TURN_TIMEOUT_S,
+    V1_HINT,
+    AtlassianError,
+    ToolCall,
+    TurnResult,
+    _host,
+    _result_text,
+    check_answered,
+    fetch_steps,
+)
 
 DEFAULT_SERVER = "atlassian"
 # Pi's hermetic set minus --no-approve: the one project file this session writes must be trusted
@@ -155,51 +166,50 @@ class AxonConnectorSession:
                 pass  # fall back to what the stream carried; parse_page then fails loudly on cut JSON
         return _result_text(msg.get("content"))
 
-    def server_status(self) -> str:
-        """The server's state per `axon pi mcp list --json` (connected / needs-auth / failed / missing)."""
+    def server_info(self) -> tuple[str, str]:
+        """(state, url) of the server per `axon pi mcp list --json`: state is connected / needs-auth / failed /
+        missing / unknown."""
         try:
             out = subprocess.run([self.axon_bin, "pi", "mcp", "list", "--json"], capture_output=True, text=True,
                                  env=self.env(), timeout=120).stdout
             data = json.loads(out)
         except (OSError, ValueError, subprocess.TimeoutExpired):
-            return "unknown"
+            return "unknown", ""
         rows = data.get("servers") if isinstance(data, dict) else data
         for row in rows or []:
             if isinstance(row, dict) and row.get("name") == self.server:
-                return str(row.get("state") or row.get("status") or "unknown")
-        return "missing"
+                return str(row.get("state") or row.get("status") or "unknown"), str(row.get("url") or "")
+        return "missing", ""
 
     # ---- public API (same as ConnectorSession) -------------------------------------------------
     def connect(self, site: str) -> TurnResult:
-        """Resolve the cloudId. Raises when the server is missing or not signed in."""
-        res = self._turn("Call getAccessibleAtlassianResources once. Do not call anything else. Reply: done.")
-        for c in res.calls:
-            if c.name == "getAccessibleAtlassianResources" and not c.is_error:
-                self.cloud_id = pick_cloud_id(c.text, site)
-        if self.cloud_id:
-            self.connector_status = "connected"
-            return res
-        self.connector_status = self.server_status()
-        if self.connector_status == "missing":
+        """Check the server is added, signed in and on v2, then use the site's hostname as the cloudId. No model
+        turn: `axon pi mcp list` answers for free."""
+        self.cloud_id = _host(site)
+        if not self.cloud_id:
+            raise AtlassianError("ATLASSIAN.SITE is not set (e.g. yourcompany.atlassian.net)")
+        state, url = self.server_info()
+        self.connector_status = state
+        if state == "missing":
             raise AtlassianError(
                 f"Axon has no MCP server named '{self.server}'. Add it once: "
-                f"`axon pi mcp add {self.server} --url https://mcp.atlassian.com/v1/mcp`, then "
+                f"`axon pi mcp add {self.server} --url https://mcp.atlassian.com/v2/mcp`, then "
                 f"`axon pi mcp login {self.server}`, and rerun scope.")
-        if "auth" in self.connector_status or "sign" in self.connector_status:
+        if "/v1/" in url:
+            raise AtlassianError(f"Axon's '{self.server}' MCP server points at {url}. " + V1_HINT.replace(
+                "Remove the server and add it again with that URL, sign in, then rerun.",
+                f"Run `axon pi mcp remove {self.server}`, `axon pi mcp add {self.server} --url "
+                f"https://mcp.atlassian.com/v2/mcp`, then `axon pi mcp login {self.server}`, and rerun scope."))
+        if "auth" in state or "sign" in state:
             raise AtlassianError(
-                f"Axon's '{self.server}' MCP server is not signed in (status '{self.connector_status}'). Run "
+                f"Axon's '{self.server}' MCP server is not signed in (status '{state}'). Run "
                 f"`axon pi mcp login {self.server}` once, then rerun scope.")
-        raise AtlassianError(
-            f"Axon's Atlassian server gave no getAccessibleAtlassianResources result (status "
-            f"'{self.connector_status}'). Atlassian's server is often just slow to answer: rerun in a minute.",
-            retryable=True)
+        return TurnResult()
 
     def fetch(self, pages: list[str] = (), page_descendants: list[str] = (), jira: list[str] = ()) -> TurnResult:
-        steps = [f"getConfluencePage with cloudId {self.cloud_id}, pageId {p}, contentFormat markdown" for p in pages]
-        steps += [f"getConfluencePageDescendants with cloudId {self.cloud_id}, pageId {p}" for p in page_descendants]
-        steps += [f"getJiraIssue with cloudId {self.cloud_id}, issueIdOrKey {k}" for k in jira]
+        steps = fetch_steps(self.cloud_id, pages, page_descendants, jira)
         if not steps:
             return TurnResult()
         prompt = ("Make exactly these tool calls (in parallel where you can), nothing else, and do not "
                   "summarise their output:\n- " + "\n- ".join(steps) + "\nThen reply: done.")
-        return self._turn(prompt)
+        return check_answered(self._turn(prompt))

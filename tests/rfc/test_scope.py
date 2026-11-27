@@ -28,18 +28,22 @@ def test_page_and_jira_ids():
 
 def test_parse_page_keeps_body_byte_exact():
     body = "**Resources:**  \nFigma: <https://www.figma.com/design/AbCdEfGh12/x?node-id=1-2>\n| a | b |\n"
-    call = at.ToolCall("getConfluencePage", {"pageId": "42"}, json.dumps(
-        {"content": {"nodes": [{"id": "42", "title": "PRD: X", "body": body, "webUrl": "https://w/42",
-                                "lastModified": "Jul 08, 2026"}]}}))
+    call = at.ToolCall("getConfluenceContent", {"content_id": "42"}, json.dumps(
+        {"data": {"id": "42", "title": "PRD: X", "body": {"format": "markdown", "value": body},
+                  "metadata": {"version": {"createdAt": "2026-07-08T00:00:00Z"}}}}))
     page = at.parse_page(call)
     assert page["body"] == body and page["title"] == "PRD: X" and page["id"] == "42"
 
 
 def test_parse_descendants_and_links():
-    call = at.ToolCall("getConfluencePageDescendants", {}, json.dumps(
-        {"results": [{"id": "1", "title": "Concept Note", "type": "page", "depth": 1},
-                     {"id": "2", "title": "a folder", "type": "folder"}]}))
-    assert at.parse_descendants(call) == [{"id": "1", "title": "Concept Note", "depth": 1}]
+    call = at.ToolCall("executeRead", {"name": "getConfluenceContentDescendants", "inputs": {"contentId": "42"}},
+                       json.dumps({"data": {"results": [
+                           {"id": "1", "title": "Concept Note", "type": "page", "depth": 1},
+                           {"id": "3", "title": "A live doc", "type": "live_doc", "depth": 1},
+                           {"id": "2", "title": "a folder", "type": "folder"}], "_links": {}}}))
+    assert call.op == "getConfluenceContentDescendants" and call.target == "42"
+    assert at.parse_descendants(call) == [{"id": "1", "title": "Concept Note", "depth": 1},
+                                          {"id": "3", "title": "A live doc", "depth": 1}]
     body = "see https://x.atlassian.net/wiki/spaces/A/pages/77/Other and /wiki/spaces/A/pages/42/self PROJ-1 PROJ-1"
     assert at.linked_page_ids(body, exclude={"42"}) == ["77"]
     assert at.jira_keys(body) == ["PROJ-1"]
@@ -447,7 +451,8 @@ def test_slow_atlassian_gets_a_fresh_connection(tmp_path, monkeypatch):
     with contextlib.ExitStack() as stack:
         s, _ = at.open_session(stack, tmp_path / "s.jsonl", "https://example.atlassian.net", claude_bin=str(fake),
                                say=said.append, wait_s=0)
-        assert s.cloud_id == "cloud-1" and s.proc.poll() is None  # the working session stays open for fetches
+        assert s.cloud_id == "example.atlassian.net"
+        assert s.proc.poll() is None  # the working session stays open for fetches
     assert count.read_text() == "2" and "try 1 of 3" in said[0]
 
 
@@ -507,9 +512,9 @@ def test_a_pending_connector_is_waited_for_on_the_same_connection(tmp_path, monk
     with contextlib.ExitStack() as stack:
         s, cost = at.open_session(stack, tmp_path / "s.jsonl", "https://example.atlassian.net", claude_bin=str(fake),
                                   wait_s=0)
-        assert s.cloud_id == "cloud-1" and s.connector_status == "connected"
+        assert s.cloud_id == "example.atlassian.net" and s.connector_status == "connected"
     assert count.read_text() == "1", "one connection: it waited instead of starting over"
-    assert cost == 0.004  # two pending checks, the turn that saw it connected, and the call
+    assert cost == 0.003  # two pending checks and the turn that saw it connected; no lookup call any more
 
 
 def test_remote_template_prefers_the_configured_clone_address(tmp_path):
@@ -547,3 +552,125 @@ def test_configured_remote_reads_git_repos_remote_from_config(monkeypatch):
 def test_git_repos_remote_is_a_known_config_key():
     from rfc_agent import config
     assert "GIT_REPOS_REMOTE" not in config.unknown_sections({"GIT_REPOS_REMOTE": "git@h:t/{repo}.git"})
+
+
+# ---- figma links the PRD writes without a file name, and which links a run uses -----------------------------
+
+KEY = "uwvYvW3cBm2DNKXgfIUXC5"
+
+
+@pytest.mark.parametrize("url,node", [
+    (f"https://www.figma.com/design/{KEY}?node-id=0-1", "0:1"),            # the Nov 20 PRD's only link
+    (f"https://www.figma.com/design/{KEY}", None),                         # the one-pager's "Figma wireframes" link
+    (f"https://www.figma.com/design/{KEY}/?node-id=71-125", "71:125"),
+    (f"https://www.figma.com/design/{KEY}/Share-report?node-id=71%3A125&p=f", "71:125"),
+])
+def test_figma_links_without_a_file_name_are_found(url, node):
+    [link] = figma.links_in(f"- [Booking Details card-layout reference]({url}). The native sheet is the phone's.")
+    assert link["key"] == KEY and link["node"] == node
+
+
+def test_a_key_that_is_cut_short_or_followed_by_junk_is_not_a_link():
+    assert figma.links_in("https://www.figma.com/design/short") == []
+    assert figma.links_in("https://www.figma.com/design/x;rm/evil?node-id=1-2") == []
+
+
+PRD_LINK = f"https://www.figma.com/design/{KEY}/PRD-file?node-id=1-2"
+OTHER = "https://www.figma.com/design/ZzZzZzZzZz12/Mine?node-id=5-6"
+
+
+def test_the_flag_wins_over_the_prd_and_the_prd_links_are_dropped():
+    got = figma.choose_links(f"see {PRD_LINK}", [OTHER])
+    assert got["source"] == "flag" and [lk["key"] for lk in got["links"]] == ["ZzZzZzZzZz12"]
+    assert got["prd_links_discarded"] == [PRD_LINK]
+
+
+def test_a_figma_link_typed_in_the_instructions_wins_too():
+    got = figma.choose_links(f"see {PRD_LINK}", [], f"Use this design: {OTHER}")
+    assert got["source"] == "instructions" and got["links"][0]["key"] == "ZzZzZzZzZz12"
+    both = figma.choose_links(f"see {PRD_LINK}", [OTHER], f"and {PRD_LINK}")
+    assert both["source"] == "flag+instructions" and len(both["links"]) == 2
+
+
+def test_with_nothing_explicit_the_prd_links_are_used_then_none():
+    assert figma.choose_links(f"see {PRD_LINK}")["source"] == "prd"
+    assert figma.choose_links("no design here") == {"links": [], "source": "none", "prd_links_discarded": []}
+
+
+# ---- the design question --------------------------------------------------------------------------------
+
+
+def _answer_when_asked(run_dir, answer, delay=0.1):
+    import json
+    import threading
+    import time
+
+    def go():
+        prop = run_dir / confirm.DESIGN_PROPOSAL
+        while not prop.exists():
+            time.sleep(0.02)
+        time.sleep(delay)
+        (run_dir / confirm.DESIGN_ANSWERS).write_text(json.dumps(answer))
+
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    return t
+
+
+def test_design_question_in_file_mode_can_add_a_link(tmp_path):
+    t = _answer_when_asked(tmp_path, {"choice": "add", "figma_url": PRD_LINK})
+    assert confirm.ask_design("no link", tmp_path, use_file=True, timeout_s=10) == PRD_LINK
+    t.join()
+    assert json.loads((tmp_path / confirm.DESIGN_PROPOSAL).read_text())["options"] == ["proceed", "stop", "add"]
+
+
+def test_design_question_in_file_mode_proceed_and_stop(tmp_path):
+    t = _answer_when_asked(tmp_path, {"choice": "proceed"})
+    assert confirm.ask_design("no link", tmp_path, use_file=True, timeout_s=10) is None
+    t.join()
+    t = _answer_when_asked(tmp_path, {"choice": "stop"})
+    with pytest.raises(SystemExit, match="--figma"):
+        confirm.ask_design("no link", tmp_path, use_file=True, timeout_s=10)
+    t.join()
+
+
+def test_design_question_in_file_mode_rejects_a_bad_link(tmp_path):
+    t = _answer_when_asked(tmp_path, {"choice": "add", "figma_url": "https://example.com/x"})
+    with pytest.raises(SystemExit, match="not a Figma design link"):
+        confirm.ask_design("no link", tmp_path, use_file=True, timeout_s=10)
+    t.join()
+
+
+def test_design_question_in_the_terminal_asks_again_for_a_bad_link(monkeypatch, capsys):
+    answers = iter(["3", "nope", "3", PRD_LINK])
+    monkeypatch.setattr("sys.stdin", type("T", (), {"isatty": lambda self: True})())
+    monkeypatch.setattr("builtins.input", lambda *_: next(answers))
+    assert confirm.ask_design("no link") == PRD_LINK
+    assert "not a Figma design link" in capsys.readouterr().err
+
+
+def test_design_question_in_the_terminal_proceed_and_stop(monkeypatch):
+    monkeypatch.setattr("sys.stdin", type("T", (), {"isatty": lambda self: True})())
+    monkeypatch.setattr("builtins.input", lambda *_: "1")
+    assert confirm.ask_design("no link") is None
+    monkeypatch.setattr("builtins.input", lambda *_: "2")
+    with pytest.raises(SystemExit, match="STOP"):
+        confirm.ask_design("no link")
+
+
+def test_the_proposal_carries_each_repos_branch_for_the_dialogs(tmp_path):
+    import threading
+
+    items = [confirm.Item("repo", "svc_a", "svc_a", extra={"branch": "release/2.1"}),
+             confirm.Item("page", "9", "A page")]
+
+    def answer():
+        prop = tmp_path / confirm.PROPOSAL
+        while not prop.exists():
+            time.sleep(0.02)
+        (tmp_path / confirm.ANSWERS).write_text(json.dumps({"selected": [1]}))
+
+    threading.Thread(target=answer, daemon=True).start()
+    confirm.via_file(items, None, "h", tmp_path, timeout_s=10)
+    got = json.loads((tmp_path / confirm.PROPOSAL).read_text())["items"]
+    assert got[0]["branch"] == "release/2.1" and "branch" not in got[1]

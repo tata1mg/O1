@@ -277,14 +277,37 @@ lead done → render §2 table + References → gate checks
 | 4 | **Structure** — sections §1–§8 present, a `Recommendation` heading, and **one design subsection (§4.n) per flow in `flows.json`** | Must-fix | A missing flow is a missing design |
 | 5 | **CHANGE blocks** — every `depends on` names a CHANGE that exists; no dependency cycles; files marked `(modify)` exist in the snapshot; files marked `(new)` do **not** already exist | Must-fix | A "new" file that already exists means the plan misread the code |
 | 6 | **Secrets** — API keys, tokens, passwords, private keys, credential-bearing URLs copied from code or config | Must-fix | The RFC is shared with other people |
-| 7 | **Mermaid lint** (below) | Must-fix | A syntax error is objectively wrong and cheap to fix while the lead is warm |
+| 7 | **Mermaid check** (below) | Must-fix | A syntax error is objectively wrong and cheap to fix while the lead is warm |
 | 8 | Q ids and REQ ids mentioned in the text exist (§8 / `reqs.json`) | Flag | Usually a typo, not a design error |
 | 9 | "Current state" bullets without a citation | Flag | The design rule says they cite; the reviewer judges |
 | 10 | Size outside the target (25–40 KB); TL;DR longer than 3 sentences | Flag | Readability, not correctness |
 
-#### Mermaid lint (no renderer)
+#### Mermaid: parser, repair, and what is shown as code
 
-The gate runs a cheap lint. It does not render diagrams.
+Every ```` ```mermaid ```` block is parsed with **Mermaid's own parser** (`mermaid_check.py`: Node plus the `mermaid`
+npm package, pinned in `mermaid_tool/package.json`, installed once into `~/.cache/rfc-agent/mermaid-check` on the first
+run, about 15 s). It is the parser GitHub, mermaid.live and VS Code use, so a diagram that passes renders there.
+
+1. **Parse** each block before the gate runs.
+2. **Repair what is mechanical.** A `;` in sequence-diagram text (a message, a note, an `alt`/`loop` title) ends the
+   statement in Mermaid, so it becomes `#59;` (issue #18: `A->>B: POST /x; resolve report key`). Nothing else is guessed.
+3. **Gate.** What still fails is a must-fix with the parser's own message (line inside the diagram and what it expected)
+   for the lead's one fix round.
+4. **Still failing after that:** the block becomes a plain `text` block under a note (*this diagram did not render …
+   paste it into mermaid.live*), never a ```` ```mermaid ```` block that shows a parse error. It stays a known issue in
+   `check.json` and is flagged again on every gate re-run (after each Revise round) until the lead puts a working
+   diagram back.
+
+`out/check.json` carries a `mermaid` entry: `total`, `failed_first_parse`, `repaired_automatically`, `fixed_by_lead`,
+`shown_as_code`, the `parser` version and the `reasons` (line + message). The same numbers go to the run's Langfuse
+trace as an evaluator observation `mermaid:draft` with scores `mermaid_diagrams`, `mermaid_failed_first_parse`,
+`mermaid_repaired_automatically`, `mermaid_fixed_by_lead`, `mermaid_shown_as_code` and `mermaid_failed` (1 when any diagram is shown as code, else 0), and the reasons in its output.
+
+Without Node/npm, offline, or with `RFC_AGENT_MERMAID_CHECK=off`, the parser step is skipped: the semicolon repair still
+runs, `parser` says `not parser-checked: <why>`, and only the regex lint below applies. Set
+`RFC_AGENT_MERMAID_DIR` to keep the install somewhere else.
+
+The cheap regex lint still runs (it needs no install):
 
 | Rule | Example of a failure |
 |---|---|
@@ -319,7 +342,7 @@ just the gate — with a fix round only if the RFC changed since the last one.
 ### Not checked by the gate
 
 - **JSON examples** in the API contract — not parsed (they often contain placeholders; the reviewer reads them).
-- **Rendering Mermaid** — only the lint above.
+- **Mermaid styling and layout** — the parser checks syntax, not how a diagram looks.
 - **Whether a citation supports its claim** beyond the identifier check, design quality, missing edge cases —
   the Review stage's job.
 

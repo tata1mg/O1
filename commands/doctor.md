@@ -37,8 +37,10 @@ each, with the concrete fix for every FAIL. Read-only — change nothing without
    command binary exists (check the literal path too, not just PATH); http: report the URL. Only
    `fleetlens` (the context layer: Scope, Investigate, Review) and `bitbucket` (Scope's fallback for the repo -> service map) are
    read from config. Atlassian is NOT in config: Scope uses the user's own logged-in server — confirm
-   `claude mcp list` shows either `claude.ai Atlassian` (connector) or a user-scope `atlassian` server as
-   ✔ Connected instead of probing it.
+   `claude mcp list` shows a user-scope `atlassian` server at `https://mcp.atlassian.com/v2/mcp` as
+   ✔ Connected instead of probing it. FAIL when it is on `/v1/mcp` (deprecated; rfc-agent needs the v2 tools:
+   `claude mcp remove atlassian`, then `claude mcp add --scope user --transport http atlassian
+   https://mcp.atlassian.com/v2/mcp`, then `/mcp` to sign in). The `claude.ai Atlassian` connector is v1 and does not count.
 7. **Figma desktop app + snapshot plugin** (required): Scope exports frames through the desktop app and the
    rfc-agent snapshot plugin, not through MCP. FAIL if `/Applications/Figma.app` is missing. FAIL if
    `uv run --project "${CLAUDE_PLUGIN_ROOT}" python -c "from rfc_agent.scope import figma; missing, m, _ = figma.ensure_plugin(); print('NOT imported' if missing else 'imported', m)"`
@@ -53,8 +55,9 @@ each, with the concrete fix for every FAIL. Read-only — change nothing without
 
 10. **Axon engine** (only when config `AGENT.ENGINE` or `AGENT.STAGE_ENGINES` names `axon`, or the user says they
    will run with `--engine axon`; otherwise report `n/a`):
-   `uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m rfc_agent.axon_agent doctor` prints `axon: READY`, or one
-   `FAIL` line per problem with its fix (Axon installed, `axon auth status` valid, managed Pi >= 1.4.0, every
+   `uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m rfc_agent.axon_agent doctor --table` prints one row per check
+   (what was checked, PASS / FAIL / WARN, how to fix a failure) and ends `axon: READY` or `axon: BLOCKED`; without `--table` it prints
+   `axon: READY`, or one `FAIL` line per problem with its fix (Axon installed, `axon auth status` valid, managed Pi >= 1.4.0, every
    mapped model on the gateway, fleetlens answering). `python -m rfc_agent.axon_agent models` shows which gateway
    model each stage model maps to. When Scope runs on Axon it fetches Confluence/Jira through Axon's own Atlassian
    sign-in, which this doctor checks; otherwise Claude checks 2 and 8 apply as usual.

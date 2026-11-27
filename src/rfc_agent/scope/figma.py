@@ -21,7 +21,10 @@ from pathlib import Path
 
 from .. import figma_snapshot as fs
 
-LINK_RE = re.compile(r"https://(?:www\.)?figma\.com/(?:design|file|proto)/([A-Za-z0-9]{8,64})/[^\s)>\]]*")
+# the file name after the key is optional: `figma.com/design/<key>?node-id=0-1` and a bare `figma.com/design/<key>`
+# are links designers share too (a regex that insisted on `/<name>` read such a PRD as "no design", 2026-11-20)
+LINK_RE = re.compile(r"https://(?:www\.)?figma\.com/(?:design|file|proto)/([A-Za-z0-9]{8,64})(?=[/?#\s)>\]]|$)[^\s)>\]]*")
+_NODE_PARAM_RE = re.compile(r"[?&]node-id=(\d+)(?:-|:|%3A|%3a)(\d+)")
 _KEY_RE = re.compile(r"^[A-Za-z0-9]{8,64}$")
 _NODE_RE = re.compile(r"^\d+:\d+$")
 CACHE = Path("~/.cache/rfc-agent/figma").expanduser()
@@ -34,13 +37,27 @@ def links_in(text: str) -> list[dict]:
     for m in LINK_RE.finditer(text):
         url = m.group(0).rstrip(".,;")
         key = m.group(1)
-        nm = re.search(r"[?&]node-id=(\d+)[-:](\d+)", url)
+        nm = _NODE_PARAM_RE.search(url)
         node = f"{nm.group(1)}:{nm.group(2)}" if nm else None
         if not _KEY_RE.match(key) or (node and not _NODE_RE.match(node)):
             continue
         name = re.match(r"https://(?:www\.)?figma\.com/(?:design|file|proto)/[A-Za-z0-9]+/([A-Za-z0-9-]+)", url)
         out.setdefault((key, node), {"url": url, "key": key, "node": node, "name": name.group(1) if name else ""})
     return list(out.values())
+
+
+def choose_links(prd_text: str, flag_urls: list[str] | None = None, instructions: str = "") -> dict:
+    """Which Figma links this run uses. Links the operator gave explicitly — `--figma`, or a Figma URL typed in the
+    instructions — win, and the PRD's own links are then ignored; with none, the PRD's links; with neither, none.
+    -> {links, source: flag|instructions|flag+instructions|prd|none, prd_links_discarded: [url]}"""
+    from_flag = links_in("\n".join(flag_urls or []))
+    from_text = links_in(instructions or "")
+    explicit = list(OrderedDict(((lk["key"], lk["node"]), lk) for lk in from_flag + from_text).values())
+    in_prd = links_in(prd_text)
+    if explicit:
+        source = "flag+instructions" if from_flag and from_text else "flag" if from_flag else "instructions"
+        return {"links": explicit, "source": source, "prd_links_discarded": [lk["url"] for lk in in_prd]}
+    return {"links": in_prd, "source": "prd" if in_prd else "none", "prd_links_discarded": []}
 
 
 def open_url(link: dict) -> str:

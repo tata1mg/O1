@@ -94,16 +94,24 @@ export function needsAtlassian(argv, cwd, exists = fs.existsSync) {
   return !!prd && !exists(path.resolve(cwd, prd));
 }
 
-const WAITING = /WAITING FOR (SELECTION|PAUSE (\d))[^:]*: proposal at (.+?) — answers expected at (.+?)\s*$/;
+const WAITING = /WAITING FOR (SELECTION|DESIGN|PAUSE (\d))[^:]*: proposal at (.+?) — answers expected at (.+?)\s*$/;
 
-/** A `WAITING FOR …` line → {kind: "scope"|"investigate"|"triage", n, proposal, answers}, else null. */
+/** A `WAITING FOR …` line → {kind: "scope"|"design"|"investigate"|"triage", n, proposal, answers}, else null. */
 export function parseWaiting(line) {
   const m = WAITING.exec(line);
   if (!m) return null;
   const n = m[2] ? Number(m[2]) : 0;
-  const kind = !m[2] ? "scope" : n === 3 ? "triage" : "investigate";
+  const kind = m[1] === "DESIGN" ? "design" : !m[2] ? "scope" : n === 3 ? "triage" : "investigate";
   return { kind, n, proposal: m[3], answers: m[4] };
 }
+
+/** Whether `/rfc <text>` is a free-text prompt (not flags, not a subcommand): then rfc_agent.intake turns it into flags. */
+export function isPrompt(text) {
+  const first = (text || "").trim().split(/\s+/)[0] || "";
+  return !!first && !first.startsWith("-") && !["doctor", "attach", "feedback", "help"].includes(first);
+}
+
+const FIGMA_LINK = /^https:\/\/(www\.)?figma\.com\/(design|file|proto)\/[A-Za-z0-9]{8,64}([/?#]|$)/;
 
 const RELAY = [
   /\[rfc\] ── (.+?) ──/, // stage banner
@@ -199,6 +207,8 @@ export function readNewLines(file, state) {
 // ---- dialogs ------------------------------------------------------------------------------------------
 
 const DONE = "✔ Done";
+const REPOS_CONTINUE = "Continue with these repos";
+const REPOS_ADD = "Add more repos / set a branch";
 
 /** Toggle list on top of ui.select (Pi has no multi-select dialog). Escape keeps the current ticks. */
 export async function checklist(ui, title, rows) {
@@ -217,7 +227,7 @@ async function askScope(ui, prop) {
   const keep = new Set(items.filter((it) => it.include).map((it) => it.n));
   const ofKind = (k) => items.filter((it) => it.kind === k);
   const header = String(prop.header || "").split("\n")[0];
-  let extras = { add_repos: [], branches: {} };
+  const extras = { add_repos: [], branches: {} };
 
   for (;;) {
     const repos = ofKind("repo");
@@ -227,8 +237,19 @@ async function askScope(ui, prop) {
         repos.map((r) => ({ label: r.label, note: r.note, on: keep.has(r.n) })));
       repos.forEach((r, i) => (on[i] ? keep.add(r.n) : keep.delete(r.n)));
     }
-    const extra = await ui.input("Add repos or override a branch (comma-separated: name, or repo=branch). Empty for none.", "");
-    extras = parseRepoExtras(extra);
+    const ticked = repos.filter((r) => keep.has(r.n)).map((r) => (r.branch ? `${r.label} (${r.branch})` : r.label)).join(", ") || "none";
+    const choice = await ui.select(
+      `Repos to trace (branch): ${ticked}\nDid the suggestions miss a repo, or do you need a different branch for one? (optional)`,
+      [REPOS_CONTINUE, REPOS_ADD]);
+    if (choice === REPOS_ADD) {
+      const extra = await ui.input(
+        "Comma-separated. To ADD a repo type its name: web_app_vite. To change the BRANCH of a repo, ticked or added, "
+        + "type repo=branch: orders_service=release/2.1. Both together: web_app_vite, orders_service=release/2.1. "
+        + "Added repos are traced like the ticked ones. Press Enter to skip.", "");
+      const more = parseRepoExtras(extra);
+      for (const r of more.add_repos) if (!extras.add_repos.includes(r)) extras.add_repos.push(r);
+      Object.assign(extras.branches, more.branches);
+    }
     if (repos.some((r) => keep.has(r.n)) || extras.add_repos.length) break;
     ui.notify("At least one repo must be in scope.", "warning");
   }
@@ -265,6 +286,22 @@ async function askScope(ui, prop) {
     answers.proceed_without_design = c === GO;
   }
   return answers;
+}
+
+/** No Figma link came with the run: proceed without a design, stop, or give a link now. */
+export async function askDesign(ui, prop) {
+  const GO = "Proceed without design";
+  const STOP = "Stop";
+  const ADD = "Add your design (paste a Figma link)";
+  const c = await ui.select(`No design is available (${prop.no_design}). What now?`, [GO, STOP, ADD]);
+  if (c === GO) return { choice: "proceed" };
+  if (c !== ADD) return { choice: "stop" };
+  for (let tries = 0; tries < 3; tries++) {
+    const url = ((await ui.input("Figma link (https://www.figma.com/design/<file key>/…)", "")) || "").trim();
+    if (FIGMA_LINK.test(url)) return { choice: "add", figma_url: url };
+    ui.notify("That is not a Figma design link.", "warning");
+  }
+  return { choice: "stop" };
 }
 
 async function askInvestigate(ui, prop, n) {
@@ -600,7 +637,7 @@ export function runSnapshot(dir, { outLines = 30, activityLines = 15 } = {}) {
   const waiting = out.map(parseWaiting).filter((w) => w && !fs.existsSync(w.answers));
   if (waiting.length && alive) {
     const w = waiting[waiting.length - 1];
-    parts.push(`waiting: ${w.kind === "scope" ? "Scope selection" : `pause ${w.n}`} — the /rfc dialog asks it; proposal at ${w.proposal}`);
+    parts.push(`waiting: ${w.kind === "scope" ? "Scope selection" : w.kind === "design" ? "the design question" : `pause ${w.n}`} — the /rfc dialog asks it; proposal at ${w.proposal}`);
   }
   try {
     parts.push(`status.json:\n${fs.readFileSync(path.join(logs, "status.json"), "utf8").trim()}`);
@@ -726,13 +763,15 @@ class Run {
     this.asking = true;
     try {
       const prop = JSON.parse(fs.readFileSync(w.proposal, "utf8"));
-      ui.notify(`rfc ${this.name}: ${w.kind === "scope" ? "Scope selection" : `pause ${w.n}`} is waiting for you`, "info");
+      const label = w.kind === "scope" ? "Scope selection" : w.kind === "design" ? "the design question" : `pause ${w.n}`;
+      ui.notify(`rfc ${this.name}: ${label} is waiting for you`, "info");
       const data = w.kind === "scope" ? await askScope(ui, prop)
+        : w.kind === "design" ? await askDesign(ui, prop)
         : w.kind === "triage" ? await askTriage(ui, prop)
         : await askInvestigate(ui, prop, w.n);
       if (!fs.existsSync(w.answers)) writeAnswers(w.answers, data);
       this.pending.delete(w.answers);
-      this.push(`answered ${w.kind === "scope" ? "the Scope selection" : `pause ${w.n}`}`);
+      this.push(`answered ${label}`);
       this.render();
     } catch (e) {
       ui.notify(`rfc: could not ask the pause (${e.message}); answer it with /rfc attach ${this.dir}`, "error");
@@ -790,7 +829,8 @@ export function childEnv(home = process.env.HOME || "", exists = fs.existsSync) 
 }
 
 const HELP = [
-  "/rfc --prd <confluence url | page id | file.md> [flags]   run the pipeline (agents on Axon by default)",
+  "/rfc --prd <confluence url | page id | file.md> [--figma <link>] [--instructions <text | file>] [flags]   run the pipeline (agents on Axon by default)",
+  "/rfc Build an rfc from <PRD link> and <anything the PRD should not say>   the same, in plain words (a PRD link is required)",
   "/rfc --run-dir <run> [--from <stage>]                      continue a stopped run (or redo a stage onward)",
   "/rfc attach <run dir>                                     follow a run started elsewhere (or answer its pause)",
   "/rfc feedback [--run-dir <run>] [up|down]                 rate a run (finished, stopped or failed); saved on its Langfuse trace",
@@ -919,7 +959,7 @@ export default function make(pi, { project, uv = "uv" } = {}) {
     handler: async (args, ctx) => {
       latest = ctx;
       const ui = ctx.ui;
-      const argv = splitArgs(args);
+      let argv = splitArgs(args);
       if (!project || !fs.existsSync(path.join(project, "pyproject.toml"))) {
         ui.notify(`rfc: the rfc-agent project is missing at ${project}; rerun python -m rfc_agent.axon_agent install`, "error");
         return;
@@ -931,7 +971,7 @@ export default function make(pi, { project, uv = "uv" } = {}) {
 
       if (argv[0] === "doctor") {
         ui.setWorkingMessage?.("rfc: checking Axon…");
-        const r = await uvRun(["python", "-m", "rfc_agent.axon_agent", "doctor"], ctx.cwd);
+        const r = await uvRun(["python", "-m", "rfc_agent.axon_agent", "doctor", "--table"], ctx.cwd);
         ui.setWorkingMessage?.();
         pi.sendMessage({ customType: "rfc-agent", content: (r.out + r.err).trim(), display: true });
         return;
@@ -969,6 +1009,23 @@ export default function make(pi, { project, uv = "uv" } = {}) {
         watch(new Run(dir, { pi, getCtx: () => latest, pid, offerRating }));
         ui.notify(`rfc: following ${dir}`, "info");
         return;
+      }
+
+      if (isPrompt(args)) { // free text ("Build an rfc from <PRD link> and …") → flags, by rfc_agent.intake
+        ui.setWorkingMessage?.("rfc: reading your request…");
+        const r = await uvRun(["python", "-m", "rfc_agent.intake", "--json", "--", args], ctx.cwd);
+        ui.setWorkingMessage?.();
+        let parsed = null;
+        try { parsed = JSON.parse(r.out.trim().split("\n").pop()).argv; } catch { /* reported below */ }
+        if (r.code !== 0 || !Array.isArray(parsed)) {
+          pi.sendMessage({ customType: "rfc-agent", content: (r.err || r.out || "rfc: could not read that request").trim(), display: true });
+          return;
+        }
+        argv = parsed;
+        const figmaLinks = argv.flatMap((a, i) => (a === "--figma" ? [argv[i + 1]] : []));
+        pi.sendMessage({ customType: "rfc-agent", display: true, content:
+          `rfc: reading this as — PRD: ${argValue(argv, "--prd")}` + (figmaLinks.length ? ` · Figma: ${figmaLinks.join(", ")}` : "")
+          + (argValue(argv, "--instructions") ? " · with your instructions" : "") });
       }
 
       const full = withEngine(argv);

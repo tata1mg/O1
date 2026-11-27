@@ -1,6 +1,6 @@
 ---
 description: The scope stage — fetch the PRD, pick repos / pages / Figma sections with selection questions, snapshot the repos
-argument-hint: --prd <confluence-url | page-id | file> [--jira KEY] [--repos a,b] [--no-figma] [--fresh-clone] [--engine claude-code|axon] [--stage-engine STAGE=ENGINE]
+argument-hint: --prd <confluence-url | page-id | file> [--figma LINK] [--instructions TEXT|FILE] [--jira KEY] [--repos a,b] [--no-figma] [--fresh-clone] [--engine claude-code|axon] [--stage-engine STAGE=ENGINE]
 ---
 
 Run rfc-agent's Scope for: `$ARGUMENTS`
@@ -51,6 +51,13 @@ last ~20 lines of `scope.out` yourself in the same turn. Stop it (TaskStop) when
   LISTS the screens now; it exports after the selection.
 - **`ONE-TIME SETUP`** — relay the import step verbatim (Figma → Plugins → Development → Import plugin from
   manifest… → the path printed).
+- **`WAITING FOR DESIGN`** — no Figma link came with the run (none with `--figma`, none in the instructions, none
+  in the PRD). Ask this before anything else: read `$RUN/confirm/design.proposal.json` (`{"no_design": "why"}`), ask
+  one single-select, header `Design`, *"No design is available (<no_design>). What now?"* with options
+  `Proceed without design` / `Stop` / `Add your design`. On `Add your design` the user pastes the link through
+  Other (ask for it with a second question if they chose the option without pasting). Write
+  `$RUN/confirm/design.answers.json`: `{"choice": "proceed"}`, `{"choice": "stop"}` or
+  `{"choice": "add", "figma_url": "<link>"}`. Never answer it for the user. Scope then goes on (Figma runs first when a link was added).
 - **`WAITING FOR SELECTION`** — go to step 3.
 - **`an OLD rfc-agent plugin window is still exporting`** — tell the user to close the plugin panel (✕) and
   press ⌥⌘P again.
@@ -58,7 +65,7 @@ last ~20 lines of `scope.out` yourself in the same turn. Stop it (TaskStop) when
 
 ## 3. Ask the selection (AskUserQuestion)
 
-Read `$RUN/confirm/proposal.json`: `{"header", "items": [{n, kind, key, label, note, include}], "no_design"?}`.
+Read `$RUN/confirm/proposal.json`: `{"header", "items": [{n, kind, key, label, note, include, branch?}], "no_design"?}`.
 `kind` is `repo` | `page` | `jira` | `figma`; `include` is scope's proposal. `no_design` is present only when
 no Figma design is available (the PRD links none, or no screens could be read) — its value says why.
 
@@ -67,16 +74,22 @@ Then ask, in this order, skipping a kind with no items:
 
 1. **Repos** — multi-select, one option per repo: label = repo name, description = its `note` (branch,
    local/cached/not cloned, why it was proposed; a ⚠ in the note must stay visible). Question text names
-   which ones are proposed: *"Which repos are in scope? Proposed: a, b, c. Use Other to add repos
-   (comma-separated) or override a branch (`repo=branch`)."*
+   which ones are proposed: *"Which repos are in scope? Proposed: a, b, c. Optional: if the suggestions missed a repo,
+   choose Other and type its name, comma-separated: `web_app_vite`. To change the branch of a repo (ticked or added)
+   write `repo=branch`: `orders_service=release/2.1`; both together: `web_app_vite, orders_service=release/2.1`. Added
+   repos are traced like the ticked ones. Say each ticked repo's branch (the item's `branch`) in the question text.
+   Leave Other empty and the run continues with the repos you ticked."* After the
+   answers are written, tell the user what happened to each typed name (scope prints `added repo …` or
+   `NOT on Bitbucket … dropped` in `scope.out`).
 2. **Confluence pages / Jira** — multi-select; question text says they are NOT included unless picked.
 3. **Figma sections** — label = section name, description = screen count + PRD overlap. If there are
    more than 8 sections, first ask one single-select: *Keep the proposed N sections (list them)* /
    *Pick sections myself* / *Skip Figma* — and only chunk the sections out on "Pick sections myself".
 
-4. **No design** — only when the proposal has `no_design`: one single-select, header `Design`,
-   *"No design is available (<no_design>). Do you want to proceed as it is?"* with options
-   `Proceed without design` / `Stop`. Never answer it for the user.
+4. **No design** — only when the proposal has `no_design` (a link was given but no screens could be read): one
+   single-select, header `Design`, *"No design is available (<no_design>). Do you want to proceed as it is?"* with
+   options `Proceed without design` / `Stop`. Never answer it for the user. (When no link came with the run at all,
+   `WAITING FOR DESIGN` above asks it earlier, with the extra `Add your design` choice.)
 
 AskUserQuestion limits: 2-4 options per question, 4 questions per call, header ≤ 12 chars. Chunk a kind
 into questions of up to 4 options (headers like `Repos 1/2`) and use several calls when needed. A chunk

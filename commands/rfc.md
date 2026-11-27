@@ -1,6 +1,6 @@
 ---
 description: Generate a tech RFC from a PRD — the whole pipeline (Scope → Summarize) in one command; progress and every pause shown here
-argument-hint: --prd <confluence-url | page-id | file> [--jira KEY] [--repos a,b] [--no-figma] [--preset balanced|fast] [--ask] [--ask-review] [--langfuse-verbose true|false] [--engine claude-code|axon] [--stage-engine STAGE=ENGINE]  |  --run-dir <run folder> (continue a stopped run)
+argument-hint: --prd <confluence-url | page-id | file> [--figma LINK] [--instructions TEXT|FILE] [--jira KEY] [--repos a,b] [--no-figma] [--preset balanced|fast] [--ask] [--ask-review] [--langfuse-verbose true|false] [--engine claude-code|axon] [--stage-engine STAGE=ENGINE]  |  --run-dir <run folder> (continue a stopped run)  |  or plain words with the PRD link, e.g. Build an rfc from <PRD link> and use the latest flows
 ---
 
 Run the whole rfc-agent pipeline for: `$ARGUMENTS`
@@ -12,6 +12,27 @@ options, finished stages skipped. Say which of the two this is in your first lin
 It runs in the background (typically 30–60 min — say so once at the start). YOU are its progress view and its pause
 UI: relay milestones in short lines, open one task card per agent (section 2), and at each pause show the
 proposal as AskUserQuestion selections and write the answers back. Never answer a pause yourself. No browser pane.
+
+## 0. Read the request
+
+`$ARGUMENTS` is either flags (`--prd …`) or plain words ("Build an rfc referring this PRD <link> and pick the
+latest flows"). Turn it into flags first, in its own command:
+
+```
+uv run --project "${CLAUDE_PLUGIN_ROOT}" python -m rfc_agent.intake --shell <<'RFC_REQUEST'
+$ARGUMENTS
+RFC_REQUEST
+```
+
+It prints one shell-quoted line. **Use that line wherever `$ARGUMENTS` appears below**, pasted literally (flags given
+as flags come back unchanged). Plain words become `--prd`, `--figma`, `--instructions <file>`, `--input-mode prompt`
+and `--prompt-text <file>`; the run's Langfuse trace is tagged `input:prompt` and carries the prompt (300 words at
+most). If it exits 2 there was no Confluence PRD link in the words: relay its message and stop — nothing starts.
+Say in one line how you read it (PRD, Figma links, whether instructions were taken).
+
+`--figma <link>` (repeatable) and `--instructions <text | file>` also work as flags. A Figma link given either way
+replaces the PRD's own links; the instructions win over the PRD where they conflict (the untouched PRD is kept as
+`raw/prd.source.md`, the instructions as `raw/instructions.md`).
 
 ## 1. Start
 
@@ -103,6 +124,7 @@ one."* It is drawn in the terminal; nothing is served or opened in a browser.
 | `press ⌥⌘P` (Scope, Figma) | One line: *"Figma is open at the linked design — press ⌥⌘P in Figma (Plugins → Development → rfc-agent Figma snapshot) and keep the plugin window open."* |
 | `ONE-TIME SETUP` / `Figma plugin: import it from the repo` | Relay the import step and the manifest path verbatim |
 | `an OLD rfc-agent plugin window is still exporting` | Tell the user to close the plugin panel (✕) and press ⌥⌘P again |
+| `WAITING FOR DESIGN` (Scope) | No Figma link came with the run: ask the design question — section 3 of `${CLAUDE_PLUGIN_ROOT}/commands/scope.md` (proposal `$RUN/confirm/design.proposal.json` → answers `$RUN/confirm/design.answers.json`) |
 | `WAITING FOR SELECTION` (Scope) | Scope's selection: follow sections 3–4 of `${CLAUDE_PLUGIN_ROOT}/commands/scope.md` (proposal `$RUN/confirm/proposal.json` → answers `$RUN/confirm/answers.json`) |
 | `WAITING FOR PAUSE 1` / `WAITING FOR PAUSE 2` (Investigate) | Follow section 3 of `${CLAUDE_PLUGIN_ROOT}/commands/investigate.md` (`$RUN/confirm/investigate-pause<n>.proposal.json` → `.answers.json`) |
 | `WAITING FOR PAUSE 3` (Review, only with `--ask-review`) | Follow section 3 of `${CLAUDE_PLUGIN_ROOT}/commands/review.md` (triage) |

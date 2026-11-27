@@ -43,6 +43,8 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from harness.cli_errors import FriendlyParser
+
 if __package__ in (None, ""):  # run as a script: make `workflows.testing` importable from src/
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -594,7 +596,7 @@ def _bool(text: str) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="preflight")
+    ap = FriendlyParser(tag="test", prog="preflight")
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("check")
     c.add_argument("--feature", default="")

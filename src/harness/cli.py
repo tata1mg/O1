@@ -34,6 +34,7 @@ from pathlib import Path
 from . import engines as engines_mod
 from . import flags as flagmod
 from . import workflows as workflows_mod
+from .cli_errors import FriendlyParser
 from .constants import MANIFEST, ExitCode
 from .contracts import (
     EngineFailure,
@@ -589,18 +590,17 @@ def _table(headers: list[str], rows: list[list[str]]) -> None:
         print("  ".join(str(c).ljust(w) for c, w in zip(r, widths, strict=True)).rstrip())
 
 
-class _Parser(argparse.ArgumentParser):
+class _Parser(FriendlyParser):
     """argparse exits 2 on a usage error; 2 is GATE_FAILURE in the public exit-code contract.
 
     A tool reading exit codes (the eval harness, the plugin command, an orchestrating agent) would read
     a typo'd subcommand as a phantom gate failure and stop a healthy run. Usage errors are exit 1
-    (PIPELINE_CONFIG_ERROR) here — the same reasoning rfc-agent's --steer path already applies.
+    (PIPELINE_CONFIG_ERROR) here — the same reasoning rfc-agent's --steer path already applies. The message
+    names the wrong parameter and lists the supported ones (FriendlyParser), as a `[harness] STOP:` line.
     """
 
-    def error(self, message: str):  # noqa: D102
-        self.print_usage(sys.stderr)
-        print(f"{self.prog}: error: {message}", file=sys.stderr)
-        raise SystemExit(int(ExitCode.PIPELINE_CONFIG_ERROR))
+    exit_code = int(ExitCode.PIPELINE_CONFIG_ERROR)
+    tag = "harness"
 
 
 def build_parser() -> argparse.ArgumentParser:

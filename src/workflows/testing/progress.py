@@ -26,7 +26,6 @@ Read-only: writes nothing.
 
 from __future__ import annotations
 
-import argparse
 import json
 import re
 import sys
@@ -35,6 +34,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from statistics import median
+
+from harness.cli_errors import FriendlyParser
 
 if __package__ in (None, ""):  # run as a script: make `workflows.testing` importable from src/
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -367,7 +368,7 @@ def _mtime(path: Path) -> float:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="progress")
+    ap = FriendlyParser(tag="test", prog="progress")
     ap.add_argument("run_dir")
     ap.add_argument("--watch", action="store_true")
     ap.add_argument("--now", action="store_true")

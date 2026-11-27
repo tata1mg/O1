@@ -160,14 +160,14 @@ Optional: if the user wants a repo checked out locally, `git clone <the address 
 If `MISSING`, ask (AskUserQuestion) for the team's Atlassian site (`https://<name>.atlassian.net`; not a secret)
 and write it to `CFG` as `ATLASSIAN.SITE` (rule 5). Below, `<SITE>` is that value.
 
-The pipeline reads PRDs through Atlassian's MCP server. **Either** one works:
-- the **claude.ai Atlassian connector** (tools `mcp__claude_ai_Atlassian__*`), or
-- a user-scope server named `atlassian` added with `claude mcp add ... atlassian https://mcp.atlassian.com/v1/mcp`
-  (tools `mcp__atlassian__*`).
+The pipeline reads PRDs through a user-scope Atlassian MCP **v2** server named `atlassian`, added with
+`claude mcp add --scope user --transport http atlassian https://mcp.atlassian.com/v2/mcp` (tools `mcp__atlassian__*`).
+The `claude.ai Atlassian` connector is still v1 and does not work. A server on `/v1/mcp` must be removed first
+(`claude mcp remove atlassian`) and added again.
 
-**Check:** `claude mcp list | grep -iE "claude\.ai Atlassian|^atlassian"` — at least one line shows `✔ Connected`. If none does, ask the user to
-connect one (a listed `atlassian` that needs auth: `/mcp` → atlassian → authenticate). For the connector: claude.ai → Settings → Connectors → Atlassian → Connect, sign in, allow
-access to `<SITE>`. Then re-check.
+**Check:** `claude mcp list | grep -iE "^atlassian"` shows `/v2/mcp` and `✔ Connected`. If it is missing or on v1, ask
+the user to add it (a listed `atlassian` that needs auth: `/mcp` → atlassian → authenticate, and allow access to
+`<SITE>`). Then re-check.
 
 If `claude mcp list` still doesn't show it but the user says it's connected, run the real test (≈10 s, a few
 cents; needs step 2 done):

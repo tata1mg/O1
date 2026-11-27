@@ -33,6 +33,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+from harness.cli_errors import FriendlyParser
 from harness.contracts import EngineFailure, RunContext, Stage, StageResult
 
 from ... import app_agent, devices, maestro
@@ -331,11 +332,10 @@ def promote(run_dir: Path, repo: Path, *, feature_folder: str, apply: bool = Fal
 
 
 def main(argv: list[str] | None = None) -> int:
-    import argparse
     import json
     import sys
 
-    ap = argparse.ArgumentParser(prog="convert_flows",
+    ap = FriendlyParser(tag="test", prog="convert_flows",
                                  description="promote: copy a run's green flows onto a maestro-automation branch")
     ap.add_argument("action", choices=("promote",))
     ap.add_argument("run_dir")

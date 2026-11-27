@@ -93,15 +93,20 @@ Secrets for testing stay out of this file: the Kiwi password in `~/.tcms.conf`, 
 
 **Atlassian** (needed for Confluence and Jira PRDs; a local `--prd file.md` needs none).
 - *Claude Code:* Scope fetches through your own signed-in Atlassian server, because Python cannot ride the OAuth
-  itself. Use the claude.ai Atlassian connector, or a user-scope server:
+  itself. It needs a user-scope server on **Atlassian MCP v2** (v1 is deprecated and its tools are gone):
 
   ```bash
-  claude mcp add --transport http atlassian https://mcp.atlassian.com/v1/mcp
+  claude mcp add --scope user --transport http atlassian https://mcp.atlassian.com/v2/mcp
   claude mcp list
   ```
 
-  Authenticate with `/mcp` inside a `claude` session; `claude mcp list` must show `✔ Connected`.
+  Authenticate with `/mcp` inside a `claude` session; `claude mcp list` must show `✔ Connected`. The server must be
+  named `atlassian` and added with `--scope user` (the run's headless `claude` starts from the run folder, so a
+  project-scoped server is not seen). **Already on v1?** Run `claude mcp remove atlassian` first, then the add above.
+  The `claude.ai Atlassian` connector is still v1: it does not work here.
 - *Axon:* `axon pi mcp login atlassian` (the install guide does it). `AGENT.AXON.ATLASSIAN_SERVER` names the server.
+  **Already on v1?** `axon pi mcp remove atlassian`, `axon pi mcp add atlassian --url https://mcp.atlassian.com/v2/mcp`,
+  `axon pi mcp login atlassian`.
 
 **fleetlens** (the context layer; recommended). A plain HTTP MCP server under `MCP.mcpServers.fleetlens` (keep
 that name), set in `config.json` only: no `claude mcp add`. It needs network reachability (VPN if internal).
